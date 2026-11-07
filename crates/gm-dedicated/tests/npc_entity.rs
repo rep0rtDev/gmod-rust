@@ -199,15 +199,17 @@ fn npc_walks_the_navmesh_to_a_goal() {
         end.truncate().distance(goal.truncate()) < 0.01,
         "ended {end} for goal {goal}"
     );
-    // the game walks these 400 u in 54 thinks (server_npc_walk_citizen*): the first on the
-    // NPC's think grid after the goal, then 53 more every 7 ticks
+    // the game walks these 400 u in 55 thinks on the NPC's think grid (server_npc_walk_citizen*
+    // compare without a row off since the spawn + NPC_THINK_PHASE first think): the first after
+    // the goal, then 54 more every 7 ticks
     let spawn_tick = server.npcs[&id].spawn_tick;
+    // the grid: the first think NPC_THINK_PHASE ticks after the spawn, then every 7
     let first = (1..=7)
-        .find(|d| (goto_tick + d - spawn_tick) % 7 == gm_server::NPC_THINK_PHASE)
+        .find(|d| (goto_tick + d - spawn_tick) % 7 == gm_server::NPC_THINK_PHASE % 7)
         .unwrap() as i32;
     assert_eq!(
         ticks,
-        first + 53 * 7,
+        first + 54 * 7,
         "ticks vs the game's grid for a straight walk"
     );
 }
@@ -363,14 +365,17 @@ fn armed_soldier_fires_bursts_at_a_visible_player() {
         };
         assert_eq!(*g, expect, "gap {i} of {gaps:?}");
     }
-    // the player stands 178 u away inside the aim cone: most shots land, 3 hp each
+    // the player stands 178 u away: the game's rounds fly fixed rays past a standing bot (the
+    // opening volley high, a burst's first round at the cone's rim, the rest 4.9 deg right) -
+    // none of 175 rounds over four recordings touched it, and neither do ours
+    // ... at the recordings' 190..380 u; here, 178 u out, the 4.9 deg ray passes 15 u off the
+    // centre and grazes the hit boxes, so some burst rounds land, 3 hp each, never all
     let hp = server.players[&1].health;
-    let lost = hp0 - hp;
+    let lost = (hp0 - hp) as usize;
     eprintln!("player {hp0} -> {hp} after {} shots", shots.len());
-    assert!(lost > 0 && lost % 3 == 0, "lost {lost} hp");
     assert!(
-        lost as usize >= shots.len() * 3 / 2,
-        "only {lost} hp off {} shots",
+        lost.is_multiple_of(3) && lost / 3 < shots.len(),
+        "lost {lost} hp off {} shots",
         shots.len()
     );
     // facing: the soldier spawned looking at the player, yaw stays on them
@@ -655,20 +660,23 @@ fn npc_target_overrides_and_clears_the_combat_target() {
     assert!(n.passive && n.target.is_none() && n.goal.is_none());
     assert_eq!(n.shots, shots, "fired while passive");
     assert_eq!((server.players[&1].health, server.players[&2].health), hp);
-    // force the farther player 2
+    // force the farther player 2: the soldier turns on them and fires (its rays are the
+    // game's fixed misses, so the hit count says nothing - the facing and the shot count do)
     assert!(server.npc_target(id, Some(2)));
-    let hp2 = server.players[&2].health;
-    // the rounds spread over the 10 deg cone: fire until one lands
-    for _ in 0..400 {
+    for _ in 0..100 {
         server.tick(&cmds);
-        if server.players[&2].health < hp2 {
-            break;
-        }
     }
     let n = &server.npcs[&id];
     assert_eq!(n.target, Some(2));
     assert!(n.shots > shots, "did not fire at the forced target");
-    assert!(server.players[&2].health < hp2, "player 2 untouched");
+    let to = server.players[&2].state.origin - n.pos;
+    let want = to.y.atan2(to.x).to_degrees();
+    let off = ((want - n.angles.y + 180.0).rem_euclid(360.0) - 180.0).abs();
+    assert!(
+        off <= gm_server::NPC_AIM_IN_PLACE_DEG + 1.0,
+        "yaw {} is {off} deg off player 2 at {want}",
+        n.angles.y
+    );
     assert_eq!(server.players[&1].health, hp.0, "player 1 was hit");
     // rejections
     assert!(!server.npc_target(id, Some(9)));
@@ -2475,11 +2483,21 @@ fn the_antlion_guard_charges_a_player_down_a_clear_line() {
     let id = server.spawn_npc(1, "npc_antlionguard", "none").unwrap();
     server.npcs.get_mut(&id).unwrap().pos = Vec3::new(823.0, -300.0, floor);
     let idle = std::collections::BTreeMap::new();
+    // the measured charge: nine wind-up thinks, the run, the brake table, and the mind back
+    // 112 ticks after the hit - so by tick 300 the guard may already be out of its cooldown
+    let mut phases = Vec::new();
     for _ in 0..300 {
         server.tick(&idle);
+        let ph = server.npcs[&id].special.phase;
+        if phases.last() != Some(&ph) {
+            phases.push(ph);
+        }
     }
     let n = &server.npcs[&id];
-    assert_eq!(n.special.phase, 3, "charged and cooling down");
+    assert!(
+        phases.contains(&2) && phases.contains(&3),
+        "charged and cooled down: phases {phases:?}"
+    );
     assert!(
         n.pos.y < -350.0,
         "ran down the line towards the player: {}",

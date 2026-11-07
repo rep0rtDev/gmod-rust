@@ -8,7 +8,20 @@ local function qwrite(op, ent, arg)
     if not queue then error(op .. ": no world access") end
     return queue(op, ent, arg)
 end
-local function snap(id) return world and world.get(id) or nil end
+-- one snapshot per dispatch (`__gen`): an entity's / a player's table is built once per
+-- dispatch, not on every read (a player read cost 60 us through world.players() before)
+local snap_gen, snap_cache, psnap_cache = -1, {}, {}
+local function fresh()
+    local gen = __gen or 0
+    if gen ~= snap_gen then snap_gen = gen; snap_cache = {}; psnap_cache = {} end
+end
+local function snap(id)
+    if not world then return nil end
+    fresh()
+    local e = snap_cache[id]
+    if e == nil then e = world.get(id) or false; snap_cache[id] = e end
+    return e or nil
+end
 
 ------------------------------------------------------------------------ Entity
 local ENT = {}
@@ -471,8 +484,10 @@ end
 local players = {}
 local function psnap(id)
     if not world then return nil end
-    for _, p in ipairs(world.players()) do if p.id == id then return p end end
-    return nil
+    fresh()
+    local p = psnap_cache[id]
+    if p == nil then p = world.player(id) or false; psnap_cache[id] = p end
+    return p or nil
 end
 function Player(id)
     if type(id) ~= "number" or id <= 0 then return NULL end

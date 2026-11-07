@@ -2723,7 +2723,7 @@ pub const NPC_SPREAD_FOCUS_TICKS: u64 = 53;
 /// The NPC fires once its body yaw is within this many degrees of the target.
 /// The standing body's aim error the game covers without a body turn (bracketed: 7 deg kept,
 /// 14 deg turned).
-const NPC_AIM_IN_PLACE_DEG: f32 = 10.0;
+pub const NPC_AIM_IN_PLACE_DEG: f32 = 10.0;
 const NPC_FIRE_FACING_DEG: f32 = 15.0;
 const NPC_EYE_HEIGHT: f32 = 64.0;
 /// Eye height of an armed NPC firing from the crouch it takes in combat (game: origin + 40).

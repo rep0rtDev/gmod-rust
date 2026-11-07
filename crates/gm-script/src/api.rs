@@ -1510,7 +1510,10 @@ local function run_timers()
         end
     end
 end
+__gen = 0
 function __dispatch(name: string, payload)
+    -- every dispatch sees one immutable snapshot: the bridge's per-id read caches key on it
+    __gen += 1
     if name == "tick.pre" then run_id += 1 end
     local list = handlers[name]
     local result = nil
