@@ -479,10 +479,14 @@ Scores: 0 absent, 0.25 started, 0.5 playable, 0.75 harnesses green within tolera
   class's standing rate (`idle_yaw` 350 deg/s: server_npc_grenade_soldier ops 554..582, 36 /
   37 / 37 / 37 a think in RunAIMALL1, MaxYawSpeed's default 35 x 10), a chase re-acquiring
   its enemy at `NPC_AIM_YAW_RATE` 430 (the _wall rows 138/145 it was measured on) - the split
-  between the two is measured, not explained. Open on the same leg: the game plays
-  RunAIMALL1 until the yaw error is ~24 deg and only then RunALL (op 589, where it turns at
-  150 deg/s: 15 / 16 / 8); ours switches to RunALL three thinks earlier and finishes the turn
-  at the standing rate. Rows unchanged (those ops already differ in position).
+  between the two is measured, not explained. On the same leg the aim run (RunAIMALL1) plays
+  only while the enemy lies outside `NPC_RUN_AIM_POSE_DEG` 70 of the body at the think's
+  start (the model's aim pose range: grenade RunAIMALL1 at 140 / 105 / 76 deg, RunALL from
+  39; squad mate RunAIMALL1 at 135 / 100, RunALL from 64), sight line or not (the earlier
+  cover legs run RunAIMALL1 with the body 140 deg off the bot), and the rest of the turn runs
+  at the run rate 150 deg/s (15 / 16 a think) - `enemy_in_pose`. Ours now matches the
+  structure one think early (our arrival is a think early there); rows unchanged (those ops
+  already differ in position).
 - Squad following range: a squad member running the same route as a mate ahead holds
   ~52 u from it, deflecting the surplus of its step to the open side (the squad's leader
   closes on the mate to 53 u and keeps 51..54 u for eleven thinks while sliding round its

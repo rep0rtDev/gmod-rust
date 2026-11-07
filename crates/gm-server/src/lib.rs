@@ -2405,6 +2405,10 @@ pub struct Npc {
     pub ideal_yaw: Option<f32>,
     /// `NPC:SetMoveYawLocked`: movement no longer turns the body.
     pub move_yaw_locked: bool,
+    /// Set by the move think from the pre-turn yaw: the cover run's enemy lies within
+    /// `NPC_RUN_AIM_POSE_DEG` of the body, so the plain run (RunALL) plays and the body turns
+    /// at the run rate.
+    pub enemy_in_pose: bool,
     /// `NPC:SetViewOffset`: the eye position relative to the feet (None: the measured 64 u).
     pub view_offset: Option<Vec3>,
     /// `NPC:AddRelationship` toward players (GLua `D_*` code: 1 hate, 2 fear, 3 like, 4 neutral);
@@ -2535,6 +2539,10 @@ const NPC_CRAB_RUN_AWAY_DIST: f32 = 60.0;
 /// A fighting NPC turning toward a sighted enemy while it runs: 44..46 deg per think
 /// (server_npc_grenade_soldier_wall: yaw 221 -> 177 -> 131 over t1602..1616).
 const NPC_AIM_YAW_RATE: f32 = 430.0;
+/// A cover run plays its aim run only with the enemy outside this many degrees of the body
+/// (server_npc_grenade_soldier ops 554..589 and the squad mate 660..688: RunAIMALL1 at
+/// 76 / 100 deg, RunALL from 39 / 64).
+const NPC_RUN_AIM_POSE_DEG: f32 = 70.0;
 /// Our combat model. Only the fire cadence and the per-hit damage come from the game
 /// (server_npc_fire_soldier: one shot per 7-tick think, 5 per burst, 28 ticks between bursts,
 /// `sk_npc_dmg_*`); target choice, sight range, aim cone and loss handling are our own rules.
@@ -14139,6 +14147,7 @@ impl<'w> Server<'w> {
             force_crouch: None,
             ideal_yaw: None,
             move_yaw_locked: false,
+            enemy_in_pose: false,
             view_offset: None,
             relation: None,
             swing_until: 0,
@@ -16478,6 +16487,7 @@ impl<'w> Server<'w> {
             // only stops behind it where the corner leaves no side (639..681); measured on a
             // cover run only, a chase keeps the formation rule
             let cover_run = self.npcs.get(&id).is_some_and(|n| n.cover_at.is_some());
+            let yaw0 = self.npcs.get(&id).map_or(0.0, |n| n.angles.y);
             if let Some(sq) = self.squads.of(id).filter(|_| cover_run) {
                 let here = pos.truncate();
                 let peer = self
@@ -16686,6 +16696,12 @@ impl<'w> Server<'w> {
             } else {
                 NPC_YAW_RATE
             };
+            let enemy_in_pose = enemy_face.is_some_and(|k| {
+                let to = k - floor.truncate();
+                let bearing = to.y.atan2(to.x).to_degrees();
+                let err = (bearing - yaw0 + 540.0).rem_euclid(360.0) - 180.0;
+                err.abs() < NPC_RUN_AIM_POSE_DEG
+            });
             let (face, rate) = match next_goal.filter(|_| halt) {
                 Some(g) if g.truncate().distance_squared(floor.truncate()) > 1e-6 => (
                     (g.truncate() - floor.truncate()).normalize(),
@@ -16697,10 +16713,13 @@ impl<'w> Server<'w> {
                 // turns at NPC_AIM_YAW_RATE (the _wall rows the rate was measured on)
                 _ if enemy_face.is_some_and(|k| k.distance_squared(floor.truncate()) > 1e-6) => (
                     (enemy_face.unwrap() - floor.truncate()).normalize(),
-                    max_yaw.unwrap_or(if cover_run {
-                        def.idle_yaw
-                    } else {
+                    max_yaw.unwrap_or(if !cover_run {
                         NPC_AIM_YAW_RATE
+                    } else if enemy_in_pose {
+                        // ... and finishes the turn in RunALL at the run rate (15 / 16 a think)
+                        NPC_YAW_RATE
+                    } else {
+                        def.idle_yaw
                     }),
                 ),
                 _ if route_face.is_some_and(|g| g.distance_squared(floor.truncate()) > 1e-6) => (
@@ -16716,6 +16735,7 @@ impl<'w> Server<'w> {
             };
             let mut swap = None;
             if let Some(n) = self.npcs.get_mut(&id) {
+                n.enemy_in_pose = cover_run && enemy_in_pose;
                 let moved = floor.truncate().distance(pos.truncate());
                 let intended = v0 * dt;
                 n.stuck = if intended > 1.0 && moved < intended * 0.1 {
@@ -16949,7 +16969,15 @@ impl<'w> Server<'w> {
         let act = if swinging {
             "ACT_MELEE_ATTACK1"
         } else if moving {
-            match (n.run, sees_enemy) {
+            // a cover run plays the aim run only while its enemy lies outside ~70 deg of the
+            // body (the model's aim pose range): the lone soldier of server_npc_grenade_soldier
+            // and the squad mate drop to RunALL once the body has come round to within 39 /
+            // 64 deg of the bot (still RunAIMALL1 at 76 / 100) and finish the turn at 150 deg/s
+            // (the earlier cover legs run RunAIMALL1 with the body along the path, 140 deg off
+            // the bot, whether or not the sight line holds)
+            let cover_aim = n.cover_at.is_some() && !n.cover_from_sound && n.target.is_some();
+            let aim_in_pose = cover_aim && n.enemy_in_pose;
+            match (n.run, (sees_enemy || cover_aim) && !aim_in_pose) {
                 (true, true) => "ACT_RUN_AIM",
                 (true, false) => "ACT_RUN",
                 (false, true) => "ACT_WALK_AIM",
@@ -20167,6 +20195,7 @@ impl<'w> Server<'w> {
                 force_crouch: None,
                 ideal_yaw: None,
                 move_yaw_locked: false,
+                enemy_in_pose: false,
                 view_offset: None,
                 relation: None,
                 swing_until: 0,
