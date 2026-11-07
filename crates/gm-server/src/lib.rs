@@ -17594,7 +17594,9 @@ impl<'w> Server<'w> {
         if n.target_first_seen == 0 {
             n.target_first_seen = now;
         }
-        if now < n.target_first_seen + npc_reaction_ticks(&n.class) {
+        // a squad with a mate at hand reacts at once: the mate's suppress volley runs from its
+        // first think (server_npc_squad_soldier: rounds t332..360 after the t323 spawn)
+        if !has_mate && now < n.target_first_seen + npc_reaction_ticks(&n.class) {
             if !n.ai.scripted {
                 n.ai.start(ai::SCHED_IDLE_STAND, now);
             }
