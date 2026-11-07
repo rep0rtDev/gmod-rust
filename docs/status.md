@@ -502,15 +502,28 @@ Scores: 0 absent, 0.25 started, 0.5 playable, 0.75 harnesses green within tolera
   from 64 - the move-and-shoot overlay turning to the LKP until it is in the aim cone and the
   weapon LOS fails); the plain run turns at the run rate 150 deg/s (15 / 16 a think) -
   `aim_run`. Ours matches the structure one think early (arrival phase); rows unchanged.
-- Run blend: the pose angle is the body-to-step angle (the negative of our step-to-body
-  `rel`): the game's sideways runs land on W (0.702: the squad leader's flat 15.7..16.1 u a
-  think for eleven thinks, the lone soldier's 15.7 / 15.8) with the step clockwise of the
-  body and on E (0.723: the grenade soldier's 16.3 into its node) counter-clockwise, and the
-  back-diagonal keys do not lift a sideways run out to 116 deg (`NPC_BLEND_SIDE_HOLD_DEG`
-  120; a linear blend would rise to 17.1). Ours now a flat 15.8 there. squad 1286 -> 1300:
-  ops 450..499 used to match for 14 ops while our too-fast 16.3 plateau crossed the game's
-  track; at the right plateau the leader stays ~3 u behind from the ramp's first think (3.4
-  vs 3.8 u) - the start phase, recorded open.
+- Run blend: a 9-way blend's ground speed is the magnitude of the weighted sum of the
+  blended animations' movement vectors, each along its own direction, not a blend of their
+  speeds (`npc_blend_fraction`): read with GetSequenceGroundSpeed in an oracle re-recording
+  of the squad scene with path fields (.local/oracle/squad_path): the leader at move_yaw
+  -98.5 runs 150.2 u/s (0.19 SE + 0.81 E), -80..-85 -> 152, -109..-114 -> 149..151, -41 ->
+  178, 0 -> 214; the mate at +70.4 -> 157.8 (0.44 NW + 0.56 W); a linear blend of speeds
+  would give 166 / 171 and could not hold the flat 15.7..16.1 u a think of the leader's
+  sideways run. move_yaw has our sign (step minus body, positive to the left). Ours now
+  15.6..16.1 there. squad 1286 -> 1300: ops 450..499 used to match for 14 ops while our
+  too-fast 16.3 plateau crossed the game's track; at the right pace the leader stays ~3 u
+  behind from the ramp's first think (3.4 vs 3.8 u) - the start phase, recorded open.
+- Squad mate's route (oracle squad_path): the game's path is a local route of two points -
+  an apex (1004,-346) 58 u out at 13 u (half a hull) right of the direct bearing, then the
+  cover node (1201,72) straight through the house - and the mate slides along the west
+  face (x=1024, 20 u clearance) and alternates an along-the-wall step with an avoidance
+  step left of the goal bearing for 300 ops (waypoint unchanged, `GetBlockingEntity` nil);
+  the house's west face is low (top below z -80) for y -350..-300 where that leg crosses it,
+  so the route check passed over it. Ours routes via node (965,-19) (local-route threshold
+  144 u). Also read: the first waypoint of a node route slides ahead ~125..142 u along the
+  leg (forward simplification) until it merges into the node; the leader's corner crawl at
+  (953,6) (3.5..4.5 u a think stepping back-right, 646..688) has no blocking entity - a
+  squad hold-back while the mate is 52..130 u ahead in the corridor. Open.
 - Squad following range: a squad member running the same route as a mate ahead holds
   ~52 u from it, deflecting the surplus of its step to the open side (the squad's leader
   closes on the mate to 53 u and keeps 51..54 u for eleven thinks while sliding round its

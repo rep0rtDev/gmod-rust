@@ -2461,8 +2461,6 @@ const NPC_BLEND_TABLE: [f32; 9] = [0.769, 0.787, 0.723, 0.838, 1.0, 0.919, 0.702
 /// ahead-of-body, weaves round the leg instead of running it: both squad soldiers on the
 /// house-wall leg make 0.45..0.67 of the blend pace at 24..80 deg (server_npc_squad_soldier
 /// 261104 ops 415..653); a leg behind the body (the leader's -80..-114) runs the plain blend.
-/// A sideways run keeps the side key's speed out to this move/body angle (measured to 116).
-const NPC_BLEND_SIDE_HOLD_DEG: f32 = 120.0;
 const NPC_WEAVE_MIN_DEG: f32 = 25.0;
 const NPC_WEAVE_MAX_DEG: f32 = 80.0;
 const NPC_WEAVE_SPEED: f32 = 0.5;
@@ -2470,26 +2468,21 @@ const NPC_WEAVE_SPEED: f32 = 0.5;
 /// Ground-speed fraction of the run blend at `rel` deg of step direction from body yaw
 /// (positive: the step lies left of the facing), linear between the 45-deg keys.
 fn npc_blend_fraction(rel: f32) -> f32 {
-    // the blend's keys run S, SE, E, NE, N, NW, W, SW, S over -180..180 and the game's
-    // sideways runs land on W (0.702: 15.7..16.1 u a think) with the step clockwise of the
-    // body and on E (0.723: the grenade soldier's 16.3 into its node) counter-clockwise, so
-    // the pose angle is the body-to-step angle, the negative of ours
-    let rel = -rel;
-    // the back-diagonal keys do not lift a sideways run: the squad leader (401..485) and the
-    // lone soldier (427..434) hold a flat 15.7..16.1 = the side key for rel -80..-115, where
-    // a linear blend would rise to 17.1
-    let rel = if rel.abs() > 90.0 && rel.abs() <= NPC_BLEND_SIDE_HOLD_DEG {
-        90.0f32.copysign(rel)
-    } else if rel.abs() > NPC_BLEND_SIDE_HOLD_DEG && rel.abs() < 135.0 {
-        (90.0 + (rel.abs() - NPC_BLEND_SIDE_HOLD_DEG) / (135.0 - NPC_BLEND_SIDE_HOLD_DEG) * 45.0)
-            .copysign(rel)
-    } else {
-        rel
-    };
+    // the engine's ground speed of a 9-way blend is the magnitude of the weighted sum of the
+    // blended animations' movement vectors, each along its own direction (a_RunE east of the
+    // body, a_RunSE back-right ...), not the blend of their speeds: the squad leader at pose
+    // -98.5 runs 150.2 u/s (0.19 SE + 0.81 E -> |(148.5,-22.7)|), the mate at +70.4 157.8
+    // (0.44 NW + 0.56 W -> 158.5), both read with GetSequenceGroundSpeed in
+    // .local/oracle/squad_path; a linear blend of the speeds would give 166 / 171
     let t = ((rel.clamp(-180.0, 180.0) + 180.0) / 45.0).clamp(0.0, 7.999);
     let i = t as usize;
     let f = t - i as f32;
-    NPC_BLEND_TABLE[i] + (NPC_BLEND_TABLE[i + 1] - NPC_BLEND_TABLE[i]) * f
+    let mut sum = glam::Vec2::ZERO;
+    for (k, w) in [(i, 1.0 - f), (i + 1, f)] {
+        let a = (-180.0 + 45.0 * k as f32).to_radians();
+        sum += w * NPC_BLEND_TABLE[k] * glam::Vec2::new(-a.sin(), a.cos());
+    }
+    sum.length()
 }
 const NPC_BLEND_ACCEL_MID: f32 = 0.88;
 const NPC_BLEND_ACCEL_SIDE: f32 = 0.77;
