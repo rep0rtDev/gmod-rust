@@ -242,6 +242,22 @@ fn main() -> Result<()> {
             );
         }
     }
+    let ip_bans_path = args.data.join("cfg").join("banned_ip.cfg");
+    if let Ok(text) = std::fs::read_to_string(&ip_bans_path) {
+        for line in text.lines().map(str::trim).filter(|l| !l.is_empty()) {
+            // `addip 0 <ip>` as srcds writes it
+            let ip = line
+                .strip_prefix("addip ")
+                .map_or(line, |r| r.split_once(' ').map_or(r, |(_, k)| k).trim());
+            match gm_net::server::parse_ip(ip) {
+                Some(ip) => {
+                    net.ip_bans.insert(ip, None);
+                }
+                None => eprintln!("{}: bad ip {ip}", ip_bans_path.display()),
+            }
+        }
+    }
+    let mut ip_bans_known = net.ip_bans_rev;
     let mut bans_known = net.bans_rev;
     if !args.addon.is_empty() {
         let mut rt = gm_script::Runtime::new();
@@ -366,6 +382,20 @@ fn main() -> Result<()> {
                 .and_then(|_| std::fs::write(&bans_path, text))
             {
                 eprintln!("banned_user.cfg: {e}");
+            }
+        }
+        if net.ip_bans_rev != ip_bans_known {
+            ip_bans_known = net.ip_bans_rev;
+            let text: String = net
+                .ip_bans
+                .iter()
+                .filter(|(_, exp)| exp.is_none())
+                .map(|(ip, _)| format!("addip 0 {}\n", gm_net::server::ip_text(ip)))
+                .collect();
+            if let Err(e) = std::fs::create_dir_all(args.data.join("cfg"))
+                .and_then(|_| std::fs::write(&ip_bans_path, text))
+            {
+                eprintln!("banned_ip.cfg: {e}");
             }
         }
         if let Some(m) = master {

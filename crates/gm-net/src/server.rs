@@ -116,6 +116,10 @@ pub struct ServerNet {
     pub bans: std::collections::BTreeMap<[u8; 32], Option<u32>>,
     /// Bumped whenever the ban list changes or `writeid` asks for it to be written.
     pub bans_rev: u32,
+    /// srcds's ip filter (`addip` / `removeip` / `listip` / `writeip`): refused at the
+    /// handshake; permanent entries are kept in `<data>/cfg/banned_ip.cfg`.
+    pub ip_bans: std::collections::BTreeMap<[u8; 4], Option<u32>>,
+    pub ip_bans_rev: u32,
     /// Connections beyond this are refused with `full`.
     pub max_players: usize,
     /// Ticks without a packet before a client is dropped (`timed out`).
@@ -181,6 +185,8 @@ impl ServerNet {
             admin_keys: std::collections::BTreeSet::new(),
             bans: std::collections::BTreeMap::new(),
             bans_rev: 0,
+            ip_bans: std::collections::BTreeMap::new(),
+            ip_bans_rev: 0,
             max_players: 64,
             timeout_ticks: DEFAULT_TIMEOUT_TICKS,
             pending_sounds: Vec::new(),
@@ -318,6 +324,12 @@ impl ServerNet {
                 server.add_player(player, self.spawn_origin, Vec3::ZERO);
                 if let Some(c) = self.clients.get_mut(&from) {
                     c.addr = transport.peer_name(from);
+                    // the ip filter turns the handshake away before any name or key is read
+                    if ip_filtered(&self.ip_bans, &c.addr, self.tick) {
+                        refuse(c, "banned");
+                        self.log.push(format!("{} refused: ip banned", c.addr));
+                        continue;
+                    }
                 }
             }
             let open = self.clients.values().filter(|c| !c.closing).count();
@@ -758,6 +770,71 @@ impl ServerNet {
                 self.bans_rev += 1;
                 vec!["Writing cfg/banned_user.cfg.".to_string()]
             }
+            // srcds's ip filter, strings as the live server prints them: addip <minutes> <ip>,
+            // removeip, listip (`i   a.  b.  c.  d : permanent | 5.000 min`), writeip
+            "addip" => {
+                let minutes = rest.first().and_then(|m| m.parse::<f32>().ok());
+                let ip = rest.get(1).and_then(|w| parse_ip(w));
+                let (Some(minutes), Some(ip), true) = (minutes, ip, rest.len() == 2) else {
+                    return vec![
+                        "Usage:  addip < minutes > < ipaddress >".to_string(),
+                        "Use 0 minutes for permanent".to_string(),
+                    ];
+                };
+                let expiry = (minutes > 0.0).then(|| {
+                    self.tick
+                        + (minutes * 60.0 / gm_core::tick::DEFAULT_TICK_INTERVAL).ceil() as u32
+                });
+                self.ip_bans.insert(ip, expiry);
+                self.ip_bans_rev += 1;
+                Vec::new()
+            }
+            "removeip" => match rest.first().and_then(|w| parse_ip(w)) {
+                Some(ip) => {
+                    if self.ip_bans.remove(&ip).is_some() {
+                        self.ip_bans_rev += 1;
+                        vec![format!("removeip:  filter removed for {}", ip_text(&ip))]
+                    } else {
+                        vec![format!("removeip:  couldn't find {}", ip_text(&ip))]
+                    }
+                }
+                None => vec!["Usage:  removeip < slot | ipaddress >".to_string()],
+            },
+            "listip" => {
+                self.prune_ip_bans();
+                if self.ip_bans.is_empty() {
+                    return vec!["IP filter list: empty".to_string()];
+                }
+                let n = self.ip_bans.len();
+                let mut out = vec![format!(
+                    "IP filter list: {n} {}",
+                    if n == 1 { "entry" } else { "entries" }
+                )];
+                for (i, (ip, exp)) in self.ip_bans.iter().enumerate() {
+                    let left = match exp {
+                        None => "permanent".to_string(),
+                        Some(t) => format!(
+                            "{:.3} min",
+                            t.saturating_sub(self.tick) as f32
+                                * gm_core::tick::DEFAULT_TICK_INTERVAL
+                                / 60.0
+                        ),
+                    };
+                    out.push(format!(
+                        "{} {:3}.{:3}.{:3}.{:3} : {left}",
+                        i + 1,
+                        ip[0],
+                        ip[1],
+                        ip[2],
+                        ip[3]
+                    ));
+                }
+                out
+            }
+            "writeip" => {
+                self.ip_bans_rev += 1;
+                vec!["Writing cfg/banned_ip.cfg.".to_string()]
+            }
             "cvar" => match (rest.first(), rest.get(1)) {
                 (Some(n), None) => vec![match server.cvar(n) {
                     Some(v) => format!("{n} = {v}"),
@@ -813,6 +890,15 @@ impl ServerNet {
         self.bans
             .get(key)
             .is_some_and(|exp| exp.is_none_or(|t| t > self.tick))
+    }
+
+    fn prune_ip_bans(&mut self) {
+        let tick = self.tick;
+        let before = self.ip_bans.len();
+        self.ip_bans.retain(|_, exp| exp.is_none_or(|t| t > tick));
+        if self.ip_bans.len() != before {
+            self.ip_bans_rev += 1;
+        }
     }
 
     fn prune_bans(&mut self) {
@@ -2076,6 +2162,32 @@ fn welcome(
 }
 
 /// A reliable `Disconnect` and the slot closes once it is acked (or at the timeout).
+/// Whether the peer address (`ip:port` or a bare ip) is on the ip filter at `tick`.
+fn ip_filtered(
+    bans: &std::collections::BTreeMap<[u8; 4], Option<u32>>,
+    addr: &str,
+    tick: u32,
+) -> bool {
+    let host = addr.rsplit_once(':').map_or(addr, |(h, _)| h);
+    parse_ip(host).is_some_and(|ip| {
+        bans.get(&ip)
+            .is_some_and(|exp| exp.is_none_or(|t| t > tick))
+    })
+}
+
+pub fn parse_ip(text: &str) -> Option<[u8; 4]> {
+    let mut out = [0u8; 4];
+    let mut parts = text.trim().split('.');
+    for o in &mut out {
+        *o = parts.next()?.parse().ok()?;
+    }
+    parts.next().is_none().then_some(out)
+}
+
+pub fn ip_text(ip: &[u8; 4]) -> String {
+    format!("{}.{}.{}.{}", ip[0], ip[1], ip[2], ip[3])
+}
+
 fn refuse(slot: &mut ClientSlot, reason: &str) {
     let mut w = Writer::default();
     ServerMsg::Disconnect {

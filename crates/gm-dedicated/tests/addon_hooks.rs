@@ -2500,6 +2500,13 @@ fn the_admin_console_answers_status_cvar_say_and_denies_others() {
         "say hello all",
         "bogus",
         "kick 999",
+        "addip 0 1.2.3.4",
+        "addip 5 5.6.7.8",
+        "listip",
+        "removeip 5.6.7.8",
+        "removeip 9.9.9.9",
+        "listip",
+        "writeip",
     ] {
         admin.command(gm_net::Command::Console { line: line.into() });
     }
@@ -2520,6 +2527,15 @@ fn the_admin_console_answers_status_cvar_say_and_denies_others() {
     assert!(a.contains("[server] hello all"), "{a}");
     assert!(a.contains("bogus: unknown command"), "{a}");
     assert!(a.contains("kick 999: no such player"), "{a}");
+    // the ip filter answers with srcds's strings (recorded live)
+    assert!(a.contains("IP filter list: 2 entries\n1   1.  2.  3.  4 : permanent\n2   5.  6.  7.  8 : 5.000 min"), "{a}");
+    assert!(a.contains("removeip:  filter removed for 5.6.7.8"), "{a}");
+    assert!(a.contains("removeip:  couldn't find 9.9.9.9"), "{a}");
+    assert!(
+        a.contains("IP filter list: 1 entry\n1   1.  2.  3.  4 : permanent"),
+        "{a}"
+    );
+    assert!(a.contains("Writing cfg/banned_ip.cfg."), "{a}");
     let p = peer.events.join("\n");
     assert!(
         p.contains("[server] hello all") && p.contains("Console denied"),
