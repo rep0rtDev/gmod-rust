@@ -1433,6 +1433,9 @@ impl ServerNet {
             );
         }
         for (id, n) in &server.npcs {
+            if n.model.is_empty() {
+                continue;
+            }
             if self.use_pvs {
                 clusters.insert(*id, server.collision.cluster_at(n.pos));
             }

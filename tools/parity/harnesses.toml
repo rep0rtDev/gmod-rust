@@ -5468,3 +5468,84 @@ realm = "server"
 crates = ["gm-server", "gm-physics"]
 [harness.tolerance]
 pos = 2.0
+
+[[harness]]
+name = "server_npc_tick_strider"
+scenario = "server/npc_tick_strider"
+compare = "server"
+realm = "server"
+crates = ["gm-server", "gm-sandbox"]
+[harness.tolerance]
+pos = 2.0
+
+[[harness]]
+name = "server_npc_tick_headcrab"
+scenario = "server/npc_tick_headcrab"
+compare = "server"
+realm = "server"
+crates = ["gm-server", "gm-sandbox"]
+[harness.tolerance]
+pos = 2.0
+
+[[harness]]
+name = "server_npc_tick_headcrab_fast"
+scenario = "server/npc_tick_headcrab_fast"
+compare = "server"
+realm = "server"
+crates = ["gm-server", "gm-sandbox"]
+[harness.tolerance]
+pos = 2.0
+
+[[harness]]
+name = "server_npc_tick_hunter"
+scenario = "server/npc_tick_hunter"
+compare = "server"
+realm = "server"
+crates = ["gm-server", "gm-sandbox"]
+[harness.tolerance]
+pos = 2.0
+
+[[harness]]
+name = "server_npc_tick_cscanner"
+scenario = "server/npc_tick_cscanner"
+compare = "server"
+realm = "server"
+crates = ["gm-server", "gm-sandbox"]
+[harness.tolerance]
+pos = 2.0
+
+[[harness]]
+name = "server_npc_tick_manhack"
+scenario = "server/npc_tick_manhack"
+compare = "server"
+realm = "server"
+crates = ["gm-server", "gm-sandbox"]
+[harness.tolerance]
+pos = 2.0
+
+[[harness]]
+name = "server_npc_tick_antlionguard"
+scenario = "server/npc_tick_antlionguard"
+compare = "server"
+realm = "server"
+crates = ["gm-server", "gm-sandbox"]
+[harness.tolerance]
+pos = 2.0
+
+[[harness]]
+name = "server_npc_tick_rollermine"
+scenario = "server/npc_tick_rollermine"
+compare = "server"
+realm = "server"
+crates = ["gm-server", "gm-sandbox"]
+[harness.tolerance]
+pos = 2.0
+
+[[harness]]
+name = "server_npc_tick_rollermine_hacked"
+scenario = "server/npc_tick_rollermine_hacked"
+compare = "server"
+realm = "server"
+crates = ["gm-server", "gm-sandbox"]
+[harness.tolerance]
+pos = 2.0

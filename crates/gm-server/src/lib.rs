@@ -2179,6 +2179,9 @@ pub struct Npc {
     /// Non-AI child riding on another NPC (the helicopter's npc_helicoptersensor); removed
     /// with its parent.
     pub child_of: Option<u32>,
+    /// Downward speed (u/s) of a body still settling onto the floor after its spawn (the
+    /// strider's thinks, the rollermine's ticks).
+    pub fall_vel: f32,
     /// The remover's `timer.Simple(1)`: the tick the entity goes after the click made it `MOVETYPE_NONE`.
     pub remove_at: Option<u64>,
     /// Ground speed along a navigation path, u/s.
@@ -2725,6 +2728,29 @@ pub fn npc_non_ai(class: &str) -> bool {
 /// (server_npc_spawn 261107; the gunship and dropship read 1 there).
 pub fn npc_schedule_less(class: &str) -> bool {
     matches!(class, "npc_helicopter")
+}
+
+/// Ticks after the sighting think an idle NPC of `class` keeps IDLE before COMBAT
+/// (NPC_REACTION_TICKS); zero for the classes with their own measured wake-up: zombies wake
+/// angry on the second think, the antlion on the fifth, the guard and strider on the fourth
+/// (through `wake_until`), headcrabs act on the first, birds have their own sit time.
+pub fn npc_reaction_ticks(class: &str) -> u64 {
+    if ai::class_sched_family(class) == Some("zombie")
+        || class.starts_with("npc_headcrab")
+        || matches!(
+            class,
+            "npc_antlion"
+                | "npc_antlionguard"
+                | "npc_strider"
+                | "npc_crow"
+                | "npc_pigeon"
+                | "npc_seagull"
+        )
+    {
+        0
+    } else {
+        NPC_REACTION_TICKS
+    }
 }
 
 pub fn npc_hostile(class: &str) -> bool {
@@ -3529,12 +3555,12 @@ const NPC_FLY_SCANNER: NpcFlyer = NpcFlyer {
 };
 /// Ticks a flyer rises after acquiring its enemy before it moves at it (manhack t982 -> 1012).
 const NPC_FLY_STARTUP_TICKS: u64 = 30;
-/// Thinks after an armed NPC first sights its enemy before it reads COMBAT and acts: the
-/// game's soldier is still IDLE / Idle1_SMG1 at spawn+10 with the player in view
-/// (server_npc_spawn 261107), in COMBAT by +40 (server_npc_squad_soldier); ours used to
-/// crouch into COMBAT on its second think (+10). The burst clock keeps counting from the
+/// ai_reaction_delay_idle (0.3 s): an idle NPC ignores a newly seen enemy for three thinks
+/// after the sighting think and reads COMBAT on the fourth (server_npc_tick_* 261107: guard,
+/// strider, scanner, manhack, rollermine and hunter all flip at spawn+30; the soldier is
+/// still IDLE at spawn+10 and in COMBAT by +40). The burst clock keeps counting from the
 /// sighting.
-const NPC_GUN_STARTUP_TICKS: u64 = 8;
+const NPC_REACTION_TICKS: u64 = 21;
 /// The bounce after a slice lasts this long before the drift back.
 const NPC_FLY_BOUNCE_TICKS: u64 = 55;
 
@@ -5792,17 +5818,9 @@ impl<'w> Server<'w> {
         if !a.scripted || a.schedule.is_none() {
             a.state = if a.state == ai::NPC_STATE_SCRIPT && a.scripted {
                 ai::NPC_STATE_SCRIPT
-            } else if target.is_some()
-                && npc_flyer(&n.class).is_some()
-                && now < n.target_first_seen + NPC_FLY_STARTUP_TICKS
-            {
-                // the manhack / scanner hovers in IDLE on its own idle schedule through its
-                // startup (server_npc_spawn 261107: state 1 at the first wait)
-                ai::NPC_STATE_IDLE
-            } else if target.is_some()
-                && npc_uses_weapons(&n.class)
-                && now < n.target_first_seen + NPC_GUN_STARTUP_TICKS
-            {
+            } else if target.is_some() && now < n.target_first_seen + npc_reaction_ticks(&n.class) {
+                // the reaction delay: the manhack / scanner hovers in IDLE on its own idle
+                // schedule, the soldier stands (server_npc_tick_* 261107)
                 ai::NPC_STATE_IDLE
             } else if target.is_some()
                 && n.target_first_seen != now
@@ -5903,12 +5921,7 @@ impl<'w> Server<'w> {
                 // SCHED_IDLE_STAND in NPC_STATE_IDLE there for every class
                 a.state = ai::NPC_STATE_IDLE;
                 ai::SCHED_IDLE_STAND
-            } else if target.is_some()
-                && ((npc_flyer(&n.class).is_some()
-                    && now < n.target_first_seen + NPC_FLY_STARTUP_TICKS)
-                    || (npc_uses_weapons(&n.class)
-                        && now < n.target_first_seen + NPC_GUN_STARTUP_TICKS))
-            {
+            } else if target.is_some() && now < n.target_first_seen + npc_reaction_ticks(&n.class) {
                 ai::SCHED_IDLE_STAND
             } else if n.melee_swing.is_some() && now < n.swing_until {
                 // the swing's schedule lasts the whole sequence (the fast zombie's roar after
@@ -13911,6 +13924,7 @@ impl<'w> Server<'w> {
     ) -> Npc {
         Npc {
             child_of: None,
+            fall_vel: 0.0,
             special: Default::default(),
             key: def.key.to_string(),
             class: def.class.to_string(),
@@ -15481,8 +15495,85 @@ impl<'w> Server<'w> {
         }
     }
 
+    /// Bodies the game drops onto the floor after the spawn: the strider falls on its thinks
+    /// (v += 600 u/s² over the 7-tick think, z -= v * 0.1 s: 6.3 then 12.6 u) until the floor
+    /// is within STRIDER_HEIGHT below it (server_npc_tick_strider 261107: 506 u over the floor
+    /// at spawn, 487.1 from the third think on); the rollermine is a physics ball that falls
+    /// every tick from 19.2 u over the floor to its 11.4 u rest (server_npc_tick_rollermine*).
+    fn tick_npc_gravity(&mut self) {
+        const STRIDER_HEIGHT: f32 = 490.0;
+        const ROLLERMINE_REST: f32 = 11.4;
+        let now = self.tick_count;
+        let ids: Vec<u32> = self
+            .npcs
+            .iter()
+            .filter(|(_, n)| {
+                n.dead_at.is_none()
+                    && n.body.is_none()
+                    && matches!(
+                        n.class.as_str(),
+                        "npc_strider" | "npc_rollermine" | "npc_rollermine_hacked"
+                    )
+            })
+            .map(|(id, _)| *id)
+            .collect();
+        for id in ids {
+            let (class, pos, think) = {
+                let n = &self.npcs[&id];
+                (n.class.clone(), n.pos, now >= n.next_think)
+            };
+            if class == "npc_strider" {
+                if !think {
+                    continue;
+                }
+                let hit = self
+                    .collision
+                    .trace_ray(
+                        pos,
+                        pos - Vec3::new(0.0, 0.0, STRIDER_HEIGHT),
+                        gm_collision::MASK_PLAYERSOLID,
+                    )
+                    .fraction
+                    < 1.0;
+                let Some(n) = self.npcs.get_mut(&id) else {
+                    continue;
+                };
+                if hit {
+                    n.fall_vel = 0.0;
+                } else {
+                    n.fall_vel += 600.0 * f32::from(NPC_THINK_TICKS) * gm_sandbox::SERVER_TICK;
+                    n.pos.z -= n.fall_vel * 0.1;
+                }
+            } else {
+                let probe = 64.0;
+                let frac = self
+                    .collision
+                    .trace_ray(
+                        pos,
+                        pos - Vec3::new(0.0, 0.0, probe),
+                        gm_collision::MASK_PLAYERSOLID,
+                    )
+                    .fraction;
+                let Some(n) = self.npcs.get_mut(&id) else {
+                    continue;
+                };
+                if frac >= 1.0 {
+                    continue;
+                }
+                let rest = pos.z - probe * frac + ROLLERMINE_REST;
+                if pos.z > rest + 0.01 {
+                    n.fall_vel += 600.0 * gm_sandbox::SERVER_TICK;
+                    n.pos.z = (pos.z - n.fall_vel * gm_sandbox::SERVER_TICK).max(rest);
+                } else {
+                    n.fall_vel = 0.0;
+                }
+            }
+        }
+    }
+
     fn tick_npc_move(&mut self) {
         self.tick_npc_children();
+        self.tick_npc_gravity();
         let prop_bodies = self.prop_bodies();
         let squad_mates: std::collections::HashSet<u32> = self
             .npcs
@@ -17170,7 +17261,7 @@ impl<'w> Server<'w> {
         if n.target_first_seen == 0 {
             n.target_first_seen = now;
         }
-        if npc_uses_weapons(&n.class) && now < n.target_first_seen + NPC_GUN_STARTUP_TICKS {
+        if now < n.target_first_seen + npc_reaction_ticks(&n.class) {
             if !n.ai.scripted {
                 n.ai.start(ai::SCHED_IDLE_STAND, now);
             }
@@ -17557,6 +17648,7 @@ impl<'w> Server<'w> {
             n.target_first_seen = now;
             n.combat_moved = false;
             let antlion = n.class == "npc_antlion";
+            let wakes_late = matches!(n.class.as_str(), "npc_antlionguard" | "npc_strider");
             if n.class == "npc_hunter" {
                 // the hunter's found-enemy intro (server_npc_melee_hunter 261106): walk_all
                 // side-steps, a think of idle_3, hunter_respond_1, the prowl from +119 and
@@ -17573,14 +17665,18 @@ impl<'w> Server<'w> {
                 self.npc_hunter_intro(id, now);
                 return;
             }
-            if ai::class_sched_family(&n.class) == Some("zombie") || antlion {
+            if ai::class_sched_family(&n.class) == Some("zombie") || antlion || wakes_late {
                 // the game: a new enemy in combat runs SCHED_WAKE_ANGRY for one think (7 ticks)
                 // before the chase starts (server_npc_zombie_swat2_*: sched 4 at tick 12, 93 at 19);
                 // the antlion idles four thinks first (server_npc_melee_antlion: `Idle` sched 1
-                // to spawn+30, DistractIdle4 sched 4 to +37, run_all from +37)
+                // to spawn+30, DistractIdle4 sched 4 to +37, run_all from +37), the guard and
+                // strider three (server_npc_tick_antlionguard / _strider: sched 4 at spawn+30,
+                // uprun1 104 / 210 from +37)
                 n.wake_until = now
                     + if antlion {
                         ANTLION_WAKE_TICKS
+                    } else if wakes_late {
+                        NPC_REACTION_TICKS
                     } else {
                         NPC_WAKE_ANGRY_TICKS
                     };
@@ -19489,6 +19585,7 @@ impl<'w> Server<'w> {
             id,
             Npc {
                 child_of: None,
+                fall_vel: 0.0,
                 special: Default::default(),
                 key: def.key.to_string(),
                 class: n.class.clone(),
