@@ -2176,6 +2176,9 @@ pub struct Npc {
     pub settle: bool,
     /// Tick of death: the body lingers `NPC_CORPSE_TICKS` (MOVETYPE_NONE) before it goes.
     pub dead_at: Option<u64>,
+    /// Non-AI child riding on another NPC (the helicopter's npc_helicoptersensor); removed
+    /// with its parent.
+    pub child_of: Option<u32>,
     /// The remover's `timer.Simple(1)`: the tick the entity goes after the click made it `MOVETYPE_NONE`.
     pub remove_at: Option<u64>,
     /// Ground speed along a navigation path, u/s.
@@ -2715,7 +2718,13 @@ const NPC_CHEST_HEIGHT: f32 = 36.0;
 /// Sandbox NPC entries that are not AI NPCs in the game (CBaseAnimating): they report no
 /// NPC state and no schedule (server_npc_spawn 261107: the grub reads -1 / -1).
 pub fn npc_non_ai(class: &str) -> bool {
-    matches!(class, "npc_antlion_grub")
+    matches!(class, "npc_antlion_grub" | "npc_helicoptersensor")
+}
+
+/// AI NPCs without schedules: the game's helicopter reads schedule -1 for good while IDLE
+/// (server_npc_spawn 261107; the gunship and dropship read 1 there).
+pub fn npc_schedule_less(class: &str) -> bool {
+    matches!(class, "npc_helicopter")
 }
 
 pub fn npc_hostile(class: &str) -> bool {
@@ -9746,7 +9755,7 @@ impl<'w> Server<'w> {
         // NPC hulls: the nearest live body on the ray takes the bullet before players behind it
         let mut npc_hit: Option<(u32, f32)> = None;
         for (id, n) in &self.npcs {
-            if n.dead_at.is_some() || n.solid == 0 {
+            if n.dead_at.is_some() || n.solid == 0 || n.child_of.is_some() {
                 continue;
             }
             if let Some(t) = ray_box(eye, d, n.pos + n.mins, n.pos + n.maxs) {
@@ -13901,6 +13910,7 @@ impl<'w> Server<'w> {
         settle: bool,
     ) -> Npc {
         Npc {
+            child_of: None,
             special: Default::default(),
             key: def.key.to_string(),
             class: def.class.to_string(),
@@ -14104,6 +14114,30 @@ impl<'w> Server<'w> {
         }
         self.sandbox.add_count(player, "npcs", id);
         self.sandbox.add_cleanup(player, "npcs", id);
+        if def.class == "npc_helicopter" {
+            // the game's helicopter carries an npc_helicoptersensor child: no model, no health,
+            // a 60 u box riding behind and below it (server_npc_spawn 261107)
+            let mut sensor = self.npcs[&id].clone();
+            sensor.key = "npc_helicoptersensor".into();
+            sensor.class = "npc_helicoptersensor".into();
+            sensor.model = String::new();
+            sensor.health = 0.0;
+            sensor.max_health = 0;
+            sensor.mins = Vec3::splat(-30.0);
+            sensor.maxs = Vec3::splat(30.0);
+            sensor.movetype = 0;
+            sensor.solid = 2;
+            sensor.sequence = String::new();
+            sensor.weapon = String::new();
+            sensor.body = None;
+            sensor.child_of = Some(id);
+            let (pos, ang) = Self::npc_sensor_pose(sensor.pos, sensor.angles);
+            sensor.pos = pos;
+            sensor.angles = ang;
+            let sid = self.sandbox.alloc_foreign();
+            self.npcs.insert(sid, sensor);
+            self.sandbox.add_cleanup(player, "npcs", sid);
+        }
         if npc_physics_class(def.class) {
             let (model, pos, angles) = {
                 let n = &self.npcs[&id];
@@ -15405,7 +15439,50 @@ impl<'w> Server<'w> {
         }
     }
 
+    /// Where the helicopter's sensor rides: 63.11 u behind and 21 u below the helicopter,
+    /// facing its yaw - 270 with a 90 roll (server_npc_spawn 261107: heli at yaw 180 reads
+    /// the sensor at +63.11 x, -21 z, angles 0 / -90 / 90).
+    fn npc_sensor_pose(parent_pos: Vec3, parent_angles: Vec3) -> (Vec3, Vec3) {
+        let yaw = parent_angles.y.to_radians();
+        let pos = parent_pos + Vec3::new(-63.11 * yaw.cos(), -63.11 * yaw.sin(), -21.0);
+        let mut y = parent_angles.y - 270.0;
+        while y <= -180.0 {
+            y += 360.0;
+        }
+        while y > 180.0 {
+            y -= 360.0;
+        }
+        (pos, Vec3::new(0.0, y, 90.0))
+    }
+
+    fn tick_npc_children(&mut self) {
+        let children: Vec<(u32, u32)> = self
+            .npcs
+            .iter()
+            .filter_map(|(&id, n)| n.child_of.map(|p| (id, p)))
+            .collect();
+        for (id, parent) in children {
+            let pose = self
+                .npcs
+                .get(&parent)
+                .filter(|p| p.dead_at.is_none())
+                .map(|p| Self::npc_sensor_pose(p.pos, p.angles));
+            match pose {
+                Some((pos, ang)) => {
+                    if let Some(c) = self.npcs.get_mut(&id) {
+                        c.pos = pos;
+                        c.angles = ang;
+                    }
+                }
+                None => {
+                    self.npcs.remove(&id);
+                }
+            }
+        }
+    }
+
     fn tick_npc_move(&mut self) {
+        self.tick_npc_children();
         let prop_bodies = self.prop_bodies();
         let squad_mates: std::collections::HashSet<u32> = self
             .npcs
@@ -18589,7 +18666,7 @@ impl<'w> Server<'w> {
         let Some(n) = self.npcs.get(&id) else {
             return 0;
         };
-        if npc_non_ai(&n.class) {
+        if npc_non_ai(&n.class) || npc_schedule_less(&n.class) {
             return -1;
         }
         let Some(s) = n.ai.schedule else {
@@ -19411,6 +19488,7 @@ impl<'w> Server<'w> {
         self.npcs.insert(
             id,
             Npc {
+                child_of: None,
                 special: Default::default(),
                 key: def.key.to_string(),
                 class: n.class.clone(),
