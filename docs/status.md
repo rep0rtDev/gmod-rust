@@ -475,6 +475,14 @@ Scores: 0 absent, 0.25 started, 0.5 playable, 0.75 harnesses green within tolera
   do); the target of that swing is unknown - the ain node yaw is 0 (east), the leg heads 13°,
   and _low/_wall arrive without it. Ours holds the enemy to the stop. squad 1265 → 1286 by count from the
   timing shift; the facing structure now matches.
+- Cover-run turn rate: the body coming round to the enemy on the last cover leg turns at the
+  class's standing rate (`idle_yaw` 350 deg/s: server_npc_grenade_soldier ops 554..582, 36 /
+  37 / 37 / 37 a think in RunAIMALL1, MaxYawSpeed's default 35 x 10), a chase re-acquiring
+  its enemy at `NPC_AIM_YAW_RATE` 430 (the _wall rows 138/145 it was measured on) - the split
+  between the two is measured, not explained. Open on the same leg: the game plays
+  RunAIMALL1 until the yaw error is ~24 deg and only then RunALL (op 589, where it turns at
+  150 deg/s: 15 / 16 / 8); ours switches to RunALL three thinks earlier and finishes the turn
+  at the standing rate. Rows unchanged (those ops already differ in position).
 - Squad following range: a squad member running the same route as a mate ahead holds
   ~52 u from it, deflecting the surplus of its step to the open side (the squad's leader
   closes on the mate to 53 u and keeps 51..54 u for eleven thinks while sliding round its

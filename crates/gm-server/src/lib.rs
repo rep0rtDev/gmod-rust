@@ -16691,9 +16691,17 @@ impl<'w> Server<'w> {
                     (g.truncate() - floor.truncate()).normalize(),
                     max_yaw.unwrap_or(class_yaw + NPC_YAW_RATE_PER_SPEED * v0),
                 ),
+                // on a cover run the body comes round to the enemy at the class's standing rate
+                // (server_npc_grenade_soldier 261107 ops 554..582: 36 / 37 / 37 / 37 a think in
+                // RunAIMALL1, MaxYawSpeed's default 35 x 10); a chase re-acquiring its enemy
+                // turns at NPC_AIM_YAW_RATE (the _wall rows the rate was measured on)
                 _ if enemy_face.is_some_and(|k| k.distance_squared(floor.truncate()) > 1e-6) => (
                     (enemy_face.unwrap() - floor.truncate()).normalize(),
-                    max_yaw.unwrap_or(NPC_AIM_YAW_RATE),
+                    max_yaw.unwrap_or(if cover_run {
+                        def.idle_yaw
+                    } else {
+                        NPC_AIM_YAW_RATE
+                    }),
                 ),
                 _ if route_face.is_some_and(|g| g.distance_squared(floor.truncate()) > 1e-6) => (
                     (route_face.unwrap() - floor.truncate()).normalize(),
