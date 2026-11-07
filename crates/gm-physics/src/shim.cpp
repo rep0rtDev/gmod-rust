@@ -706,7 +706,12 @@ public:
 		// touching points the centre of mass does not stand over are a pivot, not a resting
 		// face: the locker landed on one row of feet rocks back under its weight in the game
 		// (`phys_drop_flat_lockers_lo5`: -34 deg/s of pitch gone in 13 ticks, then back)
-		if (touching >= 3 && convexes_of(b1.IsDynamic() ? b1 : b2) > 1) {
+		// ... but only for a body that struck the other within the last 2 s: a chair set down
+		// on its two feet (`server_chair_hull`, the game's stands still) is not landing
+		JPH::uint64 pivot_key = (JPH::uint64(b1.GetID().GetIndexAndSequenceNumber()) << 32) | b2.GetID().GetIndexAndSequenceNumber();
+		auto pivot_rs = rest.find(pivot_key);
+		bool recently_struck = pivot_rs != rest.end() && pivot_rs->second.land_vn > 1.0f && pivot_rs->second.landed_tick >= 0 && tick - pivot_rs->second.landed_tick <= 132;
+		if (touching >= 3 && recently_struck && convexes_of(b1.IsDynamic() ? b1 : b2) > 1) {
 			const JPH::Body &sb = b1.IsDynamic() ? b1 : b2;
 			JPH::Vec3 e1 = n.GetNormalizedPerpendicular(), e2 = n.Cross(e1);
 			JPH::Vec3 c3 = JPH::Vec3(sb.GetCenterOfMassPosition());
