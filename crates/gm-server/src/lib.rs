@@ -16263,8 +16263,7 @@ impl<'w> Server<'w> {
             // in every soldier recording: net displacement of a zigzag round the house, not
             // a gait speed; the lone soldier runs its cover route at full pace)
             let faced = enemy_face.is_some() || route_face.is_some();
-            let squad_band =
-                route_face.is_some() && has_target && squad_mates.contains(&id) && points.len() > 2;
+            let squad_band = route_face.is_some() && has_target && squad_mates.contains(&id);
             let band_err = if enemy_face.is_some() {
                 yaw_err
             } else if squad_band {
