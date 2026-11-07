@@ -106,6 +106,11 @@ struct Scenario {
     globs: Vec<String>,
     #[serde(default)]
     search: Option<String>,
+    /// Server scenario that ran before this one in the same srcds map session when the golden
+    /// was recorded: its NPC classes are spawned (and cleaned up) first so that class schedule
+    /// blocks are registered in the game's order.
+    #[serde(default)]
+    session_prefix: Option<String>,
     #[serde(default)]
     map: Option<String>,
     #[serde(default)]
@@ -4433,6 +4438,21 @@ fn run_server(scn: &Scenario) -> Result<Value> {
         0.0,
     );
     server.add_player(player, start, view0);
+    if let Some(pre) = &scn.session_prefix {
+        let path = Path::new("tools/parity/scenarios/server").join(format!("{pre}.json"));
+        let pre_scn = load_scenario(&path)?;
+        // the class blocks register on the first think: one think period per class keeps
+        // the game's spawn order and the think phase
+        let idle = std::collections::BTreeMap::from([(player, gm_server::PlayerCmd::default())]);
+        for op in pre_scn.ops.iter().filter(|op| op.op == "spawnnpc") {
+            let key = op.class.clone().unwrap_or_default();
+            server.spawn_npc(player, &key, op.weapon.as_deref().unwrap_or("none"));
+            for _ in 0..gm_server::NPC_THINK_TICKS {
+                server.tick(&idle);
+            }
+        }
+        server.cleanup(player);
+    }
     if !scn.segments.is_empty() {
         return run_server_segments(scn, &mount, server, player, start, view0);
     }
