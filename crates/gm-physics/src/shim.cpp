@@ -519,6 +519,9 @@ public:
 	// push step (no friction) and is caught at its leading edge the step after
 	struct RestState { float vt_prev = 0.0f; float vn_in = 0.0f; int phase = 0; int landed_tick = -1; float land_vn = 0.0f; bool ring_land = false; };
 	std::unordered_map<JPH::uint64, RestState> rest;
+	// pair -> tick of its last strike above 0.8 m/s (the pivot rule's gate); unlike `rest` it
+	// survives the sub-shape pairs of a multi-convex body coming and going every tick
+	std::unordered_map<JPH::uint64, int> struck;
 	// the game integrates up to the moment of impact with the old velocity and the rest of the
 	// step with the new one; Jolt integrates the whole step with the new one, so after the step
 	// every impacted body is moved by (v_old - v_new) * t_impact (and turned likewise)
@@ -706,12 +709,20 @@ public:
 		// touching points the centre of mass does not stand over are a pivot, not a resting
 		// face: the locker landed on one row of feet rocks back under its weight in the game
 		// (`phys_drop_flat_lockers_lo5`: -34 deg/s of pitch gone in 13 ticks, then back)
-		// ... but only for a body that struck the other within the last 2 s: a chair set down
-		// on its two feet (`server_chair_hull`, the game's stands still) is not landing
+		// ... but only for a body that struck the other (a face or vertex impact) within the
+		// last 2 s: a chair set down on its two feet (`server_chair_hull`, the game's stands
+		// still) never struck
 		JPH::uint64 pivot_key = (JPH::uint64(b1.GetID().GetIndexAndSequenceNumber()) << 32) | b2.GetID().GetIndexAndSequenceNumber();
-		auto pivot_rs = rest.find(pivot_key);
-		bool recently_struck = pivot_rs != rest.end() && pivot_rs->second.land_vn > 1.0f && pivot_rs->second.landed_tick >= 0 && tick - pivot_rs->second.landed_tick <= 132;
-		if (touching >= 3 && recently_struck && convexes_of(b1.IsDynamic() ? b1 : b2) > 1) {
+		auto pivot_st = struck.find(pivot_key);
+		bool recently_struck = pivot_st != struck.end() && tick - pivot_st->second <= 132;
+		// the strike itself is seen here first, before the impact steps below record it: a
+		// body arriving faster than 0.8 m/s (the locker dropped 2 u: 1.24; a body set on the
+		// floor approaches at g dt = 0.23)
+		float strike_vn = 0.0f;
+		if (touching >= 3)
+			for (const Pt *u : touch) strike_vn = std::min(strike_vn, (point_velocity(b1, u->p) - point_velocity(b2, u->p)).Dot(n));
+		bool striking = strike_vn < -0.8f;
+		if (touching >= 3 && (recently_struck || striking) && convexes_of(b1.IsDynamic() ? b1 : b2) > 1) {
 			const JPH::Body &sb = b1.IsDynamic() ? b1 : b2;
 			JPH::Vec3 e1 = n.GetNormalizedPerpendicular(), e2 = n.Cross(e1);
 			JPH::Vec3 c3 = JPH::Vec3(sb.GetCenterOfMassPosition());
@@ -759,8 +770,9 @@ public:
 					if (k0 > 1e-9f) push(sb, cen3, nd0 * (-vn0 / k0));
 				}
 				touching = 2;
+				if (striking) struck[pivot_key] = tick;
 			}
-			if (debug) fprintf(stderr, "support t=%d n_touch=%zu hull=%zu inside=%d\n", tick, touch.size(), h.size(), (int)inside);
+			if (debug) fprintf(stderr, "support t=%d n_touch=%zu hull=%zu inside=%d strike_vn=%.3f recent=%d\n", tick, touch.size(), h.size(), (int)inside, strike_vn, (int)recently_struck);
 		}
 		// a landing still in progress (vertex impacts last step) whose touching points keep
 		// arriving fast is the next impact, not a rest: the upright drum's -x rim a tick after
@@ -1358,6 +1370,8 @@ public:
 					}
 					t_impact = t_first;
 					rest[pair_key].landed_tick = tick;
+					if (fastest > 0.8f) struck[pair_key] = tick; // a face impact is a strike (the pivot rule's gate)
+					if (debug) fprintf(stderr, "strike t=%d face n=%zu fastest=%.3f spawned_in=%d first_touch=%d\n", tick, face.size(), fastest, (int)spawned_in, (int)first_touch);
 					if (!logged && !face.empty()) {
 						logged = true;
 						const JPH::RVec3 &fp = face[0]->p;
@@ -1475,6 +1489,11 @@ public:
 			if (std::find(cps.begin(), cps.end(), pick->index) == cps.end()) cps.push_back(pick->index);
 			rest[pair_key].landed_tick = tick; // a vertex impact is a landing step too
 			rest[pair_key].land_vn = approach0;
+			// a strike for the pivot rule: the weak re-impacts of a body settling on its feet
+			// (0.13-0.46 m/s every tick, the placed chair's hardest 0.46) are not one; the locker
+			// dropped 2 u arrives at 1.24
+			if (approach0 > 0.8f) struck[pair_key] = tick;
+			if (debug) fprintf(stderr, "strike t=%d vertex approach0=%.3f\n", tick, approach0);
 			if (debug) {
 				const JPH::Body &db = b1.IsDynamic() ? b1 : b2;
 				JPH::Vec3 r = JPH::Vec3(pick->p - db.GetCenterOfMassPosition());
