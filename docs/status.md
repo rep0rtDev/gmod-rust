@@ -326,6 +326,11 @@ Scores: 0 absent, 0.25 started, 0.5 playable, 0.75 harnesses green within tolera
   from where it stands when the bot is still within 156 u (HL2's melee range, bracketed
   110..165 by the record), a chase to contact again beyond. near 423 -> 108 rows; the rest is
   our brake a think later into the first stop (7 u for 7 rows) and the slide 3..7 u short.
+  Open on the flyers: the game's manhack and scanner sway sideways through their whole flight
+  (fly_manhack: +y 0.1 -> 1 u a think while drifting back after the first slice, the second
+  bounce 13 deg off the line and 84 u for our straight 62; fly_cscanner: y -520 at row 90,
+  -480 at 260, -500 at 380, -482 at 510 against our constant -500) - the flight noise of the
+  game's movers (HL2 m_vNoiseMod, random), not a law to copy; our lines stay straight.
   The first think runs 10 ticks after the spawn (`NPC_THINK_PHASE`): the spawnnpc op takes 3
   and the game's first think follows 7 later (every server_npc_tick_* 261107 and
   server_npc_melee_zombie 261105), not on the spawn row as before. The rules that compensated
