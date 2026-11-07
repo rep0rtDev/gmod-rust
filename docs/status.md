@@ -265,8 +265,7 @@ Scores: 0 absent, 0.25 started, 0.5 playable, 0.75 harnesses green within tolera
   at the game's turning points 22 / 17 / 27 / 3 / 23 / 13 u (rows 88 / 168 / 252 / 352 / 480 /
   604; were 40 / 71 / 82 / 19 / 102 / 86 with one hover goal). Open: our horizontal turns are
   instant where the game's carry on 20 u past the spot, the game's idle drift (0.2 u/tick, yaw
-  1 deg/tick) before COMBAT, and server_npc_tick_cscanner flips to COMBAT a think early (the
-  first-think phase). The strider has its own schedule block on the native brain (16 ids in
+  1 deg/tick) before COMBAT. The strider has its own schedule block on the native brain (16 ids in
   npc_strider.cpp order): after WAKE_ANGRY it stands in STRIDER_COMBAT_FACE (+13), the game's
   210 in server_npc_tick_strider (session base; 101 alone here), stomps +5/+6, cannon +0/+1,
   chase +12; the Lua translate scene is unchanged.
@@ -291,6 +290,19 @@ Scores: 0 absent, 0.25 started, 0.5 playable, 0.75 harnesses green within tolera
   The antlion guard's chase is also private in the game (sched_translate_game.txt 17>222,
   104 in server_npc_tick_antlionguard) but its offset could not be pinned from the recordings
   (the neighbouring blocks don't add up) - it still reads SCHED_CHASE_ENEMY here.
+  The first think runs 10 ticks after the spawn (`NPC_THINK_PHASE`): the spawnnpc op takes 3
+  and the game's first think follows 7 later (every server_npc_tick_* 261107 and
+  server_npc_melee_zombie 261105), not on the spawn row as before. The rules that compensated
+  the old phase went with it: the zombie wakes angry on the think that sights its enemy and
+  chases (or swats / swings) from the next, the antlion / guard / strider wake three thinks
+  after the sighting think, the flyers and armed classes count their reaction, startup and
+  first volley from that think (the soldier's suppress volley reads 88 for 35 ticks after it,
+  its first rounds three thinks after it), the classic crab picks its jump on the think after
+  its wake, and the brain reads the class's own idle from the spawn row (manhack / scanner).
+  server_npc_tick_antlionguard 40 -> 26 rows, _strider 114 -> 86, _rollermine 99 -> 92; the
+  zombie, headcrab, grenade and antlion scenes keep their rows. Open: the squad mate's yaw on
+  its first think (7 rows) and a steering swerve in zombie_swat2_drum / _drumside /
+  swat3_c_drumside930 (14 rows each).
 - A zombie's swat is over on the think its swing ends (the swat is cleared in the think, not
   after the move): the chase is reissued there and the body walks a think later (swat2_drumside
   117 vs the game's 110, was 124); drumside930 12 -> 8, drumside 50 -> 51, drum875 7 -> 8.

@@ -2455,7 +2455,10 @@ const NPC_BLEND_ACCEL_MID: f32 = 0.88;
 const NPC_BLEND_ACCEL_SIDE: f32 = 0.77;
 
 pub const NPC_THINK_TICKS: u8 = 7;
-pub const NPC_THINK_PHASE: u64 = 3;
+/// Ticks from the spawn to the first think: the spawnnpc op takes 3 and the game's first
+/// think follows 7 later (server_npc_tick_* 261107 and server_npc_melee_zombie 261105: the
+/// zombie reads WAKE_ANGRY at t_after + 7, the delayed classes flip to COMBAT at + 28).
+pub const NPC_THINK_PHASE: u64 = 10;
 pub const NPC_THINK_TICKS_FAR: u8 = 13;
 /// Outside a player's view cone an NPC farther than this, with no enemy, thinks every `NPC_THINK_TICKS_FAR`
 /// (in the walk recordings the deciding think at ~292 u still ran at 7 ticks, at ~300 u at 13).
@@ -2678,8 +2681,8 @@ pub const NPC_MUZZLE_UP_STANDING: f32 = 57.0;
 /// think t320), the first full burst 55 ticks after the second (t385), then every 49.
 pub const NPC_FIRST_BURST_SHOTS: u8 = 2;
 pub const NPC_FIRST_BURST_GAP_TICKS: u64 = 55;
-/// The standing squad leader's first burst: 59 ticks after its sighting think (server_npc_squad_soldier).
-pub const NPC_MATE_FIRST_BURST_TICKS: u64 = 59;
+/// The standing squad leader's first burst: 52 ticks after its sighting think (server_npc_squad_soldier).
+pub const NPC_MATE_FIRST_BURST_TICKS: u64 = 52;
 /// From the opening volley's last round to the first full burst: t357 -> t385 in
 /// server_npc_grenade_soldier (the game's shot probes), the 49-tick cycle from there.
 pub const NPC_VOLLEY_BURST_GAP_TICKS: u64 = 28;
@@ -2742,7 +2745,7 @@ pub fn npc_stands_in_combat(class: &str) -> bool {
 
 /// Ticks after the sighting think an idle NPC of `class` keeps IDLE before COMBAT
 /// (NPC_REACTION_TICKS); zero for the classes with their own measured wake-up: zombies wake
-/// angry on the second think, the antlion on the fifth, the guard and strider on the fourth
+/// angry on the sighting think, the antlion, guard and strider three thinks after it
 /// (through `wake_until`), headcrabs act on the first, birds have their own sit time.
 pub fn npc_reaction_ticks(class: &str) -> u64 {
     if ai::class_sched_family(class) == Some("zombie")
@@ -3091,9 +3094,10 @@ const NPC_CRAB_THROW_VZ: f32 = 170.5;
 /// think, z +17.7 on the first).
 const NPC_CRAB_HOP_OFF_SPEED: f32 = 200.0;
 const NPC_POISON_WARNING_TICKS: u64 = 77;
-/// SCHED_COMBINE_SUPPRESS lasts the first volley: the game read 88 for 40 ticks after the
-/// sight think and 100 from 43..46 on (server_npc_grenade_soldier); 40 on our 7-tick grid.
-const NPC_SUPPRESS_TICKS: u64 = 40;
+/// SCHED_COMBINE_SUPPRESS lasts the first volley: the game read 88 through the 40-tick wait
+/// after the spawn (t363) and 100 from the think at t365, 35 after the sighting think at
+/// t330 (server_npc_grenade_soldier).
+const NPC_SUPPRESS_TICKS: u64 = 35;
 /// An armed body running with its enemy in sight faces it (RunAIMALL1, the all-directions
 /// blend) for 13 thinks of the run and then turns to its path: the lone soldier of
 /// server_npc_grenade_soldier and the squad leader both leave (992,-499) for the reload cover
@@ -3145,7 +3149,7 @@ pub struct NpcLeap {
     pub poison: bool,
     /// Ticks the NPC stands where it landed before its next decision (the antlion jump).
     pub stand_ticks: u64,
-    /// Thinks between the sighting think and the leap's pre-think (classic crab: 2).
+    /// Thinks between the sighting think and the leap's pre-think (classic crab: 1).
     pub sight_thinks: u64,
     /// The pre-think already shows the leap's label (classic); the fast crab keeps its label.
     pub pre_label: bool,
@@ -3292,7 +3296,7 @@ pub fn npc_leap(class: &str) -> Option<NpcLeap> {
             // later, 108 = 94 + 14) or, with the enemy beyond NPC_CRAB_RUN_AWAY_DIST, the leap's
             // pre-think (fast crab 261106: floor 224, launch 238)
             stand_ticks: 7,
-            sight_thinks: 2,
+            sight_thinks: 1,
             pre_label: true,
             turn_sequence: None,
             leap_sequence: Some("jumpattack_broadcast"),
@@ -3582,8 +3586,10 @@ const NPC_FLY_SCANNER: NpcFlyer = NpcFlyer {
     recharge: 0,
     pass: true,
 };
-/// Ticks a flyer rises after acquiring its enemy before it moves at it (manhack t982 -> 1012).
-const NPC_FLY_STARTUP_TICKS: u64 = 30;
+/// Ticks a flyer rises after the think that sights its enemy before it moves at it: it
+/// goes horizontal on the think it turns COMBAT (server_npc_tick_manhack 261107: x moves
+/// from spawn+28, the reaction delay after the sighting think).
+const NPC_FLY_STARTUP_TICKS: u64 = NPC_REACTION_TICKS;
 /// ai_reaction_delay_idle (0.3 s): an idle NPC ignores a newly seen enemy for three thinks
 /// after the sighting think and reads COMBAT on the fourth (server_npc_tick_* 261107: guard,
 /// strider, scanner, manhack, rollermine and hunter all flip at spawn+30; the soldier is
@@ -5862,7 +5868,6 @@ impl<'w> Server<'w> {
                 // schedule, the soldier stands (server_npc_tick_* 261107)
                 ai::NPC_STATE_IDLE
             } else if target.is_some()
-                && n.target_first_seen != now
                 && (!target_dead || (n.melee_swing.is_some() && now < n.swing_until))
             {
                 // still COMBAT while the swing that killed the enemy finishes
@@ -5950,16 +5955,17 @@ impl<'w> Server<'w> {
         let Some(n) = self.npcs.get_mut(&id) else {
             return;
         };
+        let wake_lagged = n.wake_until > n.target_first_seen + NPC_WAKE_ANGRY_TICKS;
+        let wake_end = if wake_lagged {
+            n.wake_until + NPC_WAKE_ANGRY_TICKS
+        } else {
+            n.wake_until
+        };
         let a = &mut n.ai;
         if !a.scripted {
             // the mirror: name the schedule the native body is running
             let sched = if n.swat.is_some() {
                 ai::SCHED_ZOMBIE_SWATITEM
-            } else if target.is_some() && n.target_first_seen == now {
-                // the think that first sees the enemy only gathers senses: the game reads
-                // SCHED_IDLE_STAND in NPC_STATE_IDLE there for every class
-                a.state = ai::NPC_STATE_IDLE;
-                ai::SCHED_IDLE_STAND
             } else if target.is_some() && now < n.target_first_seen + npc_reaction_ticks(&n.class) {
                 ai::SCHED_IDLE_STAND
             } else if crab && (n.leap_at.is_some() || n.flight.is_some()) {
@@ -5969,7 +5975,7 @@ impl<'w> Server<'w> {
             } else if crab
                 && target.is_some()
                 && !target_dead
-                && now < n.target_first_seen + 2 * u64::from(n.think_interval)
+                && now < n.target_first_seen + u64::from(n.think_interval)
             {
                 // the crab's first COMBAT think is its own wake (WAKE_ANGRY_NO_DISPLAY, 123)
                 ai::SCHED_WAKE_ANGRY
@@ -5980,11 +5986,11 @@ impl<'w> Server<'w> {
                 // to 424 after the bot died on 389, the zombie attackE to 333 after 298) and only
                 // then goes alert
                 ai::SCHED_MELEE_ATTACK1
-            } else if now < n.wake_until + NPC_WAKE_ANGRY_TICKS && target.is_some() && !target_dead
-            {
-                // the first think after the sighting only gathers senses (idle), the next
-                // one wakes angry, the chase shows from the third
-                if now < n.wake_until {
+            } else if now < wake_end && target.is_some() && !target_dead {
+                // the zombie wakes angry on the sighting think and chases from the next (its
+                // wake_until gates the first step); the antlion / guard / strider idle a few
+                // thinks first and wake for one
+                if wake_lagged && now < n.wake_until {
                     a.state = ai::NPC_STATE_IDLE;
                     ai::SCHED_IDLE_STAND
                 } else {
@@ -15451,7 +15457,8 @@ impl<'w> Server<'w> {
             };
             if n.target != Some(p) {
                 n.target = Some(p);
-                n.target_first_seen = now;
+                // the sighting is the first think that sees the enemy
+                n.target_first_seen = n.next_think.max(now);
                 n.fly_side = (enemy - pos).truncate().normalize_or_zero().extend(0.0);
             }
             n.target_seen = now;
@@ -15685,7 +15692,8 @@ impl<'w> Server<'w> {
             return;
         }
         let now = self.tick_count;
-        for n in self.npcs.values_mut() {
+        let mut woke = Vec::new();
+        for (&id, n) in self.npcs.iter_mut() {
             if n.ai.state == ai::NPC_STATE_NONE
                 && n.ai.schedule.is_none()
                 && n.dead_at.is_none()
@@ -15695,7 +15703,13 @@ impl<'w> Server<'w> {
             {
                 n.ai.state = ai::NPC_STATE_IDLE;
                 n.ai.schedule = Some(ai::SCHED_IDLE_STAND);
+                woke.push(id);
             }
+        }
+        // the class's own idle shows from this read (the manhack's 184 / scanner's 120 on the
+        // spawn row of server_npc_tick_* 261107), so its block registers here
+        for id in woke {
+            self.register_class_sched_block(id);
         }
     }
 
@@ -15797,8 +15811,12 @@ impl<'w> Server<'w> {
                         && !n.reloading
                         && n.grenade.is_none()));
             if n.goal.is_none() && n.chase.is_none() && n.target.is_none() && unarmed {
+                // the think that sights the enemy already reads its wake (the zombie's
+                // SCHED_WAKE_ANGRY on server_npc_melee_zombie 261105 op 11)
+                self.npc_combat_think(id, now);
                 self.ai_step(id, now);
                 pre.push(id);
+                pre_combat.push(id);
             } else if leaving_for_cover {
                 self.npc_combat_think(id, now);
                 self.ai_step(id, now);
@@ -15843,6 +15861,12 @@ impl<'w> Server<'w> {
             n.next_think = now + n.think_interval as u64;
             thought.push(id);
             thought_from.insert(id, n.pos);
+            // the thinks up to the wake don't step: the zombie preps its chase on the
+            // sighting think and takes its first step on the next (server_npc_melee_zombie
+            // 261105: 0.5 u with the chase's first read at op 18)
+            if now < n.wake_until {
+                continue;
+            }
             if n.goal.is_none() && n.chase.is_none() && n.target.is_none() {
                 if let Some(want) = n.ideal_yaw {
                     let max_turn = n.max_yaw.unwrap_or(npc_class_yaw(&n.class)) * dt;
@@ -17337,11 +17361,12 @@ impl<'w> Server<'w> {
                 n.next_shot =
                     now + think * NPC_FIRST_BURST_SHOTS as u64 + NPC_FIRST_BURST_GAP_TICKS;
             } else {
-                // the game opens fire four thinks after it enters combat: the suppress volley
-                // is two rounds (server_npc_grenade_soldier: sighting think t323, shots t350
-                // and t357; the first full burst t385, 28 ticks after the volley's last round)
+                // the game opens fire three thinks after its sighting think: the suppress
+                // volley is two rounds (server_npc_grenade_soldier: sighting think t330, shots
+                // t350 and t357; the first full burst t385, 28 ticks after the volley's last
+                // round)
                 n.burst_left = NPC_FIRST_BURST_SHOTS;
-                n.next_shot = now + think * 4;
+                n.next_shot = now + think * 3;
             }
         }
         // a mate that joins before the first round is fired makes this one the standing
@@ -17359,7 +17384,7 @@ impl<'w> Server<'w> {
             // then the volley's 28-tick gap and crouched bursts on the 49-tick cycle
             // (server_npc_squad_soldier: rounds t332..360, t388..416, t437..)
             n.burst_left = NPC_BURST_SHOTS;
-            n.next_shot = (n.target_first_seen + n.think_interval as u64).max(now);
+            n.next_shot = n.target_first_seen.max(now);
         }
         if n.target_seen != 0 && now > n.target_seen + n.think_interval as u64 {
             n.reacquired_at = now;
@@ -17817,12 +17842,17 @@ impl<'w> Server<'w> {
                     n.sequence = "Idle".to_string();
                 }
                 // the swat scan runs at the wake think and every 2 s after it
-                n.next_swat_scan = now + NPC_WAKE_ANGRY_TICKS;
-                n.swing_until = n.swing_until.max(n.wake_until);
+                n.next_swat_scan = n.wake_until;
                 if !n.ai.scripted {
                     n.ai.start(ai::SCHED_IDLE_STAND, now);
                 }
-                return;
+                if antlion || wakes_late {
+                    n.swing_until = n.swing_until.max(n.wake_until);
+                    return;
+                }
+                // the zombie wakes on this think and preps its chase here; its first step
+                // waits for the wake to end (server_npc_melee_zombie 261105: 93 and 0.5 u
+                // together at op 18)
             }
         }
         n.chase_reach = m.start_range.min(m.reach) - 3.0;
@@ -17846,6 +17876,15 @@ impl<'w> Server<'w> {
             }
         }
         if dist <= m.start_range {
+            // the wake think stands in range; the swing starts the next think
+            // (server_npc_zombie_swat2_*: sched 4 through the wake, 103 from the think after)
+            if now < n.wake_until {
+                n.chase = None;
+                n.goal = None;
+                n.next_goal = None;
+                n.move_speed = 0.0;
+                return;
+            }
             // the think whose step arrives in range (or that lands a lunge in range) only
             // stops; the swing starts the next think (the game's fast zombie stands at 869
             // from row 81 and claws at 88, the zombie / can / gascan show `walk` at the claw
@@ -19001,6 +19040,11 @@ impl<'w> Server<'w> {
             return false;
         };
         if !ai::class_is_zombie_body(&n.class) {
+            return false;
+        }
+        // the wake think neither swats nor picks a prop (server_npc_zombie_swat2_*: sched 4
+        // through the wake, SWATITEM from the think after)
+        if now < n.wake_until {
             return false;
         }
         if let Some(sw) = n.swat {
@@ -24884,13 +24928,13 @@ pub const ZOMBIE_SWAT_SPEED: f32 = 800.0;
 pub const ZOMBIE_SWAT_LIFT: f32 = 200.0;
 /// WorldSpaceCenter of a standing player above its origin.
 pub const PLAYER_CENTER_HEIGHT: f32 = 36.0;
-/// One NPC think (0.1 s): a zombie sighting its enemy idles one think, wakes angry the next
-/// (SCHED_WAKE_ANGRY) and chases from the third (server_npc_zombie_swat2_*: sched 1 at tick
-/// 5, 4 at 12, 93 at 19).
+/// One NPC think (0.1 s): a zombie wakes angry (SCHED_WAKE_ANGRY) on the think that sights
+/// its enemy and chases from the next (server_npc_zombie_swat2_*: sched 1 at tick 5, 4 at
+/// 12, 93 at 19).
 pub const NPC_WAKE_ANGRY_TICKS: u64 = 7;
-/// The antlion idles four thinks after sighting its enemy before SCHED_WAKE_ANGRY
-/// (server_npc_melee_antlion: Idle to spawn+30, DistractIdle4 to +37).
-pub const ANTLION_WAKE_TICKS: u64 = 28;
+/// The antlion idles three thinks after the think that sights its enemy before
+/// SCHED_WAKE_ANGRY (server_npc_melee_antlion: Idle to spawn+30, DistractIdle4 to +37).
+pub const ANTLION_WAKE_TICKS: u64 = 21;
 /// A soldier that loses sight of an enemy within this range runs for a line of fire to its
 /// last known position (server_npc_grenade_soldier_wall: one think after, 263 u to a point
 /// past the wall's end); the run is given the enemy memory's length.
@@ -24907,7 +24951,7 @@ pub const NPC_LATERAL_DELTA: f32 = 48.0;
 /// the sequence lasts 63 ticks and releases at tick 42 from the hand 35 u ahead / 22 u below
 /// the eye on an arc with a 255 u apex.
 pub const NPC_SOLDIER_GRENADES: u8 = 5;
-pub const NPC_GRENADE_FIRST_TICKS: u64 = 714;
+pub const NPC_GRENADE_FIRST_TICKS: u64 = 707;
 pub const NPC_GRENADE_PERIOD_TICKS: u64 = 714;
 pub const NPC_GRENADE_MIN_DIST: f32 = 256.0;
 pub const NPC_GRENADE_MAX_DIST: f32 = 1024.0;
