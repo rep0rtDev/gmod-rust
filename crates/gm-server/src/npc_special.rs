@@ -62,7 +62,9 @@ const BARNACLE_MOUTH: f32 = 24.0;
 
 const ROLLER_RANGE: f32 = 1500.0;
 const ROLLER_SPEED: f32 = 300.0;
-const ROLLER_RADIUS: f32 = 20.0;
+/// Rolling resistance of the mine on the floor (u/s^2: the hacked mine's coast 41 -> 9 u/s
+/// over 48 ticks in server_npc_tick_rollermine_hacked 261107).
+const ROLLER_ROLL_DECEL: f32 = 30.0;
 const ROLLER_SHOCK: f32 = 10.0;
 const ROLLER_SHOCK_REACH: f32 = 48.0;
 /// The hop that opens the mine's combat (server_npc_tick_rollermine 261107: 12.5 u up over 11
@@ -598,6 +600,46 @@ impl Server<'_> {
         }
     }
 
+    /// Every mine on the floor, every tick: a uniform sphere's slip settles into a roll at
+    /// v = (5 v + 2 w R) / 7 (angular momentum about the contact point), the roll loses
+    /// ROLLER_ROLL_DECEL and the spin follows the roll (w = up x v / R).
+    pub(crate) fn tick_rollermine_rolling(&mut self) {
+        let r = crate::ROLLER_SPHERE_RADIUS;
+        let bodies: Vec<_> = self
+            .npcs
+            .values()
+            .filter(|n| n.dead_at.is_none() && n.class == "npc_rollermine")
+            .filter_map(|n| n.body.and_then(|p| self.bodies.get(&p).copied()))
+            .collect();
+        for body in bodies {
+            let st = self.physics.state(body);
+            if st.velocity.z.abs() > 5.0 {
+                continue;
+            }
+            let down = self.collision.trace_ray(
+                st.position,
+                st.position - Vec3::Z * (r + 1.0),
+                gm_collision::MASK_PLAYERSOLID,
+            );
+            if down.fraction >= 1.0 {
+                continue;
+            }
+            let w = st.angular_velocity * (std::f32::consts::PI / 180.0);
+            let spin_roll = w.cross(Vec3::Z) * r;
+            let v0 = st.velocity.truncate().extend(0.0);
+            let settled = (v0 * 5.0 + spin_roll.truncate().extend(0.0) * 2.0) / 7.0;
+            let speed = settled.length();
+            let v = if speed > 0.0 {
+                settled * ((speed - ROLLER_ROLL_DECEL * TICK).max(0.0) / speed)
+            } else {
+                Vec3::ZERO
+            };
+            let angular = Vec3::Z.cross(v) / r * (180.0 / std::f32::consts::PI);
+            self.physics
+                .set_velocity(body, Vec3::new(v.x, v.y, st.velocity.z), angular);
+        }
+    }
+
     fn tick_rollermine(&mut self, id: u32, now: u64) {
         self.register_class_sched_block(id);
         // idle stand in NPC_STATE_IDLE from the first think, as the probe reads it
@@ -680,7 +722,8 @@ impl Server<'_> {
         }
         if dist > ROLLER_SHOCK_REACH {
             let v = dir * ROLLER_SPEED;
-            let angular = Vec3::Z.cross(v) / ROLLER_RADIUS * (180.0 / std::f32::consts::PI);
+            let angular =
+                Vec3::Z.cross(v) / crate::ROLLER_SPHERE_RADIUS * (180.0 / std::f32::consts::PI);
             self.physics
                 .set_velocity(body, Vec3::new(v.x, v.y, st.velocity.z), angular);
             if let Some(n) = self.npcs.get_mut(&id) {

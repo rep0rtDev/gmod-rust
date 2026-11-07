@@ -3018,6 +3018,11 @@ pub fn npc_physics_class(class: &str) -> bool {
     matches!(class, "npc_turret_floor" | "npc_rollermine")
 }
 
+/// The rollermine's body is a sphere (its .phy is a near-sphere hull the game rolls on one
+/// axis): the radius sits between the game's rest heights, 13.07 u over the floor for the
+/// hostile mine and 11.37 for the hacked one (server_npc_tick_rollermine* 261107).
+pub const ROLLER_SPHERE_RADIUS: f32 = 12.4;
+
 pub fn npc_hostile_to_players(n: &Npc) -> bool {
     match n.relation {
         Some(d) => d == 1,
@@ -14282,6 +14287,14 @@ impl<'w> Server<'w> {
             let body = self
                 .sandbox
                 .restore_prop(player, &model, pos, angles, false);
+            if def.class == "npc_rollermine" {
+                self.script_shapes.insert(
+                    body,
+                    PhysShape::Sphere {
+                        radius: ROLLER_SPHERE_RADIUS,
+                    },
+                );
+            }
             self.sync_physics();
             if let Some(n) = self.npcs.get_mut(&id) {
                 n.body = Some(body);
@@ -15789,6 +15802,7 @@ impl<'w> Server<'w> {
         self.tick_npc_init();
         self.tick_npc_children();
         self.tick_npc_gravity();
+        self.tick_rollermine_rolling();
         let prop_bodies = self.prop_bodies();
         let squad_mates: std::collections::HashSet<u32> = self
             .npcs
@@ -21259,15 +21273,24 @@ impl<'w> Server<'w> {
                     if matches!(shape, Some(PhysShape::None)) {
                         continue;
                     }
-                    let own_hulls = shape.as_ref().and_then(|sh| sh.hulls());
+                    // a sphere is a true Jolt sphere; the model's hulls still size its drag
+                    let sphere = match shape {
+                        Some(PhysShape::Sphere { radius }) => Some(radius),
+                        _ => None,
+                    };
+                    let own_hulls = if sphere.is_some() {
+                        None
+                    } else {
+                        shape.as_ref().and_then(|sh| sh.hulls())
+                    };
                     let hulls: &[Vec<Vec3>] = own_hulls.as_deref().unwrap_or(&info.hulls);
                     let volume = shape
                         .as_ref()
                         .and_then(|sh| sh.volume())
                         .unwrap_or(info.volume);
                     // a scripted shape keeps the model's mass (the game's PhysicsInitBox does)
-                    let own_shape = own_hulls.is_some();
-                    let Ok(body) = self.physics.add_prop(&PropDesc {
+                    let own_shape = own_hulls.is_some() || sphere.is_some();
+                    let desc = PropDesc {
                         hulls,
                         mass: info.mass,
                         volume,
@@ -21285,7 +21308,12 @@ impl<'w> Server<'w> {
                         } else {
                             Some(info.mass_center)
                         },
-                    }) else {
+                    };
+                    let made = match sphere {
+                        Some(r) => self.physics.add_sphere_prop(&desc, r),
+                        None => self.physics.add_prop(&desc),
+                    };
+                    let Ok(body) = made else {
                         continue;
                     };
                     if p.frozen || matches!(shape, Some(PhysShape::Static)) {

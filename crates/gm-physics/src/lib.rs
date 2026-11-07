@@ -807,20 +807,41 @@ impl World {
     }
 
     pub fn add_prop(&mut self, desc: &PropDesc<'_>) -> Result<BodyHandle> {
+        self.add_prop_shaped(desc, None)
+    }
+
+    /// A prop whose body is a true sphere of `radius` (Source units) instead of its hulls
+    /// (`PhysicsInitSphere`, the rollermine): the hulls still size its drag.
+    pub fn add_sphere_prop(&mut self, desc: &PropDesc<'_>, radius: f32) -> Result<BodyHandle> {
+        self.add_prop_shaped(desc, Some(radius))
+    }
+
+    fn add_prop_shaped(&mut self, desc: &PropDesc<'_>, sphere: Option<f32>) -> Result<BodyHandle> {
         let volume_m3 = desc.volume.max(1.0) * UNITS_TO_METERS * UNITS_TO_METERS * UNITS_TO_METERS;
         let density = desc.mass / volume_m3;
-        let mut parts = Vec::with_capacity(desc.hulls.len());
-        for h in desc.hulls {
-            parts.push(self.convex_shape(h, density)?);
-        }
-        if parts.is_empty() {
-            return Err(Error::EmptyShape);
-        }
-        let mut shape = self.compound(&parts)?;
-        if let Some(c) = desc.mass_center {
-            let cj = to_jolt(c) - to_jolt(Vec3::ZERO);
-            shape = unsafe { gmp_offset_com_shape(shape, cj.x, cj.y, cj.z) };
-        }
+        let shape = if let Some(radius) = sphere {
+            unsafe {
+                let mut settings: JPC_SphereShapeSettings = std::mem::zeroed();
+                JPC_SphereShapeSettings_default(&mut settings);
+                settings.Radius = radius * UNITS_TO_METERS;
+                settings.Density = density;
+                self.create_shape(|out, err| JPC_SphereShapeSettings_Create(&settings, out, err))?
+            }
+        } else {
+            let mut parts = Vec::with_capacity(desc.hulls.len());
+            for h in desc.hulls {
+                parts.push(self.convex_shape(h, density)?);
+            }
+            if parts.is_empty() {
+                return Err(Error::EmptyShape);
+            }
+            let mut shape = self.compound(&parts)?;
+            if let Some(c) = desc.mass_center {
+                let cj = to_jolt(c) - to_jolt(Vec3::ZERO);
+                shape = unsafe { gmp_offset_com_shape(shape, cj.x, cj.y, cj.z) };
+            }
+            shape
+        };
         let rot = quat_from_angles(desc.angles.0, desc.angles.1, desc.angles.2);
         unsafe {
             let mut settings: JPC_BodyCreationSettings = std::mem::zeroed();
@@ -880,18 +901,22 @@ impl World {
                 desc.surface.friction,
                 desc.surface.elasticity,
             );
-            let verts: Vec<f32> = desc
-                .hulls
-                .iter()
-                .flat_map(|h| h.iter().flat_map(|&p| to_jolt(p).to_array()))
-                .collect();
-            gmp_set_hull_points(
-                self.system.as_raw(),
-                id,
-                verts.as_ptr(),
-                (verts.len() / 3) as u32,
-            );
-            gmp_set_hull_convexes(self.system.as_raw(), id, desc.hulls.len() as u32);
+            // the impact pass pushes from a body's hull vertices; a sphere has none (it falls
+            // back to the manifold point)
+            if sphere.is_none() {
+                let verts: Vec<f32> = desc
+                    .hulls
+                    .iter()
+                    .flat_map(|h| h.iter().flat_map(|&p| to_jolt(p).to_array()))
+                    .collect();
+                gmp_set_hull_points(
+                    self.system.as_raw(),
+                    id,
+                    verts.as_ptr(),
+                    (verts.len() / 3) as u32,
+                );
+                gmp_set_hull_convexes(self.system.as_raw(), id, desc.hulls.len() as u32);
+            }
             if let Some(i) = desc.inertia {
                 self.inertias.insert(id, i);
                 gmp_set_inertia(

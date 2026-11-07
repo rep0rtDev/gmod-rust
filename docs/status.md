@@ -341,16 +341,17 @@ Scores: 0 absent, 0.25 started, 0.5 playable, 0.75 harnesses green within tolera
   prefix leaves neither undo entries nor a removal count behind. The NPC rows left are the
   turret's 1.2 u, the hunter's 1.2 u / 3.75 deg, the grub's 5 u, the fast headcrab's
   RNG-seeded patrol on its spawn row and the session's class block ids.
-  The rollermine's faceted hull is behind three open rows (the game runs the same .phy on
-  VPhysics): the hacked mine's inertia roll (tick_rollermine_hacked) heads 155 deg for the
-  game's 188 - from the 17th tick it rises 0.8 u and turns (yaw/roll rates growing to 5 deg a
-  tick) on a floor that is flat, the hull climbing an edge; the hostile mine's hop lands on an
-  edge that reverses its spin (-138 -> +164 deg/s) so it rolls 17 u/s away from the player
-  where the game rolls 33 u/s toward him (the hop itself matches within 0.3 u; the spin
-  Z x dir is the rolling sense toward him, traced); and the idle hull creeps 10 u/s^2 on the
-  flat floor where the game's sleeps. A true Jolt sphere matches the roll distance but needs a
-  rolling-resistance law (Jolt has none: the sphere rolls 9 u off its spawn before the hop)
-  and a re-fit of the hop and roll constants the hull's drag had absorbed - queued, not done.
+  The rollermine's body is a true Jolt sphere (`Physics::add_sphere_prop`, radius 12.4 u
+  between the game's two rest heights), with a rolling law every tick on the floor: a uniform
+  sphere's slip settles to v = (5 v + 2 w R) / 7, the roll loses 30 u/s^2 on top of Jolt's
+  ~15 (the game's hacked coast 41 -> 9 u/s over 48 ticks), the spin follows the roll. The
+  shim's IVP impact pass pushes from a body's registered hull vertices, so a sphere registers
+  none (with the hull's it reversed the roll on touchdown). The mine now rolls on one axis
+  like the game (the hacked mine's +8 u lateral wander is gone: within 1 u along its line,
+  tick_rollermine_hacked 59 -> 46 rows, all angle 5..15 deg and 1.4 u of height), the idle
+  hull's creep is gone. Open: after the hostile hop the game rolls 33 u/s at the player
+  where ours settles to 12 - our in-air spin decays 310 -> 140 deg/s under the angular drag
+  the hop constants were fitted with.
   The first think runs 10 ticks after the spawn (`NPC_THINK_PHASE`): the spawnnpc op takes 3
   and the game's first think follows 7 later (every server_npc_tick_* 261107 and
   server_npc_melee_zombie 261105), not on the spawn row as before. The rules that compensated
