@@ -76,12 +76,11 @@ const ROLLER_HOP_TICKS: u64 = 29;
 /// Horizontal speed the hop carries toward the player (u/s: 2 u over the 26 airborne ticks).
 const ROLLER_HOP_DRIFT: f32 = 5.3;
 /// The hacked mine's spin-up toward its player right after its spawn (deg/s), the roll it lands
-/// with (u/s) and the tick of its first think, where it drops to its idle stand and coasts
+/// with (u/s) and its first think (NPC_THINK_PHASE), where it drops to its idle stand and coasts
 /// (server_npc_tick_rollermine_hacked 261107: PATH_TO_PLAYER while falling, then 17 u of roll
 /// over 50 ticks).
 const ROLLER_NUDGE_SPIN: f32 = 180.0;
 const ROLLER_NUDGE_SPEED: f32 = 36.0;
-const ROLLER_FIRST_THINK: u64 = 9;
 
 const VORT_RANGE: f32 = 1000.0;
 const VORT_ZAP: f32 = 50.0;
@@ -801,7 +800,7 @@ impl Server<'_> {
                     n.special.target = Some(p);
                 }
             }
-            2 if now >= n.spawn_tick + ROLLER_FIRST_THINK => {
+            2 if now >= n.spawn_tick + crate::NPC_THINK_PHASE => {
                 if let (Some(&body), Some(p)) = (
                     n.body.and_then(|prop| self.bodies.get(&prop)),
                     n.special.target,
