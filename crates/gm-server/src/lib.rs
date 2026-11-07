@@ -8582,6 +8582,8 @@ pub struct Server<'w> {
     pub vehicles: BTreeMap<u32, Vehicle>,
     /// Ticks that removed an entity since undo.lua last purged dead undo lists (every 16).
     undo_purge_ticks: u32,
+    /// An NPC went this tick (undo.lua counts every entity removal, see `UNDO_PURGE_EVERY`).
+    npc_removed: bool,
     /// (player, scripted entity) pairs whose hulls overlapped last tick, for the touch edges.
     pub sent_player_touch: std::collections::HashSet<(u32, u32)>,
     /// `(player, prop)` pairs whose hull the player's move is resting against: the soft
@@ -8767,6 +8769,7 @@ impl<'w> Server<'w> {
             parents: HashMap::new(),
             vehicles: BTreeMap::new(),
             undo_purge_ticks: 0,
+            npc_removed: false,
             sent_player_touch: std::collections::HashSet::new(),
             prop_touch: std::collections::HashSet::new(),
             prop_hit_at: BTreeMap::new(),
@@ -9297,6 +9300,8 @@ impl<'w> Server<'w> {
     /// Forgets every undo entry (a fresh session's list).
     pub fn clear_undo_history(&mut self) {
         self.sandbox.clear_undos();
+        self.undo_purge_ticks = 0;
+        self.npc_removed = false;
     }
 
     /// The `kill` console command: the addon runtime may refuse (`CanPlayerSuicide`).
@@ -14511,6 +14516,7 @@ impl<'w> Server<'w> {
                 self.remove_prop(body);
             }
             self.sandbox.remove_entity(id);
+            self.npc_removed = true;
         }
     }
 
@@ -15665,6 +15671,7 @@ impl<'w> Server<'w> {
                 }
                 None => {
                     self.npcs.remove(&id);
+                    self.npc_removed = true;
                 }
             }
         }
@@ -20102,7 +20109,11 @@ impl<'w> Server<'w> {
             .filter(|(id, _)| !self.sandbox.is_foreign(**id))
             .filter_map(|(_, n)| n.body)
             .collect();
+        let before = self.npcs.len();
         self.npcs.retain(|id, _| self.sandbox.is_foreign(*id));
+        if self.npcs.len() != before {
+            self.npc_removed = true;
+        }
         for body in dropped_bodies {
             self.remove_prop(body);
         }
@@ -22416,9 +22427,11 @@ impl<'w> Server<'w> {
         self.ride_vehicles();
         // undo.lua counts ticks with removals (its EntityRemoved hook coalesces them through a
         // 0 s timer) and purges all-dead undo lists on every 16th
-        if self.events[events_at_start.min(self.events.len())..]
-            .iter()
-            .any(|e| matches!(e, Event::Removed { .. }))
+        let npc_removed = std::mem::take(&mut self.npc_removed);
+        if npc_removed
+            || self.events[events_at_start.min(self.events.len())..]
+                .iter()
+                .any(|e| matches!(e, Event::Removed { .. }))
         {
             self.undo_purge_ticks += 1;
             if self.undo_purge_ticks >= UNDO_PURGE_EVERY {

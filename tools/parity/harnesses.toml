@@ -5576,3 +5576,12 @@ realm = "server"
 crates = ["gm-server", "gm-sandbox"]
 [harness.tolerance]
 pos = 2.0
+
+[[harness]]
+name = "server_undo_purge"
+scenario = "server/undo_purge"
+compare = "server"
+realm = "server"
+crates = ["gm-server", "gm-sandbox"]
+[harness.tolerance]
+pos = 2.0

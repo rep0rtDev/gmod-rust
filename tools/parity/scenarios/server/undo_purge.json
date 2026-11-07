@@ -1,0 +1,1148 @@
+{
+ "name": "server_undo_purge",
+ "kind": "server",
+ "map": "gm_construct",
+ "start": [
+  823.235,
+  -500.0,
+  -143.0
+ ],
+ "settle": 40,
+ "props": [
+  {
+   "model": "models/props_junk/wood_crate001a.mdl",
+   "pos": [
+    900.0,
+    -440.0,
+    -123.7
+   ],
+   "angles": [
+    0,
+    0,
+    0
+   ],
+   "frozen": true
+  }
+ ],
+ "ops": [
+  {
+   "op": "spawnnpc",
+   "class": "npc_zombie",
+   "weapon": "none",
+   "pitch": 20.0,
+   "yaw": 0.0
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "cleanup"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "spawnnpc",
+   "class": "npc_zombie",
+   "weapon": "none",
+   "pitch": 20.0,
+   "yaw": 0.0
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "click",
+   "tool": "remover",
+   "pitch": 20.0,
+   "yaw": 0.0,
+   "wait": 10
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "spawnnpc",
+   "class": "npc_zombie",
+   "weapon": "none",
+   "pitch": 20.0,
+   "yaw": 0.0
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "undo",
+   "wait": 10
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "spawnnpc",
+   "class": "npc_zombie",
+   "weapon": "none",
+   "pitch": 20.0,
+   "yaw": 0.0
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "spawnnpc",
+   "class": "npc_zombie",
+   "weapon": "none",
+   "pitch": 20.0,
+   "yaw": 15.0
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "cleanup"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "spawnnpc",
+   "class": "npc_zombie",
+   "weapon": "none",
+   "pitch": 20.0,
+   "yaw": 0.0
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "click",
+   "tool": "remover",
+   "pitch": 20.0,
+   "yaw": 38.0,
+   "wait": 10
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "cleanup"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  }
+ ]
+}

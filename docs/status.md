@@ -331,12 +331,15 @@ Scores: 0 absent, 0.25 started, 0.5 playable, 0.75 harnesses green within tolera
   bounce 13 deg off the line and 84 u for our straight 62; fly_cscanner: y -520 at row 90,
   -480 at 260, -500 at 380, -482 at 510 against our constant -500) - the flight noise of the
   game's movers (HL2 m_vNoiseMod, random), not a law to copy; our lines stay straight.
-  server_npc_spawn's 218 rows are mostly undo bookkeeping notes: the game keeps the dead undo
-  entries of NPCs removed by the cleanup (16 -> 58 over the scene, no purge) where the weapon
-  records (f0602ce) had undo.lua purge all-dead lists every 16 removing ticks - the two kinds
-  of removal differ in the game and the rule is not pinned yet. A session prefix no longer
-  leaves its own undo entries behind (the recorded list starts empty). The NPC rows left are
-  the turret's 1.2 u, the hunter's 1.2 u / 3.75 deg, the grub's 5 u, the fast headcrab's
+  server_npc_spawn 218 -> 94 rows: the undo list follows undo.lua's own rule (the module ships
+  with srcds): every tick that removed any entity - NPCs too, which our counter skipped - bumps
+  a session-wide counter, the 16th runs CleanupInvalidUndos, which drops the dead entities out
+  of the entries (until then `#undo.Entities` still counts them, server_undo_purge 261107) and
+  forgets the player's list only when every entry is empty; a live entry keeps the dead ones.
+  The first two drops land on the game's cleanups (#16, #33); the third is ours #48 against
+  the game's #47 (two removal ticks the game's spawns of that stretch add - open). A session
+  prefix leaves neither undo entries nor a removal count behind. The NPC rows left are the
+  turret's 1.2 u, the hunter's 1.2 u / 3.75 deg, the grub's 5 u, the fast headcrab's
   RNG-seeded patrol on its spawn row and the session's class block ids.
   The hacked rollermine's inertia roll (tick_rollermine_hacked) heads 155 deg for the game's
   188: from the 17th tick our mine rises 0.8 u and starts turning (yaw/roll rates growing to 5

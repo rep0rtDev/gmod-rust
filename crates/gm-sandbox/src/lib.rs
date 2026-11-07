@@ -2164,8 +2164,9 @@ impl Sandbox {
     }
 
     /// undo.lua's `CleanupInvalidUndos` (run by its EntityRemoved hook every 16 ticks that
-    /// removed something): a player whose every undo entry has no live entity left loses the
-    /// whole list; lists with a live entry keep even their dead entries.
+    /// removed something): the sweep drops the dead entities out of every entry (until it
+    /// runs, an entry still counts them: `#undo.Entities`), then a player whose every entry
+    /// is empty loses the whole list; one live entity keeps the list, dead entries included.
     pub fn purge_dead_undos(&mut self) {
         let live: std::collections::HashSet<u32> = self
             .props
@@ -2174,8 +2175,10 @@ impl Sandbox {
             .chain(self.foreign.iter().copied())
             .collect();
         self.undo.retain(|_, list| {
-            list.iter()
-                .any(|u| u.entities.iter().any(|e| live.contains(e)))
+            for u in list.iter_mut() {
+                u.entities.retain(|e| live.contains(e));
+            }
+            list.iter().any(|u| !u.entities.is_empty())
         });
     }
 
