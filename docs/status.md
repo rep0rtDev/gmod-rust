@@ -278,6 +278,10 @@ Scores: 0 absent, 0.25 started, 0.5 playable, 0.75 harnesses green within tolera
   and coasts 17 u from its first think (server_npc_tick_rollermine_hacked: ours 17.6 u, the
   early decay is faster - 6.6 vs 4.5 u at tick 15). The roll drive's spin is now in deg/s (was
   passed in rad/s: 57x too slow).
+  The hunter's block is 38 ids (sched_translate_game.txt hunter: cannon +0/+1, melee +2,
+  combat face +6, alert +8, idle wander +14): the native brain reads its patrol (+14) in IDLE
+  and FOUND_ENEMY (+23, its roar) through the first 94 ticks of COMBAT, as
+  server_npc_tick_hunter 261107 (163 / 172 there, 102 / 111 alone here).
 - A zombie's swat is over on the think its swing ends (the swat is cleared in the think, not
   after the move): the chase is reissued there and the body walks a think later (swat2_drumside
   117 vs the game's 110, was 124); drumside930 12 -> 8, drumside 50 -> 51, drum875 7 -> 8.

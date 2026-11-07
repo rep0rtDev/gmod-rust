@@ -3588,6 +3588,9 @@ const NPC_FLY_STARTUP_TICKS: u64 = 30;
 /// still IDLE at spawn+10 and in COMBAT by +40). The burst clock keeps counting from the
 /// sighting.
 const NPC_REACTION_TICKS: u64 = 21;
+/// How long the hunter reads SCHED_HUNTER_FOUND_ENEMY from its first sight of the enemy
+/// (server_npc_tick_hunter 261107: standing through the scene's 30 combat ticks).
+const NPC_HUNTER_FOUND_TICKS: u64 = 94;
 /// The bounce after a slice lasts this long before the drift back.
 const NPC_FLY_BOUNCE_TICKS: u64 = 55;
 
@@ -18918,6 +18921,13 @@ impl<'w> Server<'w> {
                 "antlion" if s == ai::SCHED_MELEE_ATTACK1 => swing
                     .filter(|m| m.lunge > 0.0)
                     .map(|m| base + if m.damage == 0.0 { 33 } else { 32 }),
+                // the hunter acknowledges a found enemy (its roar) through its first combat ticks
+                "hunter"
+                    if n.ai.state == ai::NPC_STATE_COMBAT
+                        && self.tick_count < n.target_first_seen + NPC_HUNTER_FOUND_TICKS =>
+                {
+                    Some(base + 23)
+                }
                 // the hacked mine's path to its player while it falls in after its spawn
                 "rollermine" if n.special.phase == 2 => Some(base + 7),
                 // the headcrab's own jump attack while winding up or airborne

@@ -693,6 +693,7 @@ pub fn family_sched_reserve(family: &str) -> u16 {
         // `manhack`: 41 three before the idle, 24 one before)
         "manhack" => 22,
         "strider" => 16,
+        "hunter" => 38,
         "rollermine" => 10,
         _ => CLASS_SCHED_RESERVE,
     }
@@ -751,6 +752,18 @@ pub fn class_schedule(family: &str, class: &str, shared: u16) -> Option<u16> {
         // BURIED_UNBURROW, FLEE, ALERT_STAND, NUDGE_TOWARDS_NODES, PATH_TO_PLAYER,
         // ROLL_TO_PLAYER, POWERDOWN (server_npc_tick_rollermine 261107 hops in +0, the block
         // right before the strider's of that session)
+        // npc_hunter.cpp (sched_translate_game.txt hunter: 43>+0, 44>+1, 41>+2, 12>+6, 36>+8,
+        // 9>+14; server_npc_tick_hunter 261107: its idle patrol +14, FOUND_ENEMY +23 on COMBAT,
+        // the block of 38 right before the rollermine's of that session)
+        "hunter" => match shared {
+            SCHED_RANGE_ATTACK1 => Some(0),
+            SCHED_RANGE_ATTACK2 => Some(1),
+            SCHED_MELEE_ATTACK1 => Some(2),
+            SCHED_COMBAT_FACE => Some(6),
+            36 => Some(8),
+            SCHED_IDLE_WANDER | SCHED_IDLE_STAND => Some(14),
+            _ => None,
+        },
         "rollermine" => match shared {
             SCHED_RANGE_ATTACK1 => Some(0),
             SCHED_CHASE_ENEMY => Some(1),
