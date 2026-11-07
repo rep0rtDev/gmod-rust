@@ -2718,7 +2718,9 @@ pub fn npc_hostile(class: &str) -> bool {
         "npc_combine_s"
             | "npc_metropolice"
             | "npc_zombie"
+            | "npc_zombie_torso"
             | "npc_fastzombie"
+            | "npc_fastzombie_torso"
             | "npc_poisonzombie"
             | "npc_zombine"
             | "npc_headcrab"
@@ -3393,8 +3395,10 @@ pub fn npc_melee_moves(class: &str) -> Option<(&'static [NpcMelee], usize)> {
         },
     ];
     match class {
-        "npc_zombie" | "npc_zombine" => Some((&ZOMBIE, 0)),
-        "npc_fastzombie" => Some((&FAST, 0)),
+        // the classic torso claws like its walker (and only an attacking class wakes to
+        // its enemy: server_npc_spawn 261107 reads it in COMBAT / WAKE_ANGRY after its spawn)
+        "npc_zombie" | "npc_zombine" | "npc_zombie_torso" => Some((&ZOMBIE, 0)),
+        "npc_fastzombie" | "npc_fastzombie_torso" => Some((&FAST, 0)),
         "npc_antlion" => Some((&ANTLION, 1)),
         "npc_poisonzombie" => Some((&POISON, 1)),
         "npc_hunter" => Some((&HUNTER, 1)),
