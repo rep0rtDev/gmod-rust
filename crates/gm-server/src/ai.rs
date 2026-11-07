@@ -655,6 +655,7 @@ pub fn class_sched_family(class: &str) -> Option<&'static str> {
         "npc_hunter" => Some("hunter"),
         "npc_combine_s" => Some("combine"),
         "npc_citizen" => Some("citizen"),
+        "npc_alyx" => Some("alyx"),
         _ => None,
     }
 }
@@ -681,6 +682,9 @@ pub fn family_sched_reserve(family: &str) -> u16 {
         // CAI_PlayerAlly's 3 talker schedules, then the behaviours (assault first) and the
         // citizen's own; only the assault block is measured, the size is the HL2 count
         "citizen" => 60,
+        // CAI_PlayerAlly + CNPC_PlayerCompanion blocks, then Alyx's own eight (her idle stand
+        // reads 177 = 88 + 89 when she is the first class of the session: server_npc_spawn)
+        "alyx" => 92,
         _ => CLASS_SCHED_RESERVE,
     }
 }
@@ -772,6 +776,20 @@ pub fn class_schedule(family: &str, class: &str, shared: u16) -> Option<u16> {
         // measured on a citizen under ai_goal_assault (server_npc_assault_citizen): 91 running
         // to the rally point, 96 holding it, 94 running to an assault point, 98 holding one;
         // under ai_goal_lead (server_npc_lead_citizen*): 114 retrieving the player, 115 waiting
+        // sched_translate_game.txt `alyx`: SetSchedule(i) read back as the game numbers them
+        // with Alyx registered first (ids here relative to FIRST_CLASS_SCHEDULE)
+        "alyx" => match shared {
+            43 => Some(84),
+            7 => Some(85),
+            12 => Some(86),
+            4 => Some(87),
+            SCHED_IDLE_STAND => Some(89),
+            6 => Some(90),
+            78 => Some(91),
+            28 => Some(67),
+            29 => Some(69),
+            _ => None,
+        },
         "citizen" => match shared {
             SCHED_ASSAULT_MOVE_TO_RALLY => Some(3),
             SCHED_ASSAULT_MOVE_TO_POINT => Some(6),
