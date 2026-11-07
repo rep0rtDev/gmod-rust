@@ -71,6 +71,8 @@ const ROLLER_SHOCK_REACH: f32 = 48.0;
 const ROLLER_HOP: f32 = 130.0;
 const ROLLER_HOP_SPIN: f32 = 330.0;
 const ROLLER_HOP_TICKS: u64 = 29;
+/// Horizontal speed the hop carries toward the player (u/s: 2 u over the 26 airborne ticks).
+const ROLLER_HOP_DRIFT: f32 = 5.3;
 /// The hacked mine's spin-up toward its player right after its spawn (deg/s), the roll it lands
 /// with (u/s) and the tick of its first think, where it drops to its idle stand and coasts
 /// (server_npc_tick_rollermine_hacked 261107: PATH_TO_PLAYER while falling, then 17 u of roll
@@ -622,7 +624,9 @@ impl Server<'_> {
                 }
             }
         }
-        if now < combat_at + u64::from(crate::NPC_THINK_TICKS) {
+        // the hop opens on the COMBAT think itself (sched 187, spikes out, 1.7 u up on that
+        // row in server_npc_tick_rollermine 261107)
+        if now < combat_at {
             return;
         }
         let Some(n) = self.npcs.get(&id) else {
@@ -647,9 +651,13 @@ impl Server<'_> {
         let dist = (target - centre).length();
         // the game's mine opens with a hop in place and only rolls once it is back on the floor
         if n.special.phase == 0 {
+            // the spin is the rolling sense toward the player (w = up x dir): on touchdown it
+            // turns into a ~33 u/s roll his way with no further push (ops 59..63 of the
+            // record), and the hop itself drifts his way at ROLLER_HOP_DRIFT
+            let drift = dir * ROLLER_HOP_DRIFT;
             self.physics.set_velocity(
                 body,
-                Vec3::new(st.velocity.x, st.velocity.y, ROLLER_HOP),
+                Vec3::new(drift.x, drift.y, ROLLER_HOP),
                 Vec3::Z.cross(dir) * ROLLER_HOP_SPIN,
             );
             if let Some(n) = self.npcs.get_mut(&id) {
@@ -662,7 +670,12 @@ impl Server<'_> {
             }
             return;
         }
-        if now < n.special.until || st.velocity.z.abs() > 5.0 {
+        // the mine acts on its thinks: after the landing it coasts on its spin until the next
+        // one (the record ends on its roll at 187 before that think)
+        if now < n.special.until
+            || st.velocity.z.abs() > 5.0
+            || !(now - combat_at).is_multiple_of(u64::from(crate::NPC_THINK_TICKS))
+        {
             return;
         }
         if dist > ROLLER_SHOCK_REACH {
