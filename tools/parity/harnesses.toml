@@ -5533,6 +5533,24 @@ crates = ["gm-server", "gm-sandbox"]
 pos = 2.0
 
 [[harness]]
+name = "server_npc_run_antlionguard"
+scenario = "server/npc_run_antlionguard"
+compare = "server"
+realm = "server"
+crates = ["gm-server", "gm-sandbox"]
+[harness.tolerance]
+pos = 2.0
+
+[[harness]]
+name = "server_npc_run_antlionguard_mid"
+scenario = "server/npc_run_antlionguard_mid"
+compare = "server"
+realm = "server"
+crates = ["gm-server", "gm-sandbox"]
+[harness.tolerance]
+pos = 2.0
+
+[[harness]]
 name = "server_npc_tick_rollermine"
 scenario = "server/npc_tick_rollermine"
 compare = "server"

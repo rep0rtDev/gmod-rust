@@ -164,117 +164,200 @@ impl Server<'_> {
         }
     }
 
-    /// `CNPC_AntlionGuard`'s charge (HL2's rule, not measured): an enemy player 256..2048 u
-    /// away down a clear line starts a 1 s wind-up facing them, then the guard runs that line
-    /// at 700 u/s for up to 2 s; the player caught within 80 u ahead takes
-    /// `sk_antlionguard_dmg_charge` (20) and is launched, a wall ends the run; 4 s before the
-    /// next. Phases in `special`: 0 idle, 1 wind-up, 2 running, 3 cooling down.
+    /// `CNPC_AntlionGuard`'s charge, measured in server_npc_run_antlionguard / _mid 261107 (the
+    /// bot 923 / 401 u down a clear line; the tick scene's 161 u chases instead): the wake think
+    /// reads SCHED_ANTLIONGUARD_CHARGE and the guard moves on every think - nine wind-up thinks
+    /// of 3.45 + 0.845 k u, a 33.16 u transition think, then 49.44 u a think (471 u/s) until its
+    /// hull meets the player's (56 u between the centres: the bot is struck and flung) or a
+    /// wall; the stop is the brake table GUARD_BRAKE (44.49 .. 0.10 u, a last 1.02 u shuffle
+    /// back) and the brain takes the think after (contact + 112 ticks: the run record winds up
+    /// again at once, the mid record chases first).
+    /// Phases in `special`: 0 idle / cooling down (`until`), 1 wind-up, 2 running, 3 braking;
+    /// `next_hit` counts the phase's thinks (in phase 0 the tick the brain resumes on).
     fn tick_guard(&mut self, id: u32, now: u64) {
-        const WINDUP: f32 = 1.0;
-        const RUN: f32 = 2.0;
-        const COOLDOWN: f32 = 4.0;
-        const SPEED: f32 = 700.0;
-        const REACH: f32 = 80.0;
+        /// HL2's ANTLIONGUARD_CHARGE_MIN / _MAX; the records bracket the floor at 161..401 u.
+        const CHARGE_MIN: f32 = 256.0;
+        const CHARGE_MAX: f32 = 2048.0;
+        const WINDUP_FIRST: f32 = 3.45;
+        const WINDUP_RAMP: f32 = 0.845;
+        const WINDUP_THINKS: u64 = 9;
+        const RUN_FIRST: f32 = 33.16;
+        const RUN_STEP: f32 = 49.44;
+        /// A safety cap no record reaches: the 923 u run meets the bot on its 20th think.
+        const RUN_THINKS: u64 = 40;
+        /// The player's hull half-width: the run stops with the hulls touching.
+        const CONTACT: f32 = 16.0;
+        const GUARD_BRAKE: [f32; 15] = [
+            44.49, 38.63, 32.77, 26.91, 21.05, 6.70, 1.02, 0.89, 0.76, 0.62, 0.49, 0.36, 0.23,
+            0.10, -1.02,
+        ];
         const DAMAGE: f32 = 20.0;
+        /// The next charge is allowed this long after the wind-up think (the mid record charges
+        /// again on the think at +273 after eight thinks of chase; the run record's brake ends
+        /// past it and winds up again on its resume think).
+        const GUARD_RECHARGE_TICKS: u64 = 273;
+        /// The struck bot's launch (mid record: 11.07 u a tick along the charge, 4.66 up less
+        /// half a tick of gravity).
+        const FLING: f32 = 738.0;
+        const FLING_UP: f32 = 315.0;
         let Some(n) = self.npcs.get(&id) else {
             return;
         };
-        if !npc_hostile_to_players(n) || n.ai.scripted {
+        if !npc_hostile_to_players(n) || n.ai.scripted || n.dead_at.is_some() {
             return;
         }
-        let (pos, mins, maxs) = (n.pos, n.mins, n.maxs);
-        let (phase, until, dir, target) = (
+        let interval = u64::from(n.think_interval);
+        let (phase, until, dir, target, count) = (
             n.special.phase,
             n.special.until,
             n.special.dir,
             n.special.target,
+            n.special.next_hit,
         );
-        let lift = Vec3::new(0.0, 0.0, crate::NPC_STEP_LIFT);
-        match phase {
-            0 | 3 => {
-                if phase == 3 && now < until {
-                    return;
-                }
-                let Some((p, origin)) = self
-                    .players
-                    .iter()
-                    .filter(|(_, pl)| pl.alive)
-                    .map(|(i, pl)| (*i, pl.state.origin))
-                    .min_by(|a, b| {
-                        a.1.distance_squared(pos)
-                            .total_cmp(&b.1.distance_squared(pos))
-                    })
-                else {
-                    return;
-                };
-                let flat = (origin - pos).truncate();
-                let dist = flat.length();
-                if !(256.0..=2048.0).contains(&dist) {
-                    return;
-                }
-                let d = flat.normalize_or_zero().extend(0.0);
-                let props = self.prop_bodies();
-                let line_end = origin.truncate().extend(pos.z);
-                let tr = self.npc_sweep(&props, pos + lift, line_end + lift, mins, maxs);
-                if tr.fraction < 0.9 {
-                    return;
-                }
-                if let Some(n) = self.npcs.get_mut(&id) {
-                    n.special.phase = 1;
-                    n.special.until = now + ticks(WINDUP);
-                    n.special.dir = d;
-                    n.special.target = Some(p);
-                    n.angles.y = d.y.atan2(d.x).to_degrees();
-                }
+        let (pos, mins, maxs) = (n.pos, n.mins, n.maxs);
+        if phase == 0 {
+            // the brain's think tick (it has just bumped next_think), awake and in combat
+            if n.next_think != now + interval
+                || now < until
+                || now < n.wake_until
+                || n.ai.state != crate::ai::NPC_STATE_COMBAT
+            {
+                return;
             }
+            let Some(p) = n.target else {
+                return;
+            };
+            let Some(origin) = self
+                .players
+                .get(&p)
+                .filter(|pl| pl.alive)
+                .map(|pl| pl.state.origin)
+            else {
+                return;
+            };
+            let flat = (origin - pos).truncate();
+            let dist = flat.length();
+            if !(CHARGE_MIN..=CHARGE_MAX).contains(&dist) {
+                return;
+            }
+            let d = flat.normalize_or_zero().extend(0.0);
+            let lift = Vec3::new(0.0, 0.0, crate::NPC_STEP_LIFT);
+            let props = self.prop_bodies();
+            let line_end = origin.truncate().extend(pos.z);
+            let tr = self.npc_sweep(&props, pos + lift, line_end + lift, mins, maxs);
+            if tr.fraction < 0.9 {
+                return;
+            }
+            if let Some(n) = self.npcs.get_mut(&id) {
+                n.special.phase = 1;
+                n.special.next_hit = 1;
+                n.special.until = now + GUARD_RECHARGE_TICKS;
+                n.special.dir = d;
+                n.special.target = Some(p);
+                n.angles.y = d.y.atan2(d.x).to_degrees();
+                n.goal = None;
+                n.chase = None;
+                n.next_goal = None;
+                n.move_speed = 0.0;
+            }
+            // the wake think is the first wind-up think
+            self.guard_advance(id, d * WINDUP_FIRST);
+            return;
+        }
+        if now < n.next_think {
+            return;
+        }
+        if let Some(n) = self.npcs.get_mut(&id) {
+            n.next_think = now + interval;
+            n.special.next_hit = count + 1;
+            // the enemy stays taken through the charge (the brain's sight check is gated)
+            n.target_seen = now;
+        }
+        match phase {
             1 => {
-                if now >= until {
+                self.guard_advance(id, dir * (WINDUP_FIRST + WINDUP_RAMP * count as f32));
+                if count + 1 >= WINDUP_THINKS {
                     if let Some(n) = self.npcs.get_mut(&id) {
                         n.special.phase = 2;
-                        n.special.until = now + ticks(RUN);
+                        n.special.next_hit = 0;
                     }
                 }
             }
             2 => {
-                let step = dir * (SPEED * gm_core::tick::DEFAULT_TICK_INTERVAL);
-                let props = self.prop_bodies();
-                let tr = self.npc_sweep(&props, pos + lift, pos + step + lift, mins, maxs);
-                let reached = if tr.start_solid { pos + lift } else { tr.end };
-                let floor = self
-                    .npc_floor(reached, mins, maxs)
-                    .unwrap_or(reached - lift);
-                let moved = floor.truncate().distance(pos.truncate());
-                let mut done = now >= until || moved < step.length() * 0.5;
-                if let Some(n) = self.npcs.get_mut(&id) {
-                    n.pos = floor;
-                    n.angles.y = dir.y.atan2(dir.x).to_degrees();
-                }
-                if let Some(p) = target {
-                    let caught = self.players.get(&p).is_some_and(|pl| {
-                        let rel = pl.state.origin - floor;
-                        pl.alive
-                            && rel.dot(dir) > 0.0
-                            && rel.truncate().length() < REACH + maxs.x
-                            && rel.z.abs() < 80.0
-                    });
-                    if caught {
-                        if self.damage_player(p, DAMAGE, crate::weapons::DMG_CRUSH) > 0.0 {
-                            if let Some(pl) = self.players.get_mut(&p) {
-                                pl.state.velocity += dir * 500.0 + Vec3::Z * 250.0;
-                            }
+                let step = if count == 0 { RUN_FIRST } else { RUN_STEP };
+                let mut len = step;
+                let mut struck = None;
+                if let Some(pl) = target
+                    .and_then(|p| self.players.get(&p))
+                    .filter(|pl| pl.alive)
+                {
+                    let rel = (pl.state.origin - pos).truncate();
+                    let along = rel.dot(dir.truncate());
+                    let side = (rel - dir.truncate() * along).length();
+                    if along > 0.0 && side < maxs.x + CONTACT {
+                        let gap = along - (maxs.x + CONTACT);
+                        if gap < len {
+                            len = gap.max(0.0);
+                            struck = target;
                         }
-                        done = true;
                     }
                 }
-                if done {
+                let moved = self.guard_advance(id, dir * len);
+                let blocked = moved + 0.5 < len;
+                if let Some(p) = struck {
+                    if self.damage_player(p, DAMAGE, crate::weapons::DMG_CRUSH) > 0.0 {
+                        if let Some(pl) = self.players.get_mut(&p) {
+                            pl.state.velocity += dir * FLING + Vec3::Z * FLING_UP;
+                            pl.state.on_ground = false;
+                            pl.state.phys_lift = true;
+                        }
+                    }
+                }
+                if struck.is_some() || blocked || count + 1 >= RUN_THINKS {
                     if let Some(n) = self.npcs.get_mut(&id) {
                         n.special.phase = 3;
-                        n.special.until = now + ticks(COOLDOWN);
+                        n.special.next_hit = 0;
+                    }
+                }
+            }
+            3 => {
+                let i = count as usize;
+                let step = GUARD_BRAKE.get(i).copied().unwrap_or(0.0);
+                self.guard_advance(id, dir * step);
+                if i + 1 >= GUARD_BRAKE.len() {
+                    // the brain takes the next think; the charge reads until then
+                    if let Some(n) = self.npcs.get_mut(&id) {
+                        n.special.phase = 0;
+                        n.special.next_hit = now + interval;
+                        n.move_speed = 0.0;
                     }
                 }
             }
             _ => {}
         }
+    }
+
+    /// Moves the guard `delta` along the floor, stopped by the world and props; the horizontal
+    /// distance it made.
+    fn guard_advance(&mut self, id: u32, delta: Vec3) -> f32 {
+        let Some(n) = self.npcs.get(&id) else {
+            return 0.0;
+        };
+        let (pos, mins, maxs) = (n.pos, n.mins, n.maxs);
+        if delta.length_squared() < 1e-6 {
+            return 0.0;
+        }
+        let lift = Vec3::new(0.0, 0.0, crate::NPC_STEP_LIFT);
+        let props = self.prop_bodies();
+        let tr = self.npc_sweep(&props, pos + lift, pos + delta + lift, mins, maxs);
+        let reached = if tr.start_solid { pos + lift } else { tr.end };
+        let floor = self
+            .npc_floor(reached, mins, maxs)
+            .unwrap_or(reached - lift);
+        if let Some(n) = self.npcs.get_mut(&id) {
+            n.pos = floor;
+        }
+        floor.truncate().distance(pos.truncate())
     }
 
     fn tick_turret(&mut self, id: u32, now: u64) {

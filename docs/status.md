@@ -304,7 +304,20 @@ Scores: 0 absent, 0.25 started, 0.5 playable, 0.75 harnesses green within tolera
   The antlion guard's chase is private in the game too: the 12th id of its own block after the
   blended 5 (104 = 88 + 5 + 11 with the guard the first class of server_npc_tick_antlionguard;
   sched_translate_game.txt 17>222 is the same offset from that session's base) - family
-  `antlionguard` (17 ids), tick_antlionguard 26 -> 19 rows, sched_translate_antlionguard 0.
+  `antlionguard` (17 ids, not blended: the run records read the charge as 88 = the block's
+  first id, so the chase is +16), sched_translate_antlionguard 0.
+  The guard's charge is measured now (two new live records, server_npc_run_antlionguard with
+  the bot 923 u off and _mid with 401 u; the tick scene's 161 u chases): the wake think reads
+  SCHED_ANTLIONGUARD_CHARGE and the guard moves every think - nine wind-up thinks of
+  3.45 + 0.845 k u, a 33.16 u transition think, 49.44 u a think (471 u/s) until its hull meets
+  the player's (56 u between the centres: 20 damage, the bot flung 738 u/s along the line and
+  315 up, leaving the ground), then the brake table 44.49 .. 0.10 u and a 1.02 u shuffle back;
+  the brain takes the think after (contact + 112) and the next charge is allowed 273 ticks
+  after the wind-up think (the mid record chases eight thinks first, the run record's brake
+  ends past it and winds up again at once). The chase's ramp is 383 u/s² (2.11, 6.33, 10.54 ..
+  31.62 u a think); its plateau is unrecorded (both records charge again before it), the
+  charge's 471 stands in. tick_antlionguard 19 -> 0 rows, run 958 -> 402, mid 479 -> 213; the
+  rest is the game's lateral gait sway (2..3.5 u of y over the brake and the chase).
   The first think runs 10 ticks after the spawn (`NPC_THINK_PHASE`): the spawnnpc op takes 3
   and the game's first think follows 7 later (every server_npc_tick_* 261107 and
   server_npc_melee_zombie 261105), not on the spawn row as before. The rules that compensated

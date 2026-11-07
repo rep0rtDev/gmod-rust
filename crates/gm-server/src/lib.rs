@@ -3755,6 +3755,17 @@ const NPC_MOVE_ANTLION: NpcMoveDef = NpcMoveDef {
     run_accel: 706.0,
     idle_yaw: NPC_YAW_RATE,
 };
+/// Antlion guard chase measured in server_npc_tick_antlionguard / _run_antlionguard_mid
+/// 261107: 2.11, 6.33, 10.54, 14.76 .. 31.62 u per think (+4.22 u per think² = 383 u/s²); no
+/// recorded chase runs long enough to plateau (the mid record charges again at 301 u/s), so
+/// the top speed is the charge's 471 u/s until a longer chase is recorded.
+const NPC_MOVE_GUARD: NpcMoveDef = NpcMoveDef {
+    walk: 471.0,
+    walk_accel: 383.0,
+    run: 471.0,
+    run_accel: 383.0,
+    idle_yaw: NPC_YAW_RATE,
+};
 /// Poison zombie walk measured in server_npc_melee_poisonzombie (5.85 u per think).
 const NPC_MOVE_POISONZOMBIE: NpcMoveDef = NpcMoveDef {
     walk: 55.2,
@@ -3800,6 +3811,7 @@ pub fn npc_move_def(class: &str) -> NpcMoveDef {
         "npc_zombie" | "npc_zombine" => NPC_MOVE_ZOMBIE,
         "npc_fastzombie" => NPC_MOVE_FASTZOMBIE,
         "npc_antlion" => NPC_MOVE_ANTLION,
+        "npc_antlionguard" => NPC_MOVE_GUARD,
         "npc_poisonzombie" => NPC_MOVE_POISONZOMBIE,
         "npc_headcrab" | "npc_headcrab_black" => NPC_MOVE_HEADCRAB,
         "npc_headcrab_fast" => NPC_MOVE_HEADCRAB_FAST,
@@ -15806,8 +15818,8 @@ impl<'w> Server<'w> {
             if now < n.next_think {
                 continue;
             }
-            // the antlion guard winding up or running its charge is driven by tick_guard
-            if n.class == "npc_antlionguard" && matches!(n.special.phase, 1 | 2) {
+            // the antlion guard winding up, running or braking its charge is driven by tick_guard
+            if n.class == "npc_antlionguard" && (1..=3).contains(&n.special.phase) {
                 continue;
             }
             // an idle brain decides before the body moves: a route it issues this think is
@@ -19017,9 +19029,18 @@ impl<'w> Server<'w> {
                 "antlion" if s == ai::SCHED_MELEE_ATTACK1 => swing
                     .filter(|m| m.lunge > 0.0)
                     .map(|m| base + if m.damage == 0.0 { 33 } else { 32 }),
-                // the guard's private chase (server_npc_tick_antlionguard: 104 from the think it
-                // steps on; sched_translate_game: SetSchedule(17) reads 222)
-                "antlionguard" if s == ai::SCHED_CHASE_ENEMY => Some(base + 11),
+                // the charge, the first of its block, through the wind-up, run and brake
+                // (server_npc_run_antlionguard_mid: 88 from the wake think to the think before
+                // the chase resumes)
+                "antlionguard"
+                    if (1..=3).contains(&n.special.phase)
+                        || (n.special.phase == 0 && self.tick_count < n.special.next_hit) =>
+                {
+                    Some(base)
+                }
+                // the guard's private chase, the last of its block (server_npc_tick_antlionguard:
+                // 104 from the think it steps on; sched_translate_game: SetSchedule(17) reads 222)
+                "antlionguard" if s == ai::SCHED_CHASE_ENEMY => Some(base + 16),
                 // the manhack after a slice: its bounce and drift back read the block's 21st
                 // (server_npc_fly_manhack 261106: 108 from the think after each slice to the next)
                 "manhack" if n.fly_hit_at > 0 => Some(base + 20),
