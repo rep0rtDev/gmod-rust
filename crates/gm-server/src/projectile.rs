@@ -126,6 +126,8 @@ pub enum Event {
     None,
     /// Removed this tick at the point (rocket explosion, bolt on the sky, ball expiry).
     Removed(Vec3),
+    /// Stuck into the world this tick at the point (bolt).
+    Stuck(Vec3),
 }
 
 /// The ignited rocket's turn this tick (degrees of pitch, yaw) from last tick's turn, its
@@ -528,6 +530,7 @@ impl Projectile {
                 ));
                 self.movetype = MoveType::None;
                 self.velocity = Vec3::ZERO;
+                return Event::Stuck(self.origin);
             }
         }
         Event::None

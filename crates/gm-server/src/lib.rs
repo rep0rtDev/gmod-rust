@@ -10571,6 +10571,16 @@ impl<'w> Server<'w> {
                     died.push((pr.kind, pr.owner, at));
                     keep.push(false);
                 }
+                projectile::Event::Stuck(at) => {
+                    // crossbow_bolt `BoltTouch` on the world
+                    self.sounds.push(WorldSound {
+                        name: "Weapon_Crossbow.BoltHitWorld".to_string(),
+                        pos: at,
+                        volume: 1.0,
+                        ..Default::default()
+                    });
+                    keep.push(true);
+                }
                 projectile::Event::None => {
                     let (kind, owner, end) = (pr.kind, pr.owner, pr.origin);
                     let touch = match kind {
@@ -10659,6 +10669,13 @@ impl<'w> Server<'w> {
                         }
                         (weapons::Launch::Bolt, Some((target, at))) => {
                             self.projectiles[i].origin = at;
+                            // crossbow_bolt `BoltTouch` on a living target
+                            self.sounds.push(WorldSound {
+                                name: "Weapon_Crossbow.BoltHitBody".to_string(),
+                                pos: at,
+                                volume: 1.0,
+                                ..Default::default()
+                            });
                             self.hits.push(Hit {
                                 tick: self.tick_count,
                                 attacker: owner,

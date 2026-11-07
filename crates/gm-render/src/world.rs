@@ -711,6 +711,9 @@ pub struct WorldRenderer {
     shadow_pipeline: wgpu::RenderPipeline,
     shadow_layers: Vec<wgpu::TextureView>,
     camera_bind_group: wgpu::BindGroup,
+    /// [`camera_bind_group`](Self::camera_bind_group) with a stand-in for the shadow array,
+    /// for the pass that renders that array.
+    shadow_camera_bind_group: wgpu::BindGroup,
     vertex_buffer: wgpu::Buffer,
     index_buffer: wgpu::Buffer,
     batches: Vec<Batch>,
@@ -2458,6 +2461,59 @@ impl WorldRenderer {
                 },
             ],
         });
+        // the flashlight depth pass writes a layer of the shadow array, so its camera bind
+        // group must not hold that array (wgpu: a texture is not a resource and a depth
+        // attachment of one pass): a 1x1 stand-in takes binding 4 there
+        let shadow_dummy = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("flashlight depth stand-in"),
+            size: wgpu::Extent3d {
+                width: 1,
+                height: 1,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Depth32Float,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
+        });
+        let shadow_dummy_view = shadow_dummy.create_view(&wgpu::TextureViewDescriptor {
+            dimension: Some(wgpu::TextureViewDimension::D2Array),
+            ..Default::default()
+        });
+        let shadow_camera_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("camera (flashlight depth)"),
+            layout: &camera_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: camera_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::TextureView(
+                        &lm_tex.create_view(&Default::default()),
+                    ),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::Sampler(&lm_sampler),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: wgpu::BindingResource::TextureView(&cube_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: wgpu::BindingResource::TextureView(&shadow_dummy_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 5,
+                    resource: wgpu::BindingResource::Sampler(&shadow_sampler),
+                },
+            ],
+        });
         // mat_trilinear / mat_forceaniso (anisotropic filtering implies trilinear)
         let aniso = quality.aniso.clamp(1, 16) as u16;
         let mip_filter = if quality.trilinear || aniso > 1 {
@@ -3103,6 +3159,7 @@ impl WorldRenderer {
             shadow_pipeline,
             shadow_layers,
             camera_bind_group,
+            shadow_camera_bind_group,
             vertex_buffer,
             index_buffer,
             batches,
@@ -3915,7 +3972,7 @@ impl WorldRenderer {
                 ..Default::default()
             });
             pass.set_pipeline(&self.shadow_pipeline);
-            pass.set_bind_group(0, &self.camera_bind_group, &[]);
+            pass.set_bind_group(0, &self.shadow_camera_bind_group, &[]);
             pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
             pass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
             for b in &self.batches {
