@@ -331,6 +331,12 @@ Scores: 0 absent, 0.25 started, 0.5 playable, 0.75 harnesses green within tolera
   bounce 13 deg off the line and 84 u for our straight 62; fly_cscanner: y -520 at row 90,
   -480 at 260, -500 at 380, -482 at 510 against our constant -500) - the flight noise of the
   game's movers (HL2 m_vNoiseMod, random), not a law to copy; our lines stay straight.
+  The scanner's body turns toward its goal (the enemy in COMBAT, its flight line before)
+  through a rate-limited turn - rate toward 0.12 deg/tick per degree of error, capped 4.8,
+  winding up 0.13 and braking 0.25 deg/tick^2 (fly_cscanner 261106: the turn over the bot
+  ramps 1.06 -> 4.81 deg/tick, overshoots 9 deg) - instead of snapping to its velocity. Over
+  the bot the game's yaw sits 12 deg off the line its noise drifted it to, so it turns the
+  other way round from ours, which flies the exact line (bearing 180, the side a coin flip).
   server_npc_spawn 218 -> 94 rows: the undo list follows undo.lua's own rule (the module ships
   with srcds): every tick that removed any entity - NPCs too, which our counter skipped - bumps
   a session-wide counter, the 16th runs CleanupInvalidUndos, which drops the dead entities out

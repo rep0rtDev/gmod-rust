@@ -2237,6 +2237,9 @@ pub struct Npc {
     /// A flyer's velocity (u/tick) and the tick of its last slice.
     pub fly_vel: Vec3,
     pub fly_hit_at: u64,
+    /// A scanner's yaw rate (deg/tick): its body turns toward its goal through a
+    /// rate-limited turn, not a snap (`NPC_SCANNER_YAW_*`).
+    pub fly_yaw_rate: f32,
     /// The approach direction when the enemy was acquired: the hover goal's line.
     pub fly_side: Vec3,
     /// The scanner's first-pass leg (see `NpcFlyer::pass`).
@@ -3587,6 +3590,13 @@ const NPC_FLY_MANHACK: NpcFlyer = NpcFlyer {
 /// (260 u/s), the descent runs 1.8, the cruise 1.5 u/tick (100 u/s); it hovers 100..110 u
 /// beyond the bot 150..170 above it before its photograph (inspect2). Its first pass dives
 /// over the bot (apex 197 above, 87 over its head) to a spot 125 u beyond - the legs of `pass`.
+/// The scanner body's turn toward its goal (deg/tick per degree of error, cap, acceleration
+/// speeding up and braking: the record brakes twice as hard as it winds up).
+const NPC_SCANNER_YAW_GAIN: f32 = 0.12;
+const NPC_SCANNER_YAW_MAX: f32 = 4.8;
+const NPC_SCANNER_YAW_ACCEL: f32 = 0.13;
+const NPC_SCANNER_YAW_BRAKE: f32 = 0.25;
+
 const NPC_FLY_SCANNER: NpcFlyer = NpcFlyer {
     max: 1.5,
     accel: 0.03,
@@ -14126,6 +14136,7 @@ impl<'w> Server<'w> {
             melee_stood: 0,
             fly_vel: Vec3::ZERO,
             fly_hit_at: 0,
+            fly_yaw_rate: 0.0,
             fly_side: Vec3::ZERO,
             fly_leg: 0,
             fly_leg_at: 0,
@@ -15634,7 +15645,38 @@ impl<'w> Server<'w> {
             if !held {
                 n.pos += v;
             }
-            if speed > 0.05 && !bouncing {
+            if f.pass {
+                // the scanner's body turns toward its goal - the enemy once in COMBAT, its
+                // flight direction before - through a rate-limited turn: the rate heads for
+                // 0.12 deg/tick per degree of error, capped, by 0.13 deg/tick^2 (fly_cscanner
+                // 261106: the turn over the bot ramps 1.06 -> 4.81 deg/tick over 36 ticks,
+                // overshoots 9 deg; before COMBAT the yaw drifts 1..1.5 deg/tick toward the
+                // flight line)
+                let goal = if n.ai.state == ai::NPC_STATE_COMBAT {
+                    Some(dir.y.atan2(dir.x).to_degrees())
+                } else if speed > 0.05 {
+                    Some(v.y.atan2(v.x).to_degrees())
+                } else {
+                    None
+                };
+                if let Some(goal) = goal {
+                    let err = wrap_deg(goal - n.angles.y);
+                    let want = (NPC_SCANNER_YAW_GAIN * err)
+                        .clamp(-NPC_SCANNER_YAW_MAX, NPC_SCANNER_YAW_MAX);
+                    let speeding =
+                        want.abs() > n.fly_yaw_rate.abs() && want * n.fly_yaw_rate >= 0.0;
+                    let accel = if speeding {
+                        NPC_SCANNER_YAW_ACCEL
+                    } else {
+                        NPC_SCANNER_YAW_BRAKE
+                    };
+                    n.fly_yaw_rate += (want - n.fly_yaw_rate).clamp(-accel, accel);
+                    n.angles.y = wrap_deg(n.angles.y + n.fly_yaw_rate);
+                }
+                if speed > 0.05 {
+                    n.angles.x = (speed * 6.0).min(36.0);
+                }
+            } else if speed > 0.05 && !bouncing {
                 n.angles.y = v.y.atan2(v.x).to_degrees();
                 n.angles.x = (speed * 6.0).min(36.0);
             } else if !bouncing {
@@ -20059,6 +20101,7 @@ impl<'w> Server<'w> {
                 melee_stood: 0,
                 fly_vel: Vec3::ZERO,
                 fly_hit_at: 0,
+                fly_yaw_rate: 0.0,
                 fly_side: Vec3::ZERO,
                 fly_leg: 0,
                 fly_leg_at: 0,
