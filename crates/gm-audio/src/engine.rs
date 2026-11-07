@@ -123,6 +123,11 @@ pub struct Voice {
 
 /// Listener-centric reverb: the parametric reflection effect over the wet sum of the
 /// positioned voices, first-order ambisonics decoded binaurally in the listener's frame.
+/// The send of a positioned voice into the reverb (its direct level times this). Not
+/// measured against the game's `dsp_room` presets yet: at 1.0 loud impacts outdoors ring
+/// like a barrel on the user's machine, so the send is halved as a first cut.
+const REVERB_SEND: f32 = 0.5;
+
 struct Reverb {
     effect: ReflectionEffect<Parametric>,
     decode: AmbisonicsDecodeEffect,
@@ -396,7 +401,7 @@ impl Engine {
                         AudioBufferMut::try_new(&mut self.direct_out, 1).expect("direct frame");
                     let _ = v.direct.apply(&params, &input, &mut dout);
                     if let Some(r) = &mut self.reverb {
-                        let g = v.gain * master;
+                        let g = v.gain * master * REVERB_SEND;
                         for (w, d) in r.wet.iter_mut().zip(&self.direct_out) {
                             *w += d * g;
                         }

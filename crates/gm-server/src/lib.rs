@@ -10537,6 +10537,30 @@ impl<'w> Server<'w> {
             let prev = pr.origin;
             steps.push((prev, pr.step(world, Some(&mut phys))));
         }
+        // grenade_frag `BlipSound`: `Grenade.Blip` every second, every 0.3 s over the warn
+        // time (the last 1.5 s of the fuse), at 66 ticks/s
+        let blips: Vec<Vec3> = self
+            .projectiles
+            .iter()
+            .filter(|pr| pr.kind == weapons::Launch::Grenade && pr.body.is_some())
+            .filter(|pr| {
+                let warn = pr.fuse.saturating_sub(99);
+                if pr.age <= warn {
+                    pr.age > 0 && pr.age % 66 == 0
+                } else {
+                    (pr.age - warn) % 20 == 0
+                }
+            })
+            .map(|pr| pr.origin)
+            .collect();
+        for pos in blips {
+            self.sounds.push(WorldSound {
+                name: "Grenade.Blip".to_string(),
+                pos,
+                volume: 1.0,
+                ..Default::default()
+            });
+        }
         // (kind, owner, where it died) for every projectile removed this tick
         let mut died = Vec::new();
         let mut keep = Vec::with_capacity(self.projectiles.len());
@@ -24404,15 +24428,17 @@ impl<'w> Server<'w> {
     pub fn projectile_entities(
         &self,
     ) -> impl Iterator<Item = (u32, &'static str, Vec3, Vec3)> + '_ {
-        self.projectiles.iter().filter_map(|pr| {
+        self.projectiles.iter().map(|pr| {
             let model = match pr.kind {
                 weapons::Launch::Rocket => "models/weapons/w_missile.mdl",
                 weapons::Launch::Bolt => "models/crossbow_bolt.mdl",
                 weapons::Launch::Grenade => projectile::GRENADE_MODEL,
                 weapons::Launch::Smg1Grenade => "models/items/ar2_grenade.mdl",
-                weapons::Launch::Ball => return None,
+                // C_PropCombineBall: the core is an additive glow sprite the size of the ball
+                weapons::Launch::Ball => "sprites/blueflare1",
             };
-            Some((pr.id, model, pr.origin, velocity_angles(pr.velocity)))
+            let angles = pr.angles.unwrap_or_else(|| velocity_angles(pr.velocity));
+            (pr.id, model, pr.origin, angles)
         })
     }
 
@@ -24981,6 +25007,21 @@ impl<'w> Server<'w> {
                         });
                     }
                 }
+            }
+            // grenade_frag `VPhysicsCollision` -> `BounceSound`
+            if imp.speed > 50.0
+                && imp.bodies.iter().any(|b| {
+                    self.projectiles
+                        .iter()
+                        .any(|p| p.kind == weapons::Launch::Grenade && p.body == Some(*b))
+                })
+            {
+                self.sounds.push(WorldSound {
+                    name: "BaseGrenade.BounceSound".to_string(),
+                    pos: imp.point,
+                    volume: 1.0,
+                    ..Default::default()
+                });
             }
             let Some(volume) = impact_volume(imp.speed) else {
                 continue;

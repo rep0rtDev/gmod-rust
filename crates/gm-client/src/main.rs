@@ -4030,6 +4030,10 @@ impl App {
                     None => e.clone(),
                 };
                 if let Some((text, kind, length)) = Notices::legacy(&named) {
+                    // sandbox cl_init `AddUndoNotify`: `buttons/button15.wav` with the notice
+                    if matches!(kind, NotifyKind::Undo) {
+                        self.sounds.play_wave(&self.mount, "buttons/button15.wav", 1.0);
+                    }
                     self.notify(text, kind, length);
                 }
                 if let Some(rest) = e.strip_prefix("Hint ") {
@@ -5474,7 +5478,9 @@ impl App {
                     })
                     .unwrap_or(sun.dir);
                 let d = camera.far * 0.9;
-                let pos = camera.position + dir * d;
+                // `dir` is the light's travel direction (env_sun / light_environment angles);
+                // C_Sun draws the glow where the light comes from
+                let pos = camera.position - dir * d;
                 let width = |s: f32| 2.0 * d * (s * 0.3_f32).to_radians().tan();
                 let (v, i) = g
                     .world

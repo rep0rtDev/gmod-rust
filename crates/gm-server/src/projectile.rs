@@ -114,6 +114,8 @@ pub struct Projectile {
     pub turn: glam::Vec2,
     /// The grenade's rigid body.
     pub body: Option<BodyHandle>,
+    /// The body's angles (physics-driven kinds); None = along the flight.
+    pub angles: Option<Vec3>,
     /// Touched the world: removed (exploding) on the next step, the SMG1 grenade's rule.
     pub dead: bool,
 }
@@ -187,6 +189,7 @@ pub fn spawn(
     let home = heading_of(target + Vec3::Z * lift - eye);
     let mut p = match kind {
         Launch::Rocket => Projectile {
+            angles: None,
             id: 0,
             kind,
             owner,
@@ -208,6 +211,7 @@ pub fn spawn(
             gravity: 1.0,
         },
         Launch::Bolt => Projectile {
+            angles: None,
             id: 0,
             kind,
             owner,
@@ -226,6 +230,7 @@ pub fn spawn(
             gravity: BOLT_GRAVITY,
         },
         Launch::Smg1Grenade => Projectile {
+            angles: None,
             id: 0,
             kind,
             owner,
@@ -244,6 +249,7 @@ pub fn spawn(
             gravity: AR2_GRENADE_GRAVITY,
         },
         Launch::Ball => Projectile {
+            angles: None,
             id: 0,
             kind,
             owner,
@@ -291,6 +297,7 @@ pub fn spawn(
                 })
                 .ok()?;
             Projectile {
+                angles: None,
                 id: 0,
                 kind,
                 owner,
@@ -378,6 +385,7 @@ impl Projectile {
         let st = phys.world.state(body);
         self.origin = st.position;
         self.velocity = st.velocity;
+        self.angles = Some(Vec3::new(st.angles.0, st.angles.1, st.angles.2));
         if self.age >= self.fuse {
             phys.world.remove_body(body);
             self.body = None;
@@ -512,6 +520,12 @@ impl Projectile {
                 self.velocity = (2.0 * n * hit_dot + dir) * speed * BOLT_REFLECT;
                 self.gravity = 1.0;
             } else {
+                // the stuck bolt keeps the angles of its flight (zero velocity has none)
+                self.angles = Some(Vec3::new(
+                    (-dir.z).asin().to_degrees(),
+                    dir.y.atan2(dir.x).to_degrees(),
+                    0.0,
+                ));
                 self.movetype = MoveType::None;
                 self.velocity = Vec3::ZERO;
             }

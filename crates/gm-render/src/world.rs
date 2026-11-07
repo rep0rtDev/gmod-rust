@@ -903,7 +903,15 @@ fn build_sky_cube(
         ..Default::default()
     });
     let stars = (|| {
-        let mat_name = "skybox/starfield".to_string();
+        // env_skypaint `startexture` (its default), tiled by the painted sky's star layers
+        let mat_name = bsp
+            .entities
+            .iter()
+            .find(|e| e.classname() == "env_skypaint")
+            .and_then(|e| e.get("startexture"))
+            .filter(|t| !t.is_empty())
+            .unwrap_or("skybox/starfield")
+            .to_string();
         let mat = material::load(mount, &mat_name).ok()?;
         let tex = mat.base_texture.as_deref().unwrap_or(&mat_name);
         let rgba = material::load_texture(mount, tex, 1024).ok()?;
@@ -3392,7 +3400,13 @@ impl WorldRenderer {
                 slots
             },
             sky_dusk_scale: sp.map_or([0.0; 4], |s| {
-                [s.dusk_scale, s.star_scale, s.star_fade, s.star_layers]
+                // no star texture: no star layers (the sky face must not stand in for it)
+                let layers = if self.sky2d.as_ref().is_some_and(|k| k.stars.is_some()) {
+                    s.star_layers
+                } else {
+                    0.0
+                };
+                [s.dusk_scale, s.star_scale, s.star_fade, layers]
             }),
             view_proj: cam.view_proj(aspect).to_cols_array_2d(),
             alpha,
@@ -4305,7 +4319,8 @@ impl WorldRenderer {
         Some(Decal {
             bind: self.sprite_bind_group(gpu, &rgba, format, name, 0.0),
             uv,
-            size: texels * mat.decal_scale.unwrap_or(1.0),
+            // a Subrect without its own `$decalscale` takes the atlas material's
+            size: texels * mat.decal_scale.or(tex_mat.decal_scale).unwrap_or(1.0),
             modulate,
         })
     }
