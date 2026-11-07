@@ -652,6 +652,7 @@ pub fn class_sched_family(class: &str) -> Option<&'static str> {
         | "npc_fastzombie_torso" => Some("zombie"),
         "npc_headcrab" | "npc_headcrab_fast" | "npc_headcrab_black" => Some("headcrab"),
         "npc_antlion" => Some("antlion"),
+        "npc_antlionguard" => Some("antlionguard"),
         "npc_hunter" => Some("hunter"),
         "npc_combine_s" => Some("combine"),
         "npc_citizen" => Some("citizen"),
@@ -682,6 +683,9 @@ pub fn family_sched_reserve(family: &str) -> u16 {
         "zombie" => 25,
         "headcrab" => 21,
         "antlion" => 46,
+        // CNPC_AntlionGuard's own (HL2 count; its chase reads the block's 12th: 104 = 88 + 5 + 11
+        // as the first class of a session, server_npc_tick_antlionguard, 222 in sched_translate_game)
+        "antlionguard" => 17,
         "combine" => 16,
         // CAI_PlayerAlly's 3 talker schedules, then the behaviours (assault first) and the
         // citizen's own; only the assault block is measured, the size is the HL2 count
@@ -703,7 +707,7 @@ pub fn family_sched_reserve(family: &str) -> u16 {
 
 /// Families whose first block is preceded by the blended-animation 5-id block.
 pub fn family_sched_blended(family: &str) -> bool {
-    matches!(family, "zombie" | "headcrab" | "antlion")
+    matches!(family, "zombie" | "headcrab" | "antlion" | "antlionguard")
 }
 
 /// Ids a subclass adds after its family block (the fast zombie's and poison zombie's own

@@ -19017,6 +19017,9 @@ impl<'w> Server<'w> {
                 "antlion" if s == ai::SCHED_MELEE_ATTACK1 => swing
                     .filter(|m| m.lunge > 0.0)
                     .map(|m| base + if m.damage == 0.0 { 33 } else { 32 }),
+                // the guard's private chase (server_npc_tick_antlionguard: 104 from the think it
+                // steps on; sched_translate_game: SetSchedule(17) reads 222)
+                "antlionguard" if s == ai::SCHED_CHASE_ENEMY => Some(base + 11),
                 // the manhack after a slice: its bounce and drift back read the block's 21st
                 // (server_npc_fly_manhack 261106: 108 from the think after each slice to the next)
                 "manhack" if n.fly_hit_at > 0 => Some(base + 20),

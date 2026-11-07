@@ -301,9 +301,10 @@ Scores: 0 absent, 0.25 started, 0.5 playable, 0.75 harnesses green within tolera
   there, no WAKE_ANGRY think: swat2_drumside reads SWATITEM + swatrightlow at op 12) and the
   rescan period is 2.0 s taken by the next think (134 ticks, not 133): zombie_swat2_drum
   1150 -> 1136, drumside 755 -> 741, swat3_c 786 -> 765, zombie_swat 8562 -> 8554.
-  The antlion guard's chase is also private in the game (sched_translate_game.txt 17>222,
-  104 in server_npc_tick_antlionguard) but its offset could not be pinned from the recordings
-  (the neighbouring blocks don't add up) - it still reads SCHED_CHASE_ENEMY here.
+  The antlion guard's chase is private in the game too: the 12th id of its own block after the
+  blended 5 (104 = 88 + 5 + 11 with the guard the first class of server_npc_tick_antlionguard;
+  sched_translate_game.txt 17>222 is the same offset from that session's base) - family
+  `antlionguard` (17 ids), tick_antlionguard 26 -> 19 rows, sched_translate_antlionguard 0.
   The first think runs 10 ticks after the spawn (`NPC_THINK_PHASE`): the spawnnpc op takes 3
   and the game's first think follows 7 later (every server_npc_tick_* 261107 and
   server_npc_melee_zombie 261105), not on the spawn row as before. The rules that compensated
