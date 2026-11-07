@@ -17537,8 +17537,7 @@ impl<'w> Server<'w> {
                 // first full one (server_npc_squad_soldier: t385 after the t320 sighting)
                 n.combat_moved = true;
                 n.burst_left = NPC_BURST_SHOTS;
-                n.next_shot =
-                    now + think * NPC_FIRST_BURST_SHOTS as u64 + NPC_FIRST_BURST_GAP_TICKS;
+                n.next_shot = now + NPC_MATE_FIRST_BURST_TICKS;
             } else {
                 // the game opens fire three thinks after its sighting think: the suppress
                 // volley is two rounds (server_npc_grenade_soldier: sighting think t330, shots
