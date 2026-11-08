@@ -369,7 +369,7 @@ impl Particles {
             }
             let mat = world
                 .sprite_material_sized(gpu, mount, &name)
-                .map(|(bind, _)| {
+                .map(|(bind, _, _)| {
                     let m = gm_render::material::load(mount, &name).ok();
                     let additive = m.as_ref().is_some_and(|m| m.additive);
                     let sheet = m

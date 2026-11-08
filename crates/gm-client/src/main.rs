@@ -39,6 +39,8 @@ use winit::window::{CursorGrabMode, Window, WindowId};
 /// `cl_weaponcolor` default "0.30 1.80 2.10" clamped to the display range: the beam and
 /// glow tint of the physgun.
 const PHYSGUN_BEAM_COLOR: [f32; 3] = [0.3, 1.0, 1.0];
+/// `weapon_crowbar` in `gm_server::LOADOUT` (the weapon a spawn puts out).
+const CROWBAR_SLOT: u8 = 3;
 /// Slots in `WEAPONS` of the weapons with their own effects.
 const RPG_SLOT: u8 = 9;
 const GRAVGUN_SLOT: u8 = 10;
@@ -254,7 +256,7 @@ struct Gfx {
     /// `sprites/sent_ball`: the bouncy ball's look (sent_ball.lua `Draw`, a sprite of its size).
     fx_ball: Option<wgpu::BindGroup>,
     /// `env_sprite` materials by name with their texel width.
-    fx_sprite_mats: std::collections::HashMap<String, Option<(wgpu::BindGroup, f32)>>,
+    fx_sprite_mats: std::collections::HashMap<String, Option<(wgpu::BindGroup, f32, bool)>>,
     /// The `env_sun` glow sprite (`sprites/light_glow02_add_noz` unless the map names another).
     fx_sun: Option<wgpu::BindGroup>,
     /// `effects/splash2`: the water splash.
@@ -1235,6 +1237,10 @@ struct App {
     hint_queue: Vec<(Instant, String)>,
     /// `Player:ScreenFade`: the running full-screen fade.
     screen_fade: Option<ScreenFade>,
+    /// The mixer is silenced while the main menu sits over a game not yet started.
+    menu_muted: bool,
+    /// A weapon to put out on the next tick (the crowbar after a respawn).
+    pending_select: Option<u8>,
     /// `env_shake`s on the view.
     shakes: Vec<Shake>,
     shake_seed: u32,
@@ -3556,6 +3562,9 @@ impl App {
 
     /// `GM:AddNotify` -> `notification.AddLegacy`.
     fn notify(&mut self, text: String, kind: NotifyKind, length: f32) {
+        if self.main_menu && !self.started {
+            return;
+        }
         let fm = self
             .gfx
             .as_ref()
@@ -3965,6 +3974,9 @@ impl App {
                 self.weapon_synced = true;
                 self.select_weapon(self.weapon);
             }
+            if let Some(w) = self.pending_select.take() {
+                self.select_weapon(w);
+            }
             {
                 // HUDWeaponPickedUp: every weapon bit that appeared while alive
                 self.tick_hints();
@@ -4340,8 +4352,16 @@ impl App {
 
     fn render(&mut self) {
         self.sync_scripted_weapons();
+        let muted = self.main_menu && !self.started;
+        if muted != self.menu_muted {
+            self.menu_muted = muted;
+            self.sounds
+                .mixer
+                .set_master(if muted { 0.0 } else { self.settings.volume });
+        }
         let alpha = self.acc / gm_core::tick::DEFAULT_TICK_INTERVAL;
-        let vm = self.vm_of(self.weapon);
+        let dead = self.local_snap().is_some_and(|s| !s.alive);
+        let vm = if dead { None } else { self.vm_of(self.weapon) };
         let vm_seq = vm.as_ref().map(|vm| self.vm_sequence(vm));
         let vm_prev = self.vm_prev;
         // the viewmodel sequence's animation events as `C_BaseViewModel::FireEvent`: the
@@ -4603,7 +4623,15 @@ impl App {
                 camera.position = if tr.start_solid { eye } else { tr.end };
                 camera.angles = self.death_view;
             }
-            _ => self.death_at = None,
+            _ => {
+                if self.death_at.take().is_some() {
+                    // the respawn ends the death fade (FFADE_STAYOUT) and deploys the crowbar
+                    if self.screen_fade.as_ref().is_some_and(|f| f.flags & 8 != 0) {
+                        self.screen_fade = None;
+                    }
+                    self.pending_select = Some(CROWBAR_SLOT);
+                }
+            }
         }
         let ghost_draws = match &ghost_tool {
             Some((tool, settings)) => {
@@ -4999,7 +5027,8 @@ impl App {
         let mut modulate: Vec<(&wgpu::BindGroup, Vec<gm_render::world::Vertex>, Vec<u32>)> =
             Vec::new();
         // a viewmodel attachment in world space (the viewmodel sits at the eye)
-        let vm_attach = |name: &str| -> Option<Vec3> {
+        // a viewmodel attachment's position and forward (x axis) in world space
+        let vm_attach_dir = |name: &str| -> Option<(Vec3, Vec3)> {
             let (Some(vm), Some((seq, t))) = (vm, vm_seq) else {
                 return None;
             };
@@ -5011,11 +5040,27 @@ impl App {
                 Self::vm_transition(vm_prev, |s| m.sequence_fade_out(s)),
             )?;
             let a = m.attachment(name, &w)?;
-            Some(
-                gm_render::world::model_transform(camera.position, self.view)
-                    .transform_point3(a.w_axis.truncate()),
-            )
+            let mt = gm_render::world::model_transform(camera.position, self.view);
+            let p = mt.transform_point3(a.w_axis.truncate());
+            let f = mt.transform_vector3(a.x_axis.truncate());
+            // the viewmodel is drawn with its own FOV: put the point where it appears on
+            // screen under the world camera (same clip position, world projection)
+            let aspect = g.config.width as f32 / g.config.height as f32;
+            let vm_fov = scale_fov_by_width(VIEWMODEL_FOV, aspect);
+            let k = (vm_fov.to_radians() * 0.5).tan() / (camera.fov_x.to_radians() * 0.5).tan();
+            let view = glam::Mat4::look_to_rh(camera.position, camera.forward(), Vec3::Z);
+            let mut v = view.transform_point3(p);
+            v.x *= k;
+            v.y *= k;
+            let mut d = view.transform_vector3(f);
+            d.x *= k;
+            d.y *= k;
+            Some((
+                view.inverse().transform_point3(v),
+                view.inverse().transform_vector3(d).normalize_or_zero(),
+            ))
         };
+        let vm_attach = |name: &str| -> Option<Vec3> { vm_attach_dir(name).map(|(p, _)| p) };
         let held_pos = self
             .sim
             .client
@@ -5029,8 +5074,10 @@ impl App {
         if self.weapon == 0 && self.mouse.contains(&0) {
             let fwd = camera.forward();
             let right = fwd.cross(Vec3::Z).normalize_or_zero();
-            let start = vm_attach("muzzle")
-                .unwrap_or(camera.position + right * 6.0 - Vec3::Z * 6.0 + fwd * 12.0);
+            let (start, start_dir) = vm_attach_dir("muzzle").unwrap_or((
+                camera.position + right * 6.0 - Vec3::Z * 6.0 + fwd * 12.0,
+                fwd,
+            ));
             let held = held_pos;
             let end = held.unwrap_or_else(|| {
                 self.sim
@@ -5059,8 +5106,9 @@ impl App {
                     color: Vec3::from(color) * 0.5,
                     ..Default::default()
                 });
-                // cubic bezier: out along the barrel for half the distance, into the end point
-                let (p0, p1, p2, p3) = (start, start + fwd * (len * 0.5), end, end);
+                // cubic bezier: out along the claw for half the distance (it points up and
+                // right of the aim, which bends the beam like the game's), into the end point
+                let (p0, p1, p2, p3) = (start, start + start_dir * (len * 0.5), end, end);
                 let n = 24;
                 let points: Vec<Vec3> = (0..=n)
                     .map(|i| {
@@ -5091,10 +5139,12 @@ impl App {
                     }
                 }
                 if let Some(bm) = mat {
+                    // physbeam_white is a dim 4-texel core in a 64-texel-wide strip: the
+                    // strip is wide and overdriven so the core reads as the game's ~1 u beam
                     let (v, i) = g.world.beam_strip(
                         &points,
-                        6.0,
-                        color,
+                        12.0,
+                        color.map(|c| c * 2.0),
                         camera.position,
                         scroll,
                         1.0 / 128.0,
@@ -5573,7 +5623,7 @@ impl App {
                 }
             }
             for e in ents.values().filter(|e| e.model.starts_with("sprites/")) {
-                let Some(Some((bm, w))) = g.fx_sprite_mats.get(&e.model) else {
+                let Some(Some((bm, w, mat_additive))) = g.fx_sprite_mats.get(&e.model) else {
                     continue;
                 };
                 let c = |v: u8| v as f32 / 255.0;
@@ -5585,7 +5635,8 @@ impl App {
                     None,
                     &camera,
                 );
-                if matches!(e.render_mode, 3 | 5 | 9) {
+                // an `$additive` material blends additively whatever the render mode
+                if *mat_additive || matches!(e.render_mode, 3 | 5 | 9) {
                     additive.push((bm, v, i));
                 } else {
                     alpha.push((bm, v, i));
@@ -8029,6 +8080,8 @@ fn main() -> Result<()> {
         fov_blend: None,
         hint_queue: Vec::new(),
         screen_fade: None,
+        menu_muted: false,
+        pending_select: None,
         shakes: Vec::new(),
         shake_seed: 0x9E37_79B9,
         options: None,

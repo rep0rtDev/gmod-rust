@@ -322,6 +322,7 @@ impl ServerNet {
                     },
                 );
                 server.add_player(player, self.spawn_origin, Vec3::ZERO);
+                server.set_human(player);
                 if let Some(c) = self.clients.get_mut(&from) {
                     c.addr = transport.peer_name(from);
                     // the ip filter turns the handshake away before any name or key is read

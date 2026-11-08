@@ -2117,10 +2117,25 @@ impl WorldRenderer {
             } else {
                 (white, false)
             };
+            // the plane + `side` flip is not reliable for every face (walls came out facing
+            // inwards, so the flashlight lit floors only): take the winding's normal instead -
+            // faces wind clockwise seen from the front, so the Newell normal points away
             let face_normal = {
-                let n = bsp.planes[face.plane_num as usize].normal;
-                let sgn = if face.side != 0 { -1.0 } else { 1.0 };
-                [n[0] * sgn, n[1] * sgn, n[2] * sgn]
+                let poly = bsp.face_vertices(face);
+                let mut n = Vec3::ZERO;
+                for (i, a) in poly.iter().enumerate() {
+                    let b = poly[(i + 1) % poly.len()];
+                    let (a, b) = (Vec3::from(*a), Vec3::from(b));
+                    n += Vec3::new(
+                        (a.y - b.y) * (a.z + b.z),
+                        (a.z - b.z) * (a.x + b.x),
+                        (a.x - b.x) * (a.y + b.y),
+                    );
+                }
+                let pn = bsp.planes[face.plane_num as usize].normal;
+                let pn = Vec3::from(pn) * if face.side != 0 { -1.0 } else { 1.0 };
+                let n = n.normalize_or_zero();
+                if n == Vec3::ZERO { pn } else { -n }.to_array()
             };
             // vbsp bakes the chosen sample into the face's patched material name
             // (`maps/<map>/<material>_<x>_<y>_<z>`); nearest to the face centre otherwise
@@ -4326,7 +4341,7 @@ impl WorldRenderer {
         gpu: &Gpu,
         mount: &Mount,
         name: &str,
-    ) -> Option<(wgpu::BindGroup, f32)> {
+    ) -> Option<(wgpu::BindGroup, f32, bool)> {
         let mat = crate::material::load(mount, name).ok()?;
         let tex = mat.base_texture.as_deref()?;
         let rgba = crate::material::load_texture(mount, tex, 512).ok()?;
@@ -4344,7 +4359,7 @@ impl WorldRenderer {
             0.0,
             fog,
         );
-        Some((bind, w))
+        Some((bind, w, mat.additive))
     }
 
     /// A `DecalModulate` material for [`draw_modulate`](Self::draw_modulate): the texture is
@@ -4448,7 +4463,7 @@ impl WorldRenderer {
             contents: bytemuck::bytes_of(&MaterialParams {
                 alpha_test: 0,
                 unlit: fog,
-                translucent: 0,
+                translucent: 1,
                 blend: 0,
                 detail: [0.0; 4],
                 uv2_m: [1.0, 0.0, 0.0, 1.0],

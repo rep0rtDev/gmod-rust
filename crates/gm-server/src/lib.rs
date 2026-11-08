@@ -5731,6 +5731,9 @@ pub struct Player {
     pub locked: bool,
     /// Tick the player was added on (`Player:TimeConnected`).
     pub joined_tick: u64,
+    /// `Player:IsBot`: harness players (the measured scenarios) respawn by themselves; a
+    /// network client is a human and respawns on a key.
+    pub bot: bool,
     pub max_health: i32,
     pub model: String,
     /// The player's model choice (`cl_playermodel`), applied on the next spawn.
@@ -7465,6 +7468,7 @@ impl Player {
             weapon_color: Vec3::new(0.3, 1.0, 0.25),
             locked: false,
             joined_tick: 0,
+            bot: true,
             max_health: PLAYER_HEALTH,
             model: PLAYER_MODEL.to_string(),
             wanted_model: String::new(),
@@ -8293,6 +8297,7 @@ pub fn spawn_points_from_bsp(bsp: &gm_formats::bsp::Bsp) -> Vec<SpawnPoint> {
 
 /// `IN_ATTACK`, `IN_USE`, `IN_ATTACK2` of a usercmd.
 pub const IN_ATTACK: u32 = 1;
+pub const IN_JUMP: u32 = 2;
 pub const IN_USE: u32 = 32;
 pub const IN_ATTACK2: u32 = 2048;
 
@@ -8994,12 +8999,23 @@ impl<'w> Server<'w> {
         }
         if died {
             let (attacker, inflictor) = p.last_damage;
+            let origin = p.state.origin;
             self.game_events.push(GameEvent::PlayerDied {
                 player: id,
                 dmg_type,
                 attacker,
                 inflictor: inflictor.to_string(),
             });
+            // `CBasePlayer::DeathSound` and the dark red fade of `Event_Killed`
+            // (64 0 0 200 over 0.5 s, FFADE_OUT | FFADE_STAYOUT until the respawn)
+            self.sounds.push(WorldSound {
+                name: "Player.Death".to_string(),
+                pos: origin,
+                volume: 1.0,
+                ..Default::default()
+            });
+            self.notices
+                .push((id, "ScreenFade 64 0 0 200 0.5 0 10".to_string()));
         }
         to_health
     }
@@ -10786,6 +10802,15 @@ impl<'w> Server<'w> {
             }
         }
         for (kind, owner, at) in died {
+            if kind == weapons::Launch::Ball {
+                // `CPropCombineBall::DoExplosion` -> `NPC_CombineBall.Explosion`
+                self.sounds.push(WorldSound {
+                    name: "NPC_CombineBall.Explosion".to_string(),
+                    pos: at,
+                    volume: 1.0,
+                    ..Default::default()
+                });
+            }
             if kind == weapons::Launch::Rocket {
                 if let Some(p) = self.players.get_mut(&owner) {
                     p.inventory.rocket_died();
@@ -10805,6 +10830,15 @@ impl<'w> Server<'w> {
             // the launcher's sound the client cannot take from the viewmodel act: the AR2's
             // ball (`WPN_DOUBLE` = Weapon_IRifle.Single), the SMG1's grenade (Weapon_SMG1.Double)
             // and the crossbow's `SPECIAL2` whoosh with its shot (Weapon_Crossbow.BoltFly)
+            if kind == weapons::Launch::Ball {
+                // `CPropCombineBall::Spawn` -> `NPC_CombineBall.Launch`
+                self.sounds.push(WorldSound {
+                    name: "NPC_CombineBall.Launch".to_string(),
+                    pos: eye,
+                    volume: 1.0,
+                    ..Default::default()
+                });
+            }
             let launch_sound = match kind {
                 weapons::Launch::Ball => Some("Weapon_IRifle.Single"),
                 weapons::Launch::Smg1Grenade => Some("Weapon_SMG1.Double"),
@@ -10949,6 +10983,13 @@ impl<'w> Server<'w> {
     /// constraints and their ownership stay (the game keeps a leaver's props).
     pub fn remove_player(&mut self, id: u32) -> bool {
         self.players.remove(&id).is_some()
+    }
+
+    /// Marks a player as a human client (not a bot): see `Player::bot`.
+    pub fn set_human(&mut self, id: u32) {
+        if let Some(p) = self.players.get_mut(&id) {
+            p.bot = false;
+        }
     }
 
     pub fn add_player(&mut self, id: u32, origin: Vec3, view_angles: Vec3) {
@@ -22471,7 +22512,12 @@ impl<'w> Server<'w> {
                     p.weapons.clear();
                     p.inventory.clear();
                 }
-                if tick >= d + p.respawn_ticks {
+                // `GM:PlayerDeathThink`: after the 2 s a human respawns on a press of
+                // attack / attack2 / jump (bots at once)
+                let pressed = p.buttons & !p.buttons_last;
+                if tick >= d + p.respawn_ticks
+                    && (p.bot || pressed & (IN_ATTACK | IN_ATTACK2 | IN_JUMP) != 0)
+                {
                     respawn.push(*id);
                 }
             }
@@ -25118,6 +25164,21 @@ impl<'w> Server<'w> {
                         });
                     }
                 }
+            }
+            // combine ball `VPhysicsCollision` -> `NPC_CombineBall.Impact`
+            if imp.speed > 50.0
+                && imp.bodies.iter().any(|b| {
+                    self.projectiles
+                        .iter()
+                        .any(|p| p.kind == weapons::Launch::Ball && p.body == Some(*b))
+                })
+            {
+                self.sounds.push(WorldSound {
+                    name: "NPC_CombineBall.Impact".to_string(),
+                    pos: imp.point,
+                    volume: 1.0,
+                    ..Default::default()
+                });
             }
             // grenade_frag `VPhysicsCollision` -> `BounceSound`
             if imp.speed > 50.0
