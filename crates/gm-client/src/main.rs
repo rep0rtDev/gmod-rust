@@ -4066,9 +4066,12 @@ impl App {
                 };
                 if let Some((text, kind, length)) = Notices::legacy(&named) {
                     // sandbox cl_init `AddUndoNotify`: `buttons/button15.wav` with the notice
-                    if matches!(kind, NotifyKind::Undo) {
-                        self.sounds
-                            .play_wave(&self.mount, "buttons/button15.wav", 1.0);
+                    if matches!(kind, NotifyKind::Undo)
+                        && !self
+                            .sounds
+                            .play_wave(&self.mount, "buttons/button15.wav", 1.0)
+                    {
+                        eprintln!("undo sound: buttons/button15.wav did not load");
                     }
                     self.notify(text, kind, length);
                 }
