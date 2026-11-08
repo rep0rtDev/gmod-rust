@@ -1301,6 +1301,11 @@ pub struct DynModel {
     skeleton: Option<Skeleton>,
     /// `Entity:GetBodyGroups`: each MDL body part's name and its submodels' names.
     bodygroups: Vec<(String, Vec<String>)>,
+    /// Skinning matrices of the first sequence's first frame, for draws without bones:
+    /// the engine always poses a model through its sequence 0, and some reference meshes
+    /// differ from it (the crossbow bolt lies along -y in the file, +x once posed). None when
+    /// that pose is the identity.
+    rest_skin: Option<Vec<Mat4>>,
 }
 
 impl DynModel {
@@ -1566,6 +1571,15 @@ impl DynModel {
             .collect()
     }
 
+    /// See [`DynModel::rest_skin`].
+    fn default_pose_skin(&self) -> Option<Vec<Mat4>> {
+        let sk = self.skeleton.as_ref()?;
+        let first = &sk.anims.first()?.sequences.first()?.name;
+        let world = self.bone_world(first, 0.0, None, &[])?;
+        let skin = self.skin_matrices(&world);
+        let identity = skin.iter().all(|m| m.abs_diff_eq(Mat4::IDENTITY, 1e-3));
+        (!identity).then_some(skin)
+    }
     /// Model-space transform of every bone at `time` of sequence `name`; `merge` overrides
     /// a bone's transform by name (bone merge onto another skeleton).
     pub fn bone_world(
@@ -4209,6 +4223,7 @@ impl WorldRenderer {
             unlit: false,
             skeleton: None,
             bodygroups: Vec::new(),
+            rest_skin: None,
         })
     }
 
@@ -4316,14 +4331,17 @@ impl WorldRenderer {
                 )
             })
             .collect();
-        (!parts.is_empty()).then_some(DynModel {
+        let mut model = DynModel {
             part_textures,
             bounds,
             parts,
             unlit: false,
             skeleton,
             bodygroups,
-        })
+            rest_skin: None,
+        };
+        model.rest_skin = model.default_pose_skin();
+        (!model.parts.is_empty()).then_some(model)
     }
 
     /// A unit cube (-0.5..0.5) of one colour, scaled by the item transform: player boxes,
@@ -5198,6 +5216,7 @@ impl WorldRenderer {
             unlit,
             skeleton: None,
             bodygroups: Vec::new(),
+            rest_skin: None,
         }
     }
 
@@ -5249,7 +5268,7 @@ impl WorldRenderer {
             for (bg, pv, pi, half_lambert, part_unlit) in &m.parts {
                 let base = verts.len() as u32;
                 for v in pv {
-                    let (p, n) = match item.bones {
+                    let (p, n) = match item.bones.or(m.rest_skin.as_deref()) {
                         Some(b) => skin(v, b),
                         None => (Vec3::from(v.position), Vec3::from(v.normal)),
                     };
