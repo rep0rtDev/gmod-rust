@@ -3082,7 +3082,7 @@ impl WorldRenderer {
             "fs_main",
             Some(wgpu::BlendState::ALPHA_BLENDING),
             false,
-            true,
+            false,
         );
         let additive_pipeline = make_pipeline(
             "additive",
@@ -3096,7 +3096,7 @@ impl WorldRenderer {
                 alpha: wgpu::BlendComponent::OVER,
             }),
             false,
-            true,
+            false,
         );
         let modulate_pipeline = make_pipeline(
             "modulate",
@@ -4361,7 +4361,7 @@ impl WorldRenderer {
     /// [`draw_modulate`](Self::draw_modulate) (kept linear), the rest alpha-blend.
     pub fn decal(&self, gpu: &Gpu, mount: &Mount, name: &str) -> Option<Decal> {
         let mat = crate::material::load(mount, name).ok()?;
-        let (tex_mat, uv, texels) = match &mat.subrect {
+        let (tex_mat, rect, texels) = match &mat.subrect {
             Some((atlas, pos, size)) => {
                 let atlas_mat = crate::material::load(mount, atlas).ok()?;
                 let tex = atlas_mat.base_texture.clone()?;
@@ -4369,19 +4369,14 @@ impl WorldRenderer {
                 let (w, h) = (full.width as f32, full.height as f32);
                 (
                     atlas_mat,
-                    [
-                        pos[0] / w,
-                        pos[1] / h,
-                        (pos[0] + size[0]) / w,
-                        (pos[1] + size[1]) / h,
-                    ],
+                    Some([pos[0] / w, pos[1] / h, size[0] / w, size[1] / h]),
                     size[0],
                 )
             }
             None => {
                 let tex = mat.base_texture.clone()?;
                 let full = crate::material::load_texture(mount, &tex, 4096).ok()?;
-                (mat.clone(), [0.0, 0.0, 1.0, 1.0], full.width as f32)
+                (mat.clone(), None, full.width as f32)
             }
         };
         let modulate = tex_mat.shader.eq_ignore_ascii_case("decalmodulate");
@@ -4391,7 +4386,13 @@ impl WorldRenderer {
             wgpu::TextureFormat::Rgba8UnormSrgb
         };
         let tex = tex_mat.base_texture.as_deref()?;
-        let rgba = crate::material::load_texture(mount, tex, 1024).ok()?;
+        let mut rgba = crate::material::load_texture(mount, tex, 1024).ok()?;
+        // a Subrect is cut out of its atlas into a texture of its own: sampled in place, the
+        // atlas' lower mips (and the edge texels under linear filtering) mix the neighbouring
+        // decals in, which draws a square frame around every bullet hole
+        if let Some(r) = rect {
+            rgba = crop_rgba(&rgba, r);
+        }
         Some(Decal {
             bind: self.sprite_bind_group(
                 gpu,
@@ -4401,7 +4402,7 @@ impl WorldRenderer {
                 0.0,
                 if modulate { FOG_TO_GRAY } else { FOG_NORMAL },
             ),
-            uv,
+            uv: [0.0, 0.0, 1.0, 1.0],
             // a Subrect without its own `$decalscale` takes the atlas material's
             size: texels * mat.decal_scale.or(tex_mat.decal_scale).unwrap_or(1.0),
             modulate,
@@ -5368,6 +5369,51 @@ fn skybox_faces_bounds(bsp: &Bsp<'_>, faces: &HashSet<usize>) -> Option<([f32; 3
 }
 
 /// Upload a decoded texture with its mip chain.
+/// `rect` (x, y, w, h as fractions of the image) of `src` as an image of its own with a
+/// box-filtered mip chain down to 1x1.
+fn crop_rgba(src: &material::Rgba, rect: [f32; 4]) -> material::Rgba {
+    let x0 = ((rect[0] * src.width as f32).round() as u32).min(src.width.saturating_sub(1));
+    let y0 = ((rect[1] * src.height as f32).round() as u32).min(src.height.saturating_sub(1));
+    let w = ((rect[2] * src.width as f32).round() as u32).clamp(1, src.width - x0);
+    let h = ((rect[3] * src.height as f32).round() as u32).clamp(1, src.height - y0);
+    let mut pixels = Vec::with_capacity((w * h * 4) as usize);
+    for y in y0..y0 + h {
+        let row = ((y * src.width + x0) * 4) as usize;
+        pixels.extend_from_slice(&src.pixels[row..row + (w * 4) as usize]);
+    }
+    let mut mips = Vec::new();
+    let (mut pw, mut ph, mut prev) = (w, h, pixels.clone());
+    while pw > 1 || ph > 1 {
+        let (nw, nh) = ((pw / 2).max(1), (ph / 2).max(1));
+        let mut next = Vec::with_capacity((nw * nh * 4) as usize);
+        for y in 0..nh {
+            for x in 0..nw {
+                let mut acc = [0u32; 4];
+                let mut n = 0u32;
+                for dy in 0..2u32 {
+                    for dx in 0..2u32 {
+                        let (sx, sy) = ((x * 2 + dx).min(pw - 1), (y * 2 + dy).min(ph - 1));
+                        let i = ((sy * pw + sx) * 4) as usize;
+                        for c in 0..4 {
+                            acc[c] += prev[i + c] as u32;
+                        }
+                        n += 1;
+                    }
+                }
+                next.extend(acc.iter().map(|a| ((a + n / 2) / n) as u8));
+            }
+        }
+        mips.push(next.clone());
+        (pw, ph, prev) = (nw, nh, next);
+    }
+    material::Rgba {
+        width: w,
+        height: h,
+        pixels,
+        mips,
+    }
+}
+
 pub fn upload_rgba_mips(
     gpu: &Gpu,
     rgba: &material::Rgba,

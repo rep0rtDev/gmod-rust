@@ -1326,6 +1326,7 @@ fn pick_msaa(gpu: &gm_render::Gpu, format: wgpu::TextureFormat, want: u32) -> u3
     while n > 1 && !ok(n) {
         n /= 2;
     }
+    eprintln!("msaa: {n} samples (mat_antialias {want})");
     n
 }
 
@@ -1342,7 +1343,11 @@ impl App {
             wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle_from_env());
         let surface = instance.create_surface(window.clone())?;
         let gpu = Gpu::for_surface(instance, &surface)?;
-        eprintln!("adapter: {}", gpu.adapter_name());
+        eprintln!(
+            "adapter: {} ({:?})",
+            gpu.adapter_name(),
+            gpu.adapter.get_info().backend
+        );
         let size = window.inner_size();
         let caps = surface.get_capabilities(&gpu.adapter);
         let format = caps
