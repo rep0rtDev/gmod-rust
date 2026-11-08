@@ -80,6 +80,7 @@ mod tests {
                 tool_stage: 0,
                 model: 0,
                 held: Some(2),
+                held_pos: glam::Vec3::ZERO,
                 driving: None,
                 alive: true,
                 frags: 0,

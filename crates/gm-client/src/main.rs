@@ -1104,6 +1104,8 @@ struct App {
     /// HL2 weapon selection (`hud_fastswitch 0`): the highlighted weapon as an index into the
     /// server's class list while the bucket menu is open.
     wsel: Option<u8>,
+    /// When the bucket menu last moved (`m_flSelectionTime`): it fades after 0.5 s idle.
+    wsel_at: Option<Instant>,
     epoch: Instant,
     /// `GM:AddHint` timers: hint name and when it fires; `hints_done` is `ProcessedHints`.
     hints: Vec<(&'static str, Instant)>,
@@ -3480,6 +3482,7 @@ impl App {
             return;
         }
         self.wsel = Some(next);
+        self.wsel_at = Some(Instant::now());
         self.sounds
             .emit(&self.mount, "Player.WeaponSelectionMoveSlot", None);
     }
@@ -3508,6 +3511,7 @@ impl App {
             return;
         }
         self.wsel = Some(next);
+        self.wsel_at = Some(Instant::now());
         self.sounds
             .emit(&self.mount, "Player.WeaponSelectionMoveSlot", None);
     }
@@ -3591,12 +3595,15 @@ impl App {
         if !snap.alive {
             return;
         }
+        // SELECTION_TIMEOUT_THRESHOLD 0.5 s, then SELECTION_FADEOUT_TIME 0.75 s
+        let idle = self.wsel_at.map_or(0.0, |t| t.elapsed().as_secs_f32());
+        let fade = (1.0 - (idle - 0.5) / 0.75).clamp(0.0, 1.0);
         let s = h / 480.0;
         let classes = gm_net::msg::weapon_classes(&self.sim.client.world.weapon_defs);
         let buckets = self.buckets();
-        let fg = [1.0, 220.0 / 255.0, 0.0, 1.0];
-        let dim = [1.0, 220.0 / 255.0, 0.0, 0.5];
-        let box_bg = [0.0, 0.0, 0.0, 80.0 / 255.0];
+        let fg = [1.0, 220.0 / 255.0, 0.0, fade];
+        let dim = [1.0, 220.0 / 255.0, 0.0, 0.5 * fade];
+        let box_bg = [0.0, 0.0, 0.0, 80.0 / 255.0 * fade];
         let (small, large_w, large_h, gap) = (32.0 * s, 112.0 * s, 80.0 * s, 8.0 * s);
         let icons = ui.font_metrics(Some("WeaponIcons"));
         let numbers = ui.font_metrics(Some("HudSelectionNumbers"));
@@ -4355,6 +4362,13 @@ impl App {
 
     fn render(&mut self) {
         self.sync_scripted_weapons();
+        if self.wsel.is_some()
+            && self
+                .wsel_at
+                .is_some_and(|t| t.elapsed().as_secs_f32() > 1.25)
+        {
+            self.wsel = None;
+        }
         let muted = self.main_menu && !self.started;
         if muted != self.menu_muted {
             self.menu_muted = muted;
@@ -5071,9 +5085,8 @@ impl App {
             .players
             .iter()
             .find(|p| Some(p.id) == me)
-            .and_then(|p| p.held)
-            .and_then(|id| ents.get(&id))
-            .map(|e| e.pos);
+            .filter(|p| p.held.is_some())
+            .map(|p| p.held_pos);
         if self.weapon == 0 && self.mouse.contains(&0) {
             let fwd = camera.forward();
             let right = fwd.cross(Vec3::Z).normalize_or_zero();
@@ -7992,6 +8005,7 @@ fn main() -> Result<()> {
     let mut app = App {
         notices: std::cell::RefCell::new(Notices::default()),
         wsel: None,
+        wsel_at: None,
         epoch: Instant::now(),
         // cl_hints.lua: GM:AddHint( "OpeningMenu", 30 ), Annoy1 5, Annoy2 7
         hints: vec![

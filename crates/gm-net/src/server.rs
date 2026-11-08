@@ -1698,6 +1698,7 @@ impl ServerNet {
                     .map(|c| c.name.clone())
                     .unwrap_or_default(),
                 held: p.held.map(|h| h.0),
+                held_pos: server.held_point(*id).unwrap_or(Vec3::ZERO),
                 driving: p.driving.as_ref().map(|d| d.prop),
                 alive: p.alive,
                 frags: p.frags.min(u16::MAX as u32) as u16,

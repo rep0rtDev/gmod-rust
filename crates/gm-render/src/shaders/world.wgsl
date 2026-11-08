@@ -192,9 +192,11 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
             if slot >= 0 {
                 k *= flashlight_shadow(slot, in.world);
             }
+            // R_AddDynamicLights: world surfaces take a dynamic light by distance alone,
+            // only the side of the plane matters (a light sitting on the wall lights it fully)
             var facing = 1.0;
-            if dot(in.normal, in.normal) > 0.0 {
-                facing = max(dot(normalize(in.normal), dv / max(d, 1e-3)), 0.0);
+            if dot(in.normal, in.normal) > 0.0 && dot(in.normal, dv) < -1.0 {
+                facing = 0.0;
             }
             light += camera.dlight_color[i].rgb * (k * k * facing);
         }

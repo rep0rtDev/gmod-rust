@@ -10510,7 +10510,7 @@ impl<'w> Server<'w> {
     /// the launch tick, recorded as such); a rocket's death reloads its owner's RPG. Rockets and
     /// grenades explode where they die (`explode`), a bolt or rocket that reaches a player hits
     /// it, a ball kills whoever it passes through (`weapons`).
-    fn tick_projectiles(&mut self, launches: Vec<(u32, weapons::Launch, Vec3, Vec3)>) {
+    fn tick_projectiles(&mut self, launches: Vec<(u32, weapons::Launch, Vec3, Vec3, bool)>) {
         if launches.iter().any(|l| l.1 == weapons::Launch::Grenade)
             && !self.models.contains_key(projectile::GRENADE_MODEL)
         {
@@ -10826,7 +10826,7 @@ impl<'w> Server<'w> {
             rng: &mut self.spawn_rng,
         };
         let mut spawned = Vec::new();
-        for (owner, kind, eye, angles) in launches {
+        for (owner, kind, eye, angles, lob) in launches {
             // the launcher's sound the client cannot take from the viewmodel act: the AR2's
             // ball (`WPN_DOUBLE` = Weapon_IRifle.Single), the SMG1's grenade (Weapon_SMG1.Double)
             // and the crossbow's `SPECIAL2` whoosh with its shot (Weapon_Crossbow.BoltFly)
@@ -10853,9 +10853,16 @@ impl<'w> Server<'w> {
                     ..Default::default()
                 });
             }
-            if let Some(pr) =
-                projectile::spawn(kind, owner, eye, angles.x, angles.y, world, Some(&mut phys))
-            {
+            if let Some(pr) = projectile::spawn(
+                kind,
+                owner,
+                eye,
+                angles.x,
+                angles.y,
+                world,
+                Some(&mut phys),
+                lob,
+            ) {
                 spawned.push((eye, pr));
             }
         }
@@ -12085,6 +12092,14 @@ impl<'w> Server<'w> {
     }
 
     /// The body the physgun acts on: a ragdoll's `bone` physics object, else the prop body.
+    /// Where the physgun beam ends on the held object: the grab point in world space.
+    pub fn held_point(&self, id: u32) -> Option<Vec3> {
+        let (ent, g) = self.players.get(&id)?.held.as_ref()?;
+        let b = self.part_body(*ent, g.bone)?;
+        let st = self.physics.state(b);
+        Some(st.position - st.rotation * g.offset)
+    }
+
     fn part_body(&self, ent: u32, bone: u32) -> Option<BodyHandle> {
         match self.ragdoll_bodies.get(&ent) {
             Some(r) => r.bodies.get(bone as usize).copied(),
@@ -19966,6 +19981,7 @@ impl<'w> Server<'w> {
                 yaw,
                 self.collision,
                 Some(&mut phys),
+                false,
             ) else {
                 continue;
             };
@@ -22609,7 +22625,7 @@ impl<'w> Server<'w> {
                     swings.push((*id, eye, forward));
                 }
                 if let Some(kind) = p.inventory.launched.take() {
-                    launches.push((*id, kind, eye, pc.cmd.view_angles));
+                    launches.push((*id, kind, eye, pc.cmd.view_angles, p.inventory.lob));
                 }
                 if let Some(intent) = p.inventory.cannon.take() {
                     cannons.push((*id, intent, eye, pc.cmd.view_angles));

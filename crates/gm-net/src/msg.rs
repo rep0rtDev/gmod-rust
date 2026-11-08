@@ -294,6 +294,8 @@ pub struct PlayerSnap {
     /// The player's name as given at connect (`Player:Nick`).
     pub name: String,
     pub held: Option<u32>,
+    /// The physgun grab point on `held` in world space (the beam's end).
+    pub held_pos: Vec3,
     /// The prop the player is driving (the `drive` property), if any.
     pub driving: Option<u32>,
     pub alive: bool,
@@ -1125,6 +1127,7 @@ impl ServerMsg {
                     w.str(&p.body);
                     w.str(&p.name);
                     w.u32(p.held.unwrap_or(0));
+                    w.vec3(p.held_pos);
                     w.u32(p.driving.unwrap_or(0));
                     w.bool(p.alive);
                     w.u16(p.frags);
@@ -1571,6 +1574,7 @@ impl ServerMsg {
                             0 => None,
                             h => Some(h),
                         },
+                        held_pos: r.vec3()?,
                         driving: match r.u32()? {
                             0 => None,
                             h => Some(h),

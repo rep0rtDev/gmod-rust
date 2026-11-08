@@ -562,6 +562,8 @@ pub struct Inventory {
     /// Frag: ticks since the pull-back press; ticks left until the grenade leaves; a redraw due.
     pub throw_press: Option<u32>,
     pub throw_in: Option<u32>,
+    /// The pending frag throw is the secondary lob (`LobGrenade`: 350 u/s forward + 50 up).
+    pub lob: bool,
     pub redraw_pending: bool,
     /// The projectile the last `command` launched (rocket/bolt in the shot tick, the grenade in
     /// its throw tick, the ball when the AR2's 0.5 s charge expires).
@@ -739,7 +741,7 @@ impl Inventory {
             return None;
         }
         if let Some(th) = f.throw {
-            return self.throw_command(w, th, pressed);
+            return self.throw_command(w, th, pressed, pressed2);
         }
         if let Some(n) = self.since_shot.as_mut() {
             *n += 1;
@@ -952,7 +954,14 @@ impl Inventory {
         })
     }
 
-    fn throw_command(&mut self, w: &WeaponDef, th: Throw, pressed: bool) -> Option<Shot> {
+    fn throw_command(
+        &mut self,
+        w: &WeaponDef,
+        th: Throw,
+        pressed: bool,
+        pressed2: bool,
+    ) -> Option<Shot> {
+        let pressed_any = pressed || pressed2;
         if let Some(n) = self.throw_press.as_mut() {
             *n += 1;
         }
@@ -971,7 +980,7 @@ impl Inventory {
             return None;
         }
         if let Some(n) = self.throw_press {
-            if !pressed && n >= th.drawback_ticks {
+            if !pressed_any && n >= th.drawback_ticks {
                 self.throw_press = None;
                 self.throw_in = Some(th.throw_ticks - 1);
             }
@@ -986,8 +995,12 @@ impl Inventory {
             }
             return None;
         }
-        if pressed && self.next_primary <= 0.0 && self.ammo.get(w.ammo1).copied().unwrap_or(0) > 0 {
+        if pressed_any
+            && self.next_primary <= 0.0
+            && self.ammo.get(w.ammo1).copied().unwrap_or(0) > 0
+        {
             self.throw_press = Some(0);
+            self.lob = pressed2 && !pressed;
             self.next_primary = f32::MAX;
         }
         None

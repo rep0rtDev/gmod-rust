@@ -173,6 +173,7 @@ fn basis(pitch: f32, yaw: f32) -> (Vec3, Vec3, Vec3) {
 /// Spawn in the launch tick from the owner's eye and view angles; the bolt and the ball have
 /// already moved one tick when the recording first sees them (their first think runs in the
 /// spawn frame), the rocket sits at the muzzle.
+#[allow(clippy::too_many_arguments)]
 pub fn spawn(
     kind: Launch,
     owner: u32,
@@ -181,6 +182,7 @@ pub fn spawn(
     yaw: f32,
     world: &World,
     phys: Option<&mut Physics<'_>>,
+    lob: bool,
 ) -> Option<Projectile> {
     let (forward, right, up) = basis(pitch, yaw);
     let aim_trace = world.trace_ray(eye, eye + forward * 56755.84, MASK_SOLID);
@@ -276,12 +278,22 @@ pub fn spawn(
             let info = phys.grenade?;
             let (forward, right, _) = basis(pitch, yaw);
             let ahead = gm_sandbox::forward(0.0, yaw);
+            // `LobGrenade` (secondary): 8 u lower, 350 u/s forward + 50 up, a third of the spin
             let origin = eye
                 + right * GRENADE_OFFSET.x
                 + ahead * GRENADE_OFFSET.y
-                + Vec3::Z * GRENADE_OFFSET.z;
-            let velocity = forward * GRENADE_SPEED + Vec3::Z * GRENADE_KICK;
-            let spin = (xorshift(phys.rng) * 2.0 - 1.0) * GRENADE_SPIN;
+                + Vec3::Z * (GRENADE_OFFSET.z - if lob { 8.0 } else { 0.0 });
+            let velocity = if lob {
+                forward * 350.0 + Vec3::Z * 50.0
+            } else {
+                forward * GRENADE_SPEED + Vec3::Z * GRENADE_KICK
+            };
+            let (roll, spin_max) = if lob {
+                (200.0, 600.0)
+            } else {
+                (GRENADE_ROLL, GRENADE_SPIN)
+            };
+            let spin = (xorshift(phys.rng) * 2.0 - 1.0) * spin_max;
             let body = phys
                 .world
                 .add_prop(&PropDesc {
@@ -291,7 +303,7 @@ pub fn spawn(
                     position: origin,
                     angles: (0.0, yaw - 90.0, 0.0),
                     velocity,
-                    angular_velocity: right * GRENADE_ROLL + ahead * spin,
+                    angular_velocity: right * roll + ahead * spin,
                     surface: info.surface,
                     linear_damping: info.linear_damping,
                     angular_damping: info.angular_damping,
