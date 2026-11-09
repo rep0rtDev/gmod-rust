@@ -1333,9 +1333,11 @@ struct App {
     /// the death camera keeps them while it pulls back.
     death_at: Option<Instant>,
     death_view: Vec3,
-    /// CHudDamageIndicator: attack strength front / rear / left / right, fading 2/s.
-    dmg: [f32; 4],
-    dmg_at: Instant,
+    /// CHudDamageIndicator (ui.md §9, gap-report #162-#163): when the left / right bar
+    /// animation started and whether it is the "High" (> 25 damage) variant.
+    dmg_side: [Option<(Instant, bool)>; 2],
+    /// HudTakeDamageHighBehind: the full-screen flash start.
+    dmg_full: Option<Instant>,
     context: Option<ContextMenu>,
     /// The editor entity whose "Edit Properties" sheet is open in the context menu.
     edit_sheet: Option<u32>,
@@ -1774,32 +1776,72 @@ impl App {
             .find(|p| Some(p.id) == me)
     }
 
-    /// `CHudDamageIndicator::CalcDamageDirection` (Source SDK): a hit from within 50 u lights
-    /// every side; farther, the direction's dot with forward / right lights the side it
-    /// exceeds 0.3 on (kept at the strongest). A zero origin means an unknown source: nothing.
-    fn damage_from(&mut self, from: Vec3, origin: Vec3) {
+    /// `CHudDamageIndicator::CalcDamageDirection` (ui.md §9.3): the attack direction's
+    /// angle against the view yaw, 0 = in front: 45..135 left, 225..315 right, 135..225 behind
+    /// (both bars, and the full-screen flash for > 25 damage); a frontal hit shows nothing. A
+    /// zero origin (no direction) is "behind".
+    fn damage_from(&mut self, from: Vec3, origin: Vec3, amount: f32) {
+        let high = amount > 25.0;
+        let now = Instant::now();
+        let behind = |me: &mut Self| {
+            me.dmg_side = [Some((now, high)); 2];
+            if high {
+                me.dmg_full = Some(now);
+            }
+        };
         if from == Vec3::ZERO {
+            behind(self);
             return;
         }
-        let d = from - origin;
-        if d.length() <= 50.0 {
-            self.dmg = [1.0; 4];
-            return;
-        }
-        let d = d.normalize();
+        let d = (from - origin).normalize_or_zero();
         let y = self.view.y.to_radians();
         let fwd = Vec3::new(y.cos(), y.sin(), 0.0);
-        let right = Vec3::new(y.sin(), -y.cos(), 0.0);
-        let (f, r) = (d.dot(fwd), d.dot(right));
-        if f > 0.3 {
-            self.dmg[0] = self.dmg[0].max(f);
-        } else if f < -0.3 {
-            self.dmg[1] = self.dmg[1].max(-f);
+        let left = Vec3::new(-y.sin(), y.cos(), 0.0);
+        let angle = d.dot(left).atan2(d.dot(fwd)).to_degrees().rem_euclid(360.0);
+        if (45.0..135.0).contains(&angle) {
+            self.dmg_side[0] = Some((now, high));
+        } else if (225.0..315.0).contains(&angle) {
+            self.dmg_side[1] = Some((now, high));
+        } else if (135.0..225.0).contains(&angle) {
+            behind(self);
         }
-        if r > 0.3 {
-            self.dmg[3] = self.dmg[3].max(r);
-        } else if r < -0.3 {
-            self.dmg[2] = self.dmg[2].max(-r);
+    }
+
+    /// HudAnimations HudTakeDamageLeft/Right (High): DmgColor 255 88 0 200 (255 for High)
+    /// linear to 255 0 0 200 over 0.3 s (0.4), then Deaccel to alpha 0 over 0.5 s (2.4).
+    fn dmg_side_color(&self, side: usize) -> Option<[f32; 4]> {
+        let (at, high) = self.dmg_side[side]?;
+        let t = at.elapsed().as_secs_f32();
+        let (t1, t2, a0) = if high {
+            (0.4, 2.4, 1.0)
+        } else {
+            (0.3, 0.5, 200.0 / 255.0)
+        };
+        if t < t1 {
+            let k = t / t1;
+            Some([
+                1.0,
+                88.0 / 255.0 * (1.0 - k),
+                0.0,
+                a0 + (200.0 / 255.0 - a0) * k,
+            ])
+        } else if t < t1 + t2 {
+            let k = ((t - t1) / t2).sqrt();
+            Some([1.0, 0.0, 0.0, 200.0 / 255.0 * (1.0 - k)])
+        } else {
+            None
+        }
+    }
+
+    /// HudTakeDamageHighFullscreen: alpha 255 held 0.4 s, then Deaccel to 0 over 2.4 s.
+    fn dmg_full_alpha(&self) -> Option<f32> {
+        let t = self.dmg_full?.elapsed().as_secs_f32();
+        if t < 0.4 {
+            Some(1.0)
+        } else if t < 2.8 {
+            Some(1.0 - ((t - 0.4) / 2.4).sqrt())
+        } else {
+            None
         }
     }
 
@@ -4388,7 +4430,7 @@ impl App {
                     if let (&[amount, x, y, z], Some(me)) = (v.as_slice(), self.local_snap()) {
                         if amount > 0.0 {
                             let o = me.origin;
-                            self.damage_from(Vec3::new(x, y, z), o);
+                            self.damage_from(Vec3::new(x, y, z), o, amount);
                         }
                     }
                 }
@@ -7247,12 +7289,6 @@ impl App {
                 }
             }
         }
-        // CHudDamageIndicator fade: 2/s, dropped once below 0.4 (SDK Paint)
-        let fade = self.dmg_at.elapsed().as_secs_f32().min(0.25) * 2.0;
-        self.dmg_at = Instant::now();
-        for v in &mut self.dmg {
-            *v = if *v > 0.4 { (*v - fade).max(0.0) } else { 0.0 };
-        }
         let ui_items = self.ui_items(o, camera.view_proj(aspect));
         let g = self.gfx.as_ref().unwrap();
         if bloom {
@@ -7962,23 +7998,24 @@ impl App {
                 {
                     if !hidden("CHudDamageIndicator") {
                         let red = |a: f32| [1.0, 0.0, 0.0, a];
-                        let quad = |items: &mut Vec<UiItem>, pts: [[f32; 2]; 4], a: f32| {
+                        let quad = |items: &mut Vec<UiItem>, pts: [[f32; 2]; 4], c: [f32; 4]| {
                             items.push(UiItem::Tri {
                                 pts: [pts[0], pts[1], pts[2]],
-                                color: red(a),
+                                color: c,
                             });
                             items.push(UiItem::Tri {
                                 pts: [pts[0], pts[2], pts[3]],
-                                color: red(a),
+                                color: c,
                             });
                         };
                         let (x0, y0, wd, t1, t2) =
                             (30.0 * s, 100.0 * s, 36.0 * s, 240.0 * s, 200.0 * s);
                         let inset = (t1 - t2) * 0.5;
-                        for (side, v) in [(2usize, self.dmg[2]), (3, self.dmg[3])] {
-                            if v <= 0.0 {
-                                continue;
-                            }
+                        for (side, c) in [
+                            (2usize, self.dmg_side_color(0)),
+                            (3, self.dmg_side_color(1)),
+                        ] {
+                            let Some(c) = c else { continue };
                             let xo = if side == 2 { x0 } else { w - x0 };
                             let dir = if side == 2 { 1.0 } else { -1.0 };
                             let xm = xo + dir * wd * 0.5;
@@ -7991,7 +8028,7 @@ impl App {
                                     [xm, y0 + t1 - inset * 0.5],
                                     [xo, y0 + t1],
                                 ],
-                                v,
+                                c,
                             );
                             quad(
                                 &mut items,
@@ -8001,11 +8038,10 @@ impl App {
                                     [xi, y0 + t2 + inset],
                                     [xm, y0 + t1 - inset * 0.5],
                                 ],
-                                v / 3.0,
+                                [c[0], c[1], c[2], c[3] / 3.0],
                             );
                         }
-                        let wash = self.dmg[0].max(self.dmg[1]);
-                        if wash > 0.0 {
+                        if let Some(wash) = self.dmg_full_alpha() {
                             items.push(UiItem::Rect {
                                 x: 0.0,
                                 y: 0.0,
@@ -9473,8 +9509,8 @@ fn main() -> Result<()> {
         scoreboard: false,
         death_at: None,
         death_view: Vec3::ZERO,
-        dmg: [0.0; 4],
-        dmg_at: Instant::now(),
+        dmg_side: [None; 2],
+        dmg_full: None,
         context: None,
         scripted_defs: Vec::new(),
         scripted_vms: Vec::new(),
