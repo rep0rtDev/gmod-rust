@@ -198,6 +198,9 @@ mod tests {
                 stop: false,
                 fade: 0.25,
                 pitch: 0.0,
+                level: 0.0,
+                channel: 0,
+                max_dist: 0.0,
             }],
         };
         let mut w = Writer::default();

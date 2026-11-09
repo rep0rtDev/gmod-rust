@@ -92,6 +92,15 @@ pub enum QueuedWrite {
         volume: f32,
         /// Non-zero: the sound belongs to this entity (`Entity:EmitSound`).
         ent: u32,
+        /// `EmitSound`'s pitch / soundLevel / channel; 0 leaves the script's own.
+        pitch: f32,
+        level: f32,
+        channel: u8,
+        /// `Entity:EmitSound` / `EmitSound` without a filter: recipients beyond 2500 u
+        /// are dropped (gap-report #167); 0 for `sound.Play`.
+        max_dist: f32,
+        /// The position came from Lua (`sound.Play`) rather than the entity.
+        at_pos: bool,
     },
     /// `spawnmenu.add`: models under a spawn menu category for every client.
     SpawnList {
@@ -2345,6 +2354,11 @@ pub fn install(lua: &Lua, shared: Arc<Shared>) -> Result<()> {
                         pos: table_vec3(&pos)?,
                         volume: t.get::<Option<f32>>("volume")?.unwrap_or(1.0),
                         ent: t.get::<Option<u32>>("ent")?.unwrap_or(0),
+                        pitch: t.get::<Option<f32>>("pitch")?.unwrap_or(0.0),
+                        level: t.get::<Option<f32>>("level")?.unwrap_or(0.0),
+                        channel: t.get::<Option<u8>>("channel")?.unwrap_or(0),
+                        max_dist: t.get::<Option<f32>>("max_dist")?.unwrap_or(0.0),
+                        at_pos: t.get::<Option<bool>>("at_pos")?.unwrap_or(true),
                     }
                 }
                 "set_velocity" => {
@@ -4539,9 +4553,33 @@ pub fn apply(server: &mut Server<'_>, w: &QueuedWrite) -> bool {
             pos,
             volume,
             ent,
+            pitch,
+            level,
+            channel,
+            max_dist,
+            at_pos,
         } => {
-            if *ent == 0 || !server.emit_sound(*ent, name.clone(), *volume) {
-                server.play_sound(name.clone(), *pos, *volume);
+            let at = (*ent == 0 || *at_pos).then_some(*pos);
+            if !server.emit_sound_lua(
+                *ent,
+                name.clone(),
+                at,
+                *volume,
+                *pitch,
+                *level,
+                *channel,
+                *max_dist,
+            ) {
+                server.emit_sound_lua(
+                    0,
+                    name.clone(),
+                    Some(*pos),
+                    *volume,
+                    *pitch,
+                    *level,
+                    *channel,
+                    *max_dist,
+                );
             }
             true
         }

@@ -730,6 +730,13 @@ pub struct WorldSound {
     pub fade: f32,
     /// Pitch in percent (100 = as recorded); 0 leaves the script's own range.
     pub pitch: f32,
+    /// Sound level in dB (`EmitSound`'s `soundLevel`); 0 leaves the script's own.
+    pub level: f32,
+    /// `CHAN_*` (0 `CHAN_AUTO`): replaces what the entity plays on the same channel.
+    pub channel: u8,
+    /// Recipients farther than this from `pos` do not get the sound (0: everyone); the
+    /// Lua `EmitSound` cut of 2500 u (sound.md §1.6, gap-report #167).
+    pub max_dist: f32,
 }
 
 /// Game events of this tick for the addon runtime (`ServerHooks::game_events`), drained by the
@@ -1045,6 +1052,9 @@ pub enum Request {
         name: String,
         pos: Vec3,
         volume: f32,
+        pitch: f32,
+        level: f32,
+        channel: u8,
     },
     /// `PlayerSelectSpawn`: the player is about to spawn at the server's pick (`pos`, `angles`);
     /// `Text("x y z pitch yaw roll")` spawns them there instead.
@@ -25488,6 +25498,46 @@ impl<'w> Server<'w> {
     }
 
     /// `emit_sound` at a pitch (percent; `EmitSound( name, level, pitch )`).
+    /// `Entity:EmitSound(name, level, pitch, volume, channel)` from Lua: the full argument set,
+    /// recipients cut at 2500 u like the game's `EmitSound` without a filter.
+    #[allow(clippy::too_many_arguments)]
+    pub fn emit_sound_lua(
+        &mut self,
+        ent: u32,
+        name: String,
+        pos: Option<Vec3>,
+        volume: f32,
+        pitch: f32,
+        level: f32,
+        channel: u8,
+        max_dist: f32,
+    ) -> bool {
+        let pos = match pos {
+            Some(p) => p,
+            None => {
+                if let Some(p) = self.players.get(&ent) {
+                    p.state.origin
+                } else if let Some((pos, _)) = self.entity_pose(ent) {
+                    pos
+                } else {
+                    return false;
+                }
+            }
+        };
+        self.sounds.push(WorldSound {
+            name,
+            pos,
+            volume: volume.clamp(0.0, 1.0),
+            ent,
+            pitch,
+            level,
+            channel,
+            max_dist,
+            ..Default::default()
+        });
+        true
+    }
+
     pub fn emit_sound_pitch(&mut self, ent: u32, name: String, volume: f32, pitch: f32) -> bool {
         let pos = if let Some(p) = self.players.get(&ent) {
             p.state.origin
@@ -25621,6 +25671,9 @@ impl<'w> Server<'w> {
                     name: s.name.clone(),
                     pos: s.pos,
                     volume: s.volume,
+                    pitch: s.pitch,
+                    level: s.level,
+                    channel: s.channel,
                 }) {
                     Verdict::Cancel => continue,
                     Verdict::Amount(v) => s.volume = v.clamp(0.0, 1.0),

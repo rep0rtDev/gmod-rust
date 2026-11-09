@@ -795,18 +795,25 @@ function sound.EmitHint(hint, pos, volume, duration, owner)
     if not pos then return end
     world.queue("npc_ai_hear", 0, { x = pos.x, y = pos.y, z = pos.z, radius = tonumber(volume) or 1024, sound = tonumber(hint) or 0, duration = tonumber(duration) or 0, owner = IsValid(owner) and owner.EntIndex and owner:EntIndex() or 0 })
 end
-function sound.Play(name, pos, level, pitch, volume, ent)
+-- `sound.Play(name, pos, level, pitch, volume)`: a positioned sound for everyone; the
+-- `EmitSound` family routes through `sound_emit` with the entity, channel and the 2500 u cut.
+local function sound_emit(name, pos, level, pitch, volume, ent, channel, max_dist, at_pos)
     local s = sound_table[name]
     local file_ = name
     if s and s.sound then file_ = type(s.sound) == "table" and s.sound[math.random(#s.sound)] or s.sound end
     world.queue("sound.play", 0, { name = file_, pos = { x = pos.x, y = pos.y, z = pos.z }, volume = volume or (s and s.volume) or 1,
-        ent = ent or 0 })
+        ent = ent or 0, pitch = tonumber(pitch) or 0, level = tonumber(level) or (s and s.level) or 0,
+        channel = tonumber(channel) or 0, max_dist = max_dist or 0, at_pos = at_pos ~= false })
 end
+function sound.Play(name, pos, level, pitch, volume, ent) sound_emit(name, pos, level, pitch, volume, ent, 0, 0, true) end
 function sound.PlayFile(path, flags, cb) if cb then cb(nil, 20, "BASS_ERROR_NOTAVAIL") end end
 function sound.PlayURL(url, flags, cb) if cb then cb(nil, 20, "BASS_ERROR_NOTAVAIL") end end
-function EmitSound(name, pos, ent, channel, volume, level, flags, pitch) sound.Play(name, pos, level, pitch, volume, ent or 0) end
+function EmitSound(name, pos, ent, channel, volume, level, flags, pitch)
+    local e = (ent and ent.EntIndex and ent:EntIndex()) or tonumber(ent) or 0
+    sound_emit(name, pos, level, pitch, volume, e, channel, 2500, true)
+end
 local ENTm = __glua_classes.Entity
-function ENTm:EmitSound(name, level, pitch, volume) sound.Play(name, self:GetPos(), level, pitch, volume, self:EntIndex()) end
+function ENTm:EmitSound(name, level, pitch, volume, channel) sound_emit(name, self:GetPos(), level, pitch, volume, self:EntIndex(), channel, 2500, false) end
 function ENTm:StopSound(name) end
 __glua_classes.Player.EmitSound = ENTm.EmitSound
 __glua_classes.Player.StopSound = ENTm.StopSound
@@ -1234,8 +1241,10 @@ local prev_move = {}
     events.on("entity.emit_sound", function(p)
         local t = {
             SoundName = p.name, OriginalSoundName = p.name, Entity = Entity(p.entity),
-            Pos = Vector(p.px, p.py, p.pz), Volume = p.volume or 1, Pitch = 100,
-            SoundLevel = 75, DSP = 0, Channel = CHAN_AUTO or 0, Flags = 0,
+            Pos = Vector(p.px, p.py, p.pz), Volume = p.volume or 1,
+            Pitch = (p.pitch and p.pitch > 0) and p.pitch or 100,
+            SoundLevel = (p.level and p.level > 0) and p.level or 75, DSP = 0,
+            Channel = p.channel or CHAN_AUTO or 0, Flags = 0,
         }
         local r = hook.Run("EntityEmitSound", t)
         if r == false then return false end

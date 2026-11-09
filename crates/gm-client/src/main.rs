@@ -4675,6 +4675,7 @@ impl App {
                         s.ent,
                         s.looping,
                         s.pitch,
+                        s.level,
                     );
                 }
             }

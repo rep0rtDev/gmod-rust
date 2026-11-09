@@ -1430,13 +1430,19 @@ impl Runtime {
                 name,
                 pos,
                 volume,
+                pitch,
+                level,
+                channel,
             } => {
                 p.ints.push(("entity", *ent as i64));
+                p.ints.push(("channel", *channel as i64));
                 p.strs.push(("name", name.clone()));
                 for (k, v) in [("px", pos.x), ("py", pos.y), ("pz", pos.z)] {
                     p.floats.push((k, v as f64));
                 }
                 p.floats.push(("volume", *volume as f64));
+                p.floats.push(("pitch", *pitch as f64));
+                p.floats.push(("level", *level as f64));
                 self.ask_amount(server, "entity.emit_sound", p)
             }
             gm_server::Request::SelectSpawn {

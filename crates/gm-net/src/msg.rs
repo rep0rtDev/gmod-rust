@@ -614,6 +614,12 @@ pub struct SoundEvent {
     pub fade: f32,
     /// Pitch in percent, 0 for the script's own.
     pub pitch: f32,
+    /// Sound level in dB, 0 for the script's own.
+    pub level: f32,
+    /// `CHAN_*`, 0 `CHAN_AUTO`.
+    pub channel: u8,
+    /// Server-side recipient cut (not sent): 0 for everyone.
+    pub max_dist: f32,
 }
 
 /// A published addon package: identity is the sha256 of the `.gmr` bytes.
@@ -1508,6 +1514,8 @@ impl ServerMsg {
                     w.u8(u8::from(s.looping) | (u8::from(s.stop) << 1));
                     w.f32(s.fade);
                     w.f32(s.pitch);
+                    w.f32(s.level);
+                    w.u8(s.channel);
                 }
             }
             ServerMsg::Effects { tick, list } => {
@@ -1897,6 +1905,8 @@ impl ServerMsg {
                     let flags = r.u8()?;
                     let fade = r.f32()?;
                     let pitch = r.f32()?;
+                    let level = r.f32()?;
+                    let channel = r.u8()?;
                     list.push(SoundEvent {
                         name,
                         pos,
@@ -1906,6 +1916,9 @@ impl ServerMsg {
                         stop: flags & 2 != 0,
                         fade,
                         pitch,
+                        level,
+                        channel,
+                        max_dist: 0.0,
                     });
                 }
                 ServerMsg::Sounds { tick, list }

@@ -1020,6 +1020,9 @@ impl ServerNet {
                 stop: s.stop,
                 fade: s.fade,
                 pitch: s.pitch,
+                level: s.level,
+                channel: s.channel,
+                max_dist: s.max_dist,
             }));
         self.pending_effects
             .extend(server.take_effects().into_iter().map(|e| match e {
@@ -2086,13 +2089,24 @@ impl ServerNet {
                     slot.sent.pop_front();
                 }
                 if !sounds.is_empty() {
-                    let mut w = Writer::default();
-                    ServerMsg::Sounds {
-                        tick: self.tick,
-                        list: sounds.clone(),
+                    // the Lua `EmitSound` recipient cut: nobody beyond `max_dist` of the origin
+                    let ear = server.players.get(&slot.player).map(|p| p.state.origin);
+                    let list: Vec<SoundEvent> = sounds
+                        .iter()
+                        .filter(|s| {
+                            s.max_dist <= 0.0 || ear.is_none_or(|e| e.distance(s.pos) <= s.max_dist)
+                        })
+                        .cloned()
+                        .collect();
+                    if !list.is_empty() {
+                        let mut w = Writer::default();
+                        ServerMsg::Sounds {
+                            tick: self.tick,
+                            list,
+                        }
+                        .write(&mut w);
+                        unreliable.push(w.buf);
                     }
-                    .write(&mut w);
-                    unreliable.push(w.buf);
                 }
                 if !effects.is_empty() {
                     let mut w = Writer::default();

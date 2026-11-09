@@ -177,7 +177,7 @@ impl Sounds {
         position: Option<Vec3>,
         scale: f32,
     ) -> bool {
-        self.play_at(mount, name, position, scale, 0, false, 0.0)
+        self.play_at(mount, name, position, scale, 0, false, 0.0, 0.0)
     }
 
     /// A script entry on entity `ent` (0: the world): the entry's channel keys replacement
@@ -193,6 +193,7 @@ impl Sounds {
         ent: u32,
         looping: bool,
         pitch: f32,
+        level: f32,
     ) -> bool {
         let Some(e) = self.scripts.get(name).cloned() else {
             // a wave path (`sound.Play( "garrysmod/balloon_pop_cute.wav", ... )`) plays as is
@@ -207,7 +208,7 @@ impl Sounds {
                 volume: scale,
                 pitch: if pitch > 0.0 { pitch } else { 100.0 },
                 position,
-                level: 75 as _,
+                level: if level > 0.0 { level } else { 75.0 },
                 looping,
                 ent,
                 channel: 0,
@@ -235,7 +236,7 @@ impl Sounds {
             volume,
             pitch,
             position,
-            level: e.level,
+            level: if level > 0.0 { level } else { e.level },
             looping,
             ent,
             channel,
