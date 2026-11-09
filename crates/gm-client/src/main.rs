@@ -5261,6 +5261,7 @@ impl App {
         }
         // player models by model, skin and body groups (`cl_playerskin` / `cl_playerbodygroups`
         // of each player, worn from their spawn)
+        let mut flashlight_attach: HashMap<u32, Vec3> = HashMap::new();
         for p in &self.sim.client.world.players {
             let key = player_model_key(p);
             if !g.models.contains_key(&key) {
@@ -5507,16 +5508,30 @@ impl App {
                         });
                     let world = m.bone_world_gesture(&seq, t, None, &params, gesture);
                     let pose = world.as_ref().map(|w| m.skin_matrices(w));
+                    let (origin, yaw) = match self.sim.player_interp.sample(p.id, rt) {
+                        Some(s) => (s.pos, s.angles.y),
+                        None => (p.origin, p.view_angles.y),
+                    };
+                    // other players' flashlights shine from `gmod_flashlight`, else
+                    // `anim_attachment_RH` (render.md 3.5, gap-report #139)
+                    if p.flashlight {
+                        if let Some(at) = world.as_ref().and_then(|w| {
+                            m.attachment("gmod_flashlight", w)
+                                .or_else(|| m.attachment("anim_attachment_RH", w))
+                        }) {
+                            let to_world = glam::Mat4::from_rotation_translation(
+                                glam::Quat::from_rotation_z(yaw.to_radians()),
+                                origin,
+                            );
+                            flashlight_attach.insert(p.id, (to_world * at).w_axis.truncate());
+                        }
+                    }
                     // the weapon's world model rides the right hand (bone merge by name)
                     let held = world.as_ref().and_then(|w| {
                         let path = world_model_of(p.active)?;
                         let wm = g.models.get(path)?.as_ref()?;
                         Some((path, wm.pose_merged("idle", 0.0, m, w)?))
                     });
-                    let (origin, yaw) = match self.sim.player_interp.sample(p.id, rt) {
-                        Some(s) => (s.pos, s.angles.y),
-                        None => (p.origin, p.view_angles.y),
-                    };
                     player_poses.push((origin, yaw, pose, held, m));
                 }
                 None => {
@@ -6718,8 +6733,13 @@ impl App {
                 (origin - dir * *dm, dir)
             } else {
                 let (pitch, yaw) = (p.view_angles.x.to_radians(), p.view_angles.y.to_radians());
+                // the model's flashlight attachment, else the eye (the game's fallback)
+                let eye = if p.ducked { 28.0 } else { 64.0 };
                 (
-                    p.origin + Vec3::new(0.0, 0.0, 64.0),
+                    flashlight_attach
+                        .get(&p.id)
+                        .copied()
+                        .unwrap_or(p.origin + Vec3::new(0.0, 0.0, eye)),
                     Vec3::new(
                         pitch.cos() * yaw.cos(),
                         pitch.cos() * yaw.sin(),
