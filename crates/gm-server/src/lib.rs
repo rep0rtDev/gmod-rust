@@ -536,6 +536,9 @@ pub struct ModelInfo {
     pub scrape_rough: Option<String>,
     /// The model's `prop_data` through `scripts/propdata.txt`.
     pub prop_data: PropData,
+    /// `door_options` of a door model (props.md #95): `open` / `close` / `move` / `locked` /
+    /// `unlocked` sound scripts, defaults overridden by skin 0.
+    pub door_options: Vec<(String, String)>,
     /// Set for models whose `.phy` has more than one solid: a `prop_ragdoll` when spawned.
     pub ragdoll: Option<RagdollInfo>,
     /// Attachments in model space (bind pose): vehicle seats / exits, muzzle points.
@@ -8710,6 +8713,11 @@ pub struct Server<'w> {
     thruster_loops: BTreeSet<u32>,
     /// Props whose scrape loop is playing (the volume factor it started with).
     scrapes: BTreeMap<u32, f32>,
+    /// Map props with the touch (0x10) / pressure (0x20) break spawnflags and their
+    /// `PressureDelay` (props.md #29, gap-report #189).
+    break_flags: BTreeMap<u32, (u32, f32)>,
+    /// Pressure breaks scheduled: prop -> tick it breaks at.
+    pressure_due: BTreeMap<u32, u64>,
     hull_planes: BTreeMap<String, Vec<Vec<(Vec3, f32)>>>,
     pub events: Vec<Event>,
     pub game_events: Vec<GameEvent>,
@@ -8943,6 +8951,8 @@ impl<'w> Server<'w> {
             effects: Vec::new(),
             next_projectile_id: PROJECTILE_ID_BASE,
             scrapes: BTreeMap::new(),
+            break_flags: BTreeMap::new(),
+            pressure_due: BTreeMap::new(),
             thruster_loops: BTreeSet::new(),
             clipboards: BTreeMap::new(),
             hull_planes: BTreeMap::new(),
@@ -22949,6 +22959,13 @@ impl<'w> Server<'w> {
                         }
                         return;
                     }
+                    // a prop_door_rotating's model: +use goes to the door, not the pickup
+                    if let Some(door) = self.map_io.door_of_prop(ent) {
+                        if use_pressed {
+                            self.map_input(door, "Use", "", player);
+                        }
+                        return;
+                    }
                     if self.vehicles.contains_key(&ent) {
                         if use_pressed {
                             self.use_enter_vehicle(player, ent);
@@ -24693,6 +24710,11 @@ impl<'w> Server<'w> {
         }
     }
 
+    /// A map prop's touch / pressure break spawnflags (props.md #29).
+    pub fn set_break_flags(&mut self, id: u32, flags: u32, pressure_delay: f32) {
+        self.break_flags.insert(id, (flags, pressure_delay));
+    }
+
     pub fn remove_prop(&mut self, id: u32) -> bool {
         self.hl2_items.remove(&id);
         self.sandbox_sents.remove(&id);
@@ -26384,6 +26406,24 @@ impl<'w> Server<'w> {
     }
 
     fn impact_sounds(&mut self) {
+        let due: Vec<u32> = self
+            .pressure_due
+            .iter()
+            .filter(|(_, t)| **t <= self.tick_count)
+            .map(|(e, _)| *e)
+            .collect();
+        for ent in due {
+            self.pressure_due.remove(&ent);
+            let health = self
+                .sandbox
+                .props()
+                .iter()
+                .find(|p| p.id == ent)
+                .map(|p| p.health);
+            if let Some(h) = health.filter(|h| *h > 0) {
+                self.damage_prop(ent, h as f32 + 1.0, weapons::DMG_CRUSH);
+            }
+        }
         let impacts = self.physics.take_impacts();
         if impacts.is_empty() {
             return;
@@ -26435,6 +26475,30 @@ impl<'w> Server<'w> {
                         let dmg = prop_impact_damage(m_self, m_other, other == 0, imp.speed);
                         if dmg > 0.0 {
                             self.damage_prop(ent, dmg, weapons::DMG_CRUSH);
+                        }
+                        // props.md #29: touch break when speed x 0.01 reaches the health;
+                        // pressure break scheduled when something rests on top (M)
+                        if let Some(&(flags, delay)) = self.break_flags.get(&ent) {
+                            let (ppos, health) = self
+                                .sandbox
+                                .props()
+                                .iter()
+                                .find(|p| p.id == ent)
+                                .map(|p| (p.pos, p.health))
+                                .unwrap_or((imp.point, 0));
+                            if flags & 0x10 != 0 && health > 0 && imp.speed * 0.01 >= health as f32
+                            {
+                                self.damage_prop(ent, health as f32 + 1.0, weapons::DMG_CRUSH);
+                            }
+                            if flags & 0x20 != 0
+                                && imp.point.z > ppos.z
+                                && !self.pressure_due.contains_key(&ent)
+                            {
+                                let due = self.tick_count
+                                    + (delay.max(0.0) / gm_core::tick::DEFAULT_TICK_INTERVAL)
+                                        .round() as u64;
+                                self.pressure_due.insert(ent, due);
+                            }
                         }
                     }
                 }

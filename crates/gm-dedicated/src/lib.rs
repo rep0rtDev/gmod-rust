@@ -12,6 +12,10 @@ pub struct MapProp {
     pub pos: Vec3,
     pub angles: Vec3,
     pub frozen: bool,
+    /// `spawnflags` (props.md #10): 0x10 break on touch, 0x20 break under pressure.
+    pub flags: u32,
+    /// `PressureDelay` seconds before a pressure break.
+    pub pressure_delay: f32,
 }
 
 pub struct LoadedWorld {
@@ -123,6 +127,11 @@ pub fn load_world(mount: &gm_content::Mount, map: &str) -> Result<LoadedWorld> {
                 pos: vec3("origin"),
                 angles: vec3("angles"),
                 frozen: dynamic || flags & 8 != 0,
+                flags,
+                pressure_delay: e
+                    .get("PressureDelay")
+                    .and_then(|v| v.parse().ok())
+                    .unwrap_or(0.0),
             })
         })
         .collect();
@@ -134,6 +143,7 @@ pub fn load_world(mount: &gm_content::Mount, map: &str) -> Result<LoadedWorld> {
             (gm_collision::movable_brush_class(c) && !gm_collision::brush_entity_is_static(e))
                 || c.starts_with("trigger_")
                 || c.starts_with("logic_")
+                || c == "prop_door_rotating"
                 || e.get("targetname").is_some_and(|n| !n.is_empty())
         })
         .filter(|e| e.classname() != "worldspawn")
@@ -604,6 +614,7 @@ pub fn model_info(mount: &gm_content::Mount, model: &str) -> Result<gm_server::M
             .or_else(|| table.sound("default", "impactsoft")),
         scrape_rough: table.sound(&props.surfaceprop, "scraperough"),
         prop_data: prop_data(mount, &mdl.key_values),
+        door_options: door_options(&mdl.key_values),
         gib_models: prop_data_full(mount, &mdl.key_values).1,
         break_sound: table.sound(&props.surfaceprop, "break"),
         skins: mdl.skins.len().clamp(1, 255) as u8,
@@ -618,6 +629,39 @@ pub fn model_info(mount: &gm_content::Mount, model: &str) -> Result<gm_server::M
 /// The model's `prop_data` (`$keyvalues`) through the `base` chain of `scripts/propdata.txt`:
 /// the crate is `Wooden.Medium`, health 30 (measured, `lua_fire`), the gas can says 20 itself;
 /// each key is the first found walking up the chain. No `prop_data` is unbreakable.
+/// The model's `door_options` block (props.md #95): the `defaults` keys overridden by `skin0`
+/// (`open`, `close`, `move`, `locked`, `unlocked`), lower-cased.
+pub fn door_options(key_values: &str) -> Vec<(String, String)> {
+    use gm_formats::keyvalues::{self, Value};
+    let mut out: Vec<(String, String)> = Vec::new();
+    let Ok(doc) = keyvalues::parse(key_values) else {
+        return out;
+    };
+    for n in &doc.nodes {
+        if !n.key.eq_ignore_ascii_case("door_options") {
+            continue;
+        }
+        let Value::Block(kids) = &n.value else {
+            continue;
+        };
+        for section in ["defaults", "skin0"] {
+            for k in kids.iter().filter(|k| k.key.eq_ignore_ascii_case(section)) {
+                let Value::Block(items) = &k.value else {
+                    continue;
+                };
+                for it in items {
+                    if let Value::Str(v) = &it.value {
+                        let key = it.key.to_ascii_lowercase();
+                        out.retain(|(a, _)| *a != key);
+                        out.push((key, v.clone()));
+                    }
+                }
+            }
+        }
+    }
+    out
+}
+
 pub fn prop_data(mount: &gm_content::Mount, key_values: &str) -> gm_server::PropData {
     prop_data_full(mount, key_values).0
 }

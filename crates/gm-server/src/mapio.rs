@@ -170,6 +170,21 @@ pub enum Kind {
         refire: f32,
         next_at: u64,
     },
+    /// `prop_door_rotating` (props.md §8.1, gap-report #202): a frozen model prop `prop`
+    /// turned about Z by `angle` toward `goal` at `speed` deg/s; opens away from the
+    /// activator (`opendir` 1 forward only, 2 backward only), `returndelay` < 0 stays open.
+    PropDoor {
+        prop: u32,
+        angle: f32,
+        goal: f32,
+        state: Toggle,
+        speed: f32,
+        distance: f32,
+        return_delay: f32,
+        open_dir: i32,
+        locked: bool,
+        return_at: Option<u64>,
+    },
     /// `logic_branch`: a stored boolean tested into `OnTrue` / `OnFalse`.
     Branch {
         value: bool,
@@ -582,6 +597,18 @@ fn build(def: MapEntityDef, id: u32) -> MapEntity {
             refire: def.num("RefireTime", 1.0).max(TICK),
             next_at: 0,
         },
+        "prop_door_rotating" => Kind::PropDoor {
+            prop: 0,
+            angle: 0.0,
+            goal: 0.0,
+            state: Toggle::AtBottom,
+            speed: def.num("speed", 100.0),
+            distance: def.num("distance", 90.0),
+            return_delay: def.num("returndelay", -1.0),
+            open_dir: def.num("opendir", 0.0) as i32,
+            locked: flags & 2048 != 0,
+            return_at: None,
+        },
         "logic_branch" => Kind::Branch {
             value: def.num("InitialValue", 0.0) != 0.0,
         },
@@ -627,6 +654,14 @@ fn build(def: MapEntityDef, id: u32) -> MapEntity {
 impl MapIo {
     pub fn get(&self, id: u32) -> Option<&MapEntity> {
         self.entities.iter().find(|e| e.id == id && e.alive)
+    }
+
+    /// The `prop_door_rotating` whose model prop is `prop`.
+    pub fn door_of_prop(&self, prop: u32) -> Option<u32> {
+        self.entities
+            .iter()
+            .find(|e| e.alive && matches!(&e.kind, Kind::PropDoor { prop: p, .. } if *p == prop))
+            .map(|e| e.id)
     }
 
     /// Entities a target string names: `name`, `name*`, or nothing for the `!` specials.
@@ -727,6 +762,12 @@ impl Server<'_> {
         let mut io = MapIo::default();
         for (i, def) in defs.into_iter().enumerate() {
             let mut e = build(def, MAP_ENT_ID_BASE + i as u32);
+            if let Kind::PropDoor { prop, .. } = &mut e.kind {
+                let model = e.def.get("model").unwrap_or("").to_string();
+                if let Some(id) = self.script_spawn_prop(0, &model, e.pos, e.def.angles, true) {
+                    *prop = id;
+                }
+            }
             if e.solid() || matches!(e.kind, Kind::Toggled { .. }) {
                 let hulls: Vec<Vec<Vec3>> = e
                     .def
@@ -1160,8 +1201,74 @@ impl Server<'_> {
         }
     }
 
+    /// `prop_door_rotating` motion: the model prop turns about Z toward the goal at `speed`
+    /// deg/s; arrival fires `OnFullyOpen` / `OnFullyClosed` and starts the return delay.
+    fn tick_prop_doors(&mut self) {
+        let now = self.tick_count;
+        let mut moves: Vec<(u32, Vec3, Vec3)> = Vec::new();
+        let mut fired: Vec<(usize, &'static str)> = Vec::new();
+        for idx in 0..self.map_io.entities.len() {
+            let e = &mut self.map_io.entities[idx];
+            if !e.alive {
+                continue;
+            }
+            let (pos, base) = (e.pos, e.def.angles);
+            let Kind::PropDoor {
+                prop,
+                angle,
+                goal,
+                state,
+                speed,
+                return_delay,
+                return_at,
+                ..
+            } = &mut e.kind
+            else {
+                continue;
+            };
+            match *state {
+                Toggle::AtTop => {
+                    if return_at.is_some_and(|t| now >= t) {
+                        *return_at = None;
+                        *goal = 0.0;
+                        *state = Toggle::GoingDown;
+                        fired.push((idx, "OnClose"));
+                    }
+                }
+                Toggle::GoingUp | Toggle::GoingDown => {
+                    let step = *speed * TICK;
+                    let d = *goal - *angle;
+                    if d.abs() <= step {
+                        *angle = *goal;
+                        if *state == Toggle::GoingUp {
+                            *state = Toggle::AtTop;
+                            fired.push((idx, "OnFullyOpen"));
+                            if *return_delay >= 0.0 {
+                                *return_at = Some(now + ticks(*return_delay));
+                            }
+                        } else {
+                            *state = Toggle::AtBottom;
+                            fired.push((idx, "OnFullyClosed"));
+                        }
+                    } else {
+                        *angle += step * d.signum();
+                    }
+                    moves.push((*prop, pos, Vec3::new(base.x, base.y + *angle, base.z)));
+                }
+                Toggle::AtBottom => {}
+            }
+        }
+        for (id, p, a) in moves {
+            self.teleport_prop(id, p, a);
+        }
+        for (idx, name) in fired {
+            self.map_io.fire_output(now, idx, name, 0);
+        }
+    }
+
     /// Delivers `input` to map entity `id` now.
     pub fn map_input(&mut self, id: u32, input: &str, param: &str, activator: u32) {
+        self.tick_prop_doors();
         let now = self.tick_count;
         let Some(idx) = self
             .map_io
@@ -1228,6 +1335,7 @@ impl Server<'_> {
                 .wrapping_mul(0xBF58_476D_1CE4_E5B9);
             ((x >> 40) as f32) / 16_777_216.0
         };
+        let act_pos = self.players.get(&activator).map(|p| p.state.origin);
         let e = &mut self.map_io.entities[idx];
         let was_moving = e.moving();
         let mut ambient: Option<(bool, f32)> = None;
@@ -1312,6 +1420,54 @@ impl Server<'_> {
                 "enable" => *enabled = true,
                 "disable" => *enabled = false,
                 "toggle" => *enabled = !*enabled,
+                _ => {}
+            },
+            Kind::PropDoor {
+                goal,
+                state,
+                distance,
+                open_dir,
+                locked,
+                return_at,
+                ..
+            } => match input_lc.as_str() {
+                "lock" => *locked = true,
+                "unlock" => *locked = false,
+                "open" | "use" | "toggle"
+                    if *state == Toggle::AtBottom || *state == Toggle::GoingDown =>
+                {
+                    if *locked && input_lc == "use" {
+                        events.push("OnLockedUse");
+                    } else {
+                        // away from the activator: in front of the door's forward it swings
+                        // backward (sign convention M), `opendir` forces a side
+                        let fwd = e.rot * Vec3::X;
+                        let front = act_pos.is_none_or(|a| (a - e.pos).dot(fwd) > 0.0);
+                        let sign = match *open_dir {
+                            1 => 1.0,
+                            2 => -1.0,
+                            _ => {
+                                if front {
+                                    -1.0
+                                } else {
+                                    1.0
+                                }
+                            }
+                        };
+                        *goal = sign * *distance;
+                        *state = Toggle::GoingUp;
+                        *return_at = None;
+                        events.push("OnOpen");
+                    }
+                }
+                "close" | "use" | "toggle"
+                    if *state == Toggle::AtTop || *state == Toggle::GoingUp =>
+                {
+                    *goal = 0.0;
+                    *state = Toggle::GoingDown;
+                    *return_at = None;
+                    events.push("OnClose");
+                }
                 _ => {}
             },
             Kind::Branch { value } => {
@@ -1611,6 +1767,39 @@ impl Server<'_> {
         }
         if env {
             self.env_input(idx, &input_lc, activator);
+        }
+        // a prop door's sounds come from its model's door_options (DoorSound.Null when absent)
+        if let Kind::PropDoor { prop, .. } = &self.map_io.entities[idx].kind {
+            let prop = *prop;
+            let which = if events.contains(&"OnOpen") {
+                Some("open")
+            } else if events.contains(&"OnClose") {
+                Some("close")
+            } else if events.contains(&"OnLockedUse") {
+                Some("locked")
+            } else {
+                None
+            };
+            if let Some(k) = which {
+                let name = self
+                    .sandbox
+                    .props()
+                    .iter()
+                    .find(|p| p.id == prop)
+                    .and_then(|p| self.models.get(&p.model))
+                    .and_then(|m| m.door_options.iter().find(|(a, _)| a == k))
+                    .map(|(_, v)| v.clone())
+                    .unwrap_or_else(|| "DoorSound.Null".to_string());
+                let pos = self.map_io.entities[idx].pos;
+                self.sounds.push(crate::WorldSound {
+                    name,
+                    pos,
+                    volume: 1.0,
+                    ent: prop,
+                    channel: 6,
+                    ..Default::default()
+                });
+            }
         }
         for (name, value) in valued {
             self.map_io

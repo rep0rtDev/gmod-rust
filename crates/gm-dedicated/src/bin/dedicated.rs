@@ -157,11 +157,11 @@ fn main() -> Result<()> {
     // the map's prop_physics / prop_dynamic entities as server props (props.md #10-14)
     let mut map_props = 0;
     for p in &world.map_props {
-        if server
-            .script_spawn_prop(0, &p.model, p.pos, p.angles, p.frozen)
-            .is_some()
-        {
+        if let Some(id) = server.script_spawn_prop(0, &p.model, p.pos, p.angles, p.frozen) {
             map_props += 1;
+            if p.flags & 0x30 != 0 {
+                server.set_break_flags(id, p.flags, p.pressure_delay);
+            }
         }
     }
     println!("map props: {map_props} of {}", world.map_props.len());
