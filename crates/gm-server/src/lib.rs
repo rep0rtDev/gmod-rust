@@ -2620,10 +2620,24 @@ pub struct MoveOverride {
     pub time_scale: Option<f32>,
     pub sprint_enabled: Option<bool>,
     pub force_sprint: Option<bool>,
+    /// `Player:SetModelScale`: hull, eye heights and dead view height scale with the model
+    /// (movement.md 1.5).
+    pub model_scale: Option<f32>,
 }
 
 impl MoveOverride {
     pub fn apply(&self, cfg: &mut gm_move::MoveConfig) {
+        self.apply_fields(cfg);
+        if let Some(k) = self.model_scale.filter(|k| *k > 0.0) {
+            cfg.hull_half *= k;
+            cfg.stand_height *= k;
+            cfg.duck_height *= k;
+            cfg.stand_eye *= k;
+            cfg.duck_eye *= k;
+        }
+    }
+
+    fn apply_fields(&self, cfg: &mut gm_move::MoveConfig) {
         if let Some(v) = self.walk_speed {
             cfg.walk_speed = v;
         }
@@ -12219,6 +12233,13 @@ impl<'w> Server<'w> {
 
     /// `Entity:SetModelScale(scale)` on a prop; 1 clears the override.
     pub fn set_model_scale(&mut self, ent: u32, scale: f32) -> bool {
+        // a player's scale sizes his hull and eyes (movement.md 1.5); the model itself is
+        // not drawn scaled yet
+        if let Some(p) = self.players.get_mut(&ent) {
+            p.move_override.model_scale =
+                ((scale - 1.0).abs() >= 1e-4 && scale > 0.0).then_some(scale);
+            return true;
+        }
         if !self.sandbox.props().iter().any(|p| p.id == ent) {
             return false;
         }

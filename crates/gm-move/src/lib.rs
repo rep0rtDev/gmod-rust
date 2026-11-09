@@ -181,6 +181,10 @@ pub struct PlayerState {
     /// horizontal speed dropped by more than 580 u/s against a wall, 1.0 beyond 1160), taken
     /// by the server.
     pub slam_volume: f32,
+    /// `CheckWaterJump` (movement.md 6): the water-jump timer in ms (FL_WATERJUMP while > 0)
+    /// and the horizontal velocity held during it (-50 x the wall normal).
+    pub water_jump_time: f32,
+    pub water_jump_vel: Vec3,
     pub move_type: MoveType,
     /// 0 dry, 1 feet, 2 waist, 3 eyes (the game's WaterLevel), from `check_water`.
     pub water_level: u8,
@@ -220,6 +224,8 @@ impl Default for PlayerState {
             surface_friction: 1.0,
             entity_friction: 1.0,
             slam_volume: 0.0,
+            water_jump_time: 0.0,
+            water_jump_vel: Vec3::ZERO,
             move_type: MoveType::Walk,
             water_level: 0,
             ladder: 0,
@@ -521,6 +527,37 @@ impl<'a> Mover<'a> {
         st.game_moved = false;
         let mut water = WaterCache::default();
         self.check_water(st, &mut water);
+        // a water jump in progress (movement.md 6 `WaterJump`): the horizontal velocity is
+        // held at the stored one, the timer runs down by 1000 ms/s and ends out of the water
+        if st.water_jump_time > 0.0 {
+            st.water_jump_time = (st.water_jump_time.min(10000.0) - 1000.0 * dt).max(0.0);
+            if st.water_level == 0 {
+                st.water_jump_time = 0.0;
+            }
+            if st.water_jump_time > 0.0 {
+                st.velocity.x = st.water_jump_vel.x;
+                st.velocity.y = st.water_jump_vel.y;
+            }
+            st.on_ground = false;
+            self.start_gravity(st, dt);
+            self.slide_move(st, dt);
+            self.check_water(st, &mut water);
+            if st.water_level < 2 {
+                self.finish_gravity(st, dt);
+            }
+            self.categorize(st);
+            self.clamp_velocity(st);
+            return;
+        }
+        if st.water_level == 2 {
+            self.check_water_jump(st, cmd);
+            if st.water_jump_time > 0.0 {
+                self.slide_move(st, dt);
+                self.check_water(st, &mut water);
+                self.clamp_velocity(st);
+                return;
+            }
+        }
         if st.water_level >= 2 {
             // measured (`move_water_swim`): no gravity at all, jump held pins the rise speed
             if cmd.buttons & buttons::JUMP != 0 {
@@ -703,6 +740,44 @@ impl<'a> Mover<'a> {
         if t.fraction < 1.0 {
             st.velocity = Vec3::ZERO;
         }
+    }
+
+    /// `CheckWaterJump` (movement.md 6, SDK logic): waist-deep, moving towards a wall that is
+    /// within 24 u at mid-hull but clear at eye height + 8, the player hops out: 256 u/s up,
+    /// the horizontal velocity pinned at 50 u/s away from the wall for up to 2 s.
+    fn check_water_jump(&self, st: &mut PlayerState, cmd: &UserCmd) {
+        if st.water_jump_time > 0.0 || st.velocity.z < -180.0 {
+            return;
+        }
+        let (forward, _) = angle_vectors(cmd.view_angles);
+        let flat_forward = Vec3::new(forward.x, forward.y, 0.0).normalize_or_zero();
+        let flat_velocity = Vec3::new(st.velocity.x, st.velocity.y, 0.0);
+        if flat_velocity.length() == 0.0 || flat_velocity.dot(flat_forward) <= 0.0 {
+            return;
+        }
+        let (mins, maxs) = self.hull(st.ducked);
+        let mid = st.origin + (mins + maxs) * 0.5;
+        let wall = self
+            .world
+            .trace_ray(mid, mid + flat_forward * 24.0, MASK_PLAYERSOLID);
+        if wall.fraction >= 1.0 {
+            return;
+        }
+        let top = Vec3::new(
+            st.origin.x,
+            st.origin.y,
+            st.origin.z + self.eye_height(st) + 8.0,
+        );
+        let clear = self
+            .world
+            .trace_ray(top, top + flat_forward * 24.0, MASK_PLAYERSOLID);
+        if clear.fraction < 1.0 {
+            return;
+        }
+        st.water_jump_vel = wall.normal * -50.0;
+        st.velocity.z = 256.0;
+        st.water_jump_time = 2000.0;
+        st.on_ground = false;
     }
 
     fn water_move(&self, st: &mut PlayerState, cmd: &UserCmd, dt: f32) {

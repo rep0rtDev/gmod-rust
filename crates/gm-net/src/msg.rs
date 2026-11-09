@@ -797,6 +797,8 @@ fn r_state(r: &mut Reader) -> Result<gm_move::PlayerState, Truncated> {
         // server-side only: a player's `Entity:SetFriction` and the tick's wall slam
         entity_friction: 1.0,
         slam_volume: 0.0,
+        water_jump_time: 0.0,
+        water_jump_vel: glam::Vec3::ZERO,
         origin: r.vec3()?,
         velocity: r.vec3()?,
         impulse: glam::Vec3::ZERO,
