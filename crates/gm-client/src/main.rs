@@ -276,6 +276,8 @@ struct Gfx {
     /// (`effects/combinemuzzle2`) of the pulse rifle (hl2weapons.md, gap-report #103).
     fx_ar2_tracer: Option<wgpu::BindGroup>,
     fx_ar2_impact: Option<wgpu::BindGroup>,
+    /// The crossbow's charger sprite `sprites/blueflare1` (hl2weapons.md, gap-report #105).
+    fx_blueflare: Option<wgpu::BindGroup>,
     fx_decal_mats: std::collections::HashMap<String, Option<gm_render::world::Decal>>,
     /// `sprites/redglow1`: the RPG's laser dot.
     fx_laserdot: Option<wgpu::BindGroup>,
@@ -1223,6 +1225,9 @@ struct App {
     fx_tracers: Vec<(u32, Vec3, Instant, bool)>,
     /// `AR2Impact` flashes: position and birth, 0.1 s.
     fx_ar2_impacts: Vec<(Vec3, Instant)>,
+    /// When the crossbow's loaded bolt started charging (clip went to 1 with the crossbow out):
+    /// START_CHARGE 0.5 s then READY over 1 s (hl2weapons.md charger states, #105).
+    xbow_charge_since: Option<Instant>,
     /// Bullet decals: position, normal, metal, birth (the newest 256).
     fx_decals: std::collections::VecDeque<(Vec3, Vec3, String, Instant)>,
     /// Bullet decals on props: entity, position and normal in its frame, decal material.
@@ -1569,6 +1574,7 @@ impl App {
         let fx_spark = world.sprite_material(&gpu, &self.mount, "effects/spark");
         let fx_ar2_tracer = world.sprite_material(&gpu, &self.mount, "effects/gunshiptracer");
         let fx_ar2_impact = world.sprite_material(&gpu, &self.mount, "effects/combinemuzzle2");
+        let fx_blueflare = world.sprite_material(&gpu, &self.mount, "sprites/blueflare1");
         let fx_wood_flecks = ["effects/fleck_wood1", "effects/fleck_wood2"]
             .iter()
             .filter_map(|m| world.sprite_material(&gpu, &self.mount, m))
@@ -1653,6 +1659,7 @@ impl App {
             fx_spark,
             fx_ar2_tracer,
             fx_ar2_impact,
+            fx_blueflare,
             fx_decal_mats: Default::default(),
             fx_laserdot,
             fx_ball,
@@ -6273,6 +6280,42 @@ impl App {
                 }
             }
             self.fx_tracers = keep;
+            // the crossbow charger (#105): with a bolt loaded the blueflare1 sprite at the
+            // muzzle brightens 0 -> 32 and grows to scale 0.025 over 0.5 s (START_CHARGE), then
+            // to 80 and 0.1 over 1 s (READY); DISCHARGE (clip 0) turns it off
+            {
+                let me = self.sim.client.player_id;
+                let clip = self
+                    .sim
+                    .client
+                    .world
+                    .players
+                    .iter()
+                    .find(|p| Some(p.id) == me)
+                    .map_or(0, |p| p.clip);
+                let loaded = vm.is_some_and(|v| v.class == "weapon_crossbow") && clip > 0;
+                match (loaded, self.xbow_charge_since) {
+                    (true, None) => self.xbow_charge_since = Some(now),
+                    (false, Some(_)) => self.xbow_charge_since = None,
+                    _ => {}
+                }
+                if let (Some(since), Some(m), Some(at)) = (
+                    self.xbow_charge_since,
+                    g.fx_blueflare.as_ref(),
+                    vm_attach("muzzle"),
+                ) {
+                    let t = now.duration_since(since).as_secs_f32();
+                    let (bright, scale) = if t < 0.5 {
+                        (32.0 * t / 0.5, 0.025 * t / 0.5)
+                    } else {
+                        let u = ((t - 0.5) / 1.0).min(1.0);
+                        (32.0 + 48.0 * u, 0.025 + 0.075 * u)
+                    };
+                    let c = bright / 255.0;
+                    let (v, i) = g.world.sprite_quad(at, scale * 64.0, [c, c, c], &camera);
+                    additive.push((m, v, i));
+                }
+            }
             // `AR2Impact`: a combinemuzzle2 flash growing 16 -> 32 u and fading over 0.1 s
             self.fx_ar2_impacts
                 .retain(|(_, born)| now.duration_since(*born).as_secs_f32() < 0.1);
@@ -6641,11 +6684,33 @@ impl App {
         }
         // viewmodel: own projection (narrower fov, near plane at 1 u) over a cleared depth buffer
         if let (Some(vm), Some((seq, t))) = (vm, vm_seq) {
-            let path = vm.path;
-            if !g.models.contains_key(path) {
-                let m = g.world.load_model(&g.gpu, &self.mount, path);
-                g.models.insert(path.to_string(), m);
-            }
+            // the crossbow's viewmodel wears skin 1 (the glowing bolt) while loaded (#105)
+            let me_clip = self
+                .sim
+                .client
+                .world
+                .players
+                .iter()
+                .find(|p| Some(p.id) == self.sim.client.player_id)
+                .map_or(0, |p| p.clip);
+            let xbow_loaded = vm.class == "weapon_crossbow" && me_clip > 0;
+            let variant_key;
+            let path: &str = if xbow_loaded {
+                variant_key = format!("{}#1#", vm.path);
+                if !g.models.contains_key(&variant_key) {
+                    let m = g
+                        .world
+                        .load_model_variant(&g.gpu, &self.mount, vm.path, 1, "");
+                    g.models.insert(variant_key.clone(), m);
+                }
+                &variant_key
+            } else {
+                if !g.models.contains_key(vm.path) {
+                    let m = g.world.load_model(&g.gpu, &self.mount, vm.path);
+                    g.models.insert(vm.path.to_string(), m);
+                }
+                vm.path
+            };
             let hands_key = format!("{}#{}#{}", hands_of.model, hands_of.skin, hands_of.body);
             if !g.models.contains_key(&hands_key) {
                 let m = g.world.load_model_variant(
@@ -8985,6 +9050,7 @@ fn main() -> Result<()> {
         vm_serial_seen: 0,
         fx_tracers: Vec::new(),
         fx_ar2_impacts: Vec::new(),
+        xbow_charge_since: None,
         fx_decals: Default::default(),
         fx_prop_decals: Default::default(),
         fx_bursts: Vec::new(),
