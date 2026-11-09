@@ -39,8 +39,8 @@ use winit::window::{CursorGrabMode, Window, WindowId};
 /// `cl_weaponcolor` default "0.30 1.80 2.10" clamped to the display range: the beam and
 /// glow tint of the physgun.
 const PHYSGUN_BEAM_COLOR: [f32; 3] = [0.3, 1.0, 1.0];
-/// `weapon_crowbar` in `gm_server::LOADOUT` (the weapon a spawn puts out).
-const CROWBAR_SLOT: u8 = 3;
+/// `weapon_physgun` in `WEAPONS`: the weapon a sandbox spawn leaves out (`gm_server::SPAWN_WEAPON`).
+const PHYSGUN_SLOT: u8 = 0;
 /// Slots in `WEAPONS` of the weapons with their own effects.
 const RPG_SLOT: u8 = 9;
 const GRAVGUN_SLOT: u8 = 10;
@@ -4671,11 +4671,11 @@ impl App {
             }
             _ => {
                 if self.death_at.take().is_some() {
-                    // the respawn ends the death fade (FFADE_STAYOUT) and deploys the crowbar
+                    // the respawn purges a stay-out fade and deploys the spawn weapon
                     if self.screen_fade.as_ref().is_some_and(|f| f.flags & 8 != 0) {
                         self.screen_fade = None;
                     }
-                    self.pending_select = Some(CROWBAR_SLOT);
+                    self.pending_select = Some(PHYSGUN_SLOT);
                 }
             }
         }

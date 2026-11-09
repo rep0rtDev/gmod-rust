@@ -7512,7 +7512,9 @@ impl Player {
 /// tick after, respawn 135 ticks after death at a random spawn point 1 u above it.
 pub const PLAYER_HEALTH: i32 = 100;
 pub const PLAYER_MODEL: &str = "models/player/kleiner.mdl";
-pub const SPAWN_WEAPON: &str = "weapon_crowbar";
+/// Sandbox `PlayerLoadout` gives the physgun last and `SwitchToDefaultWeapon` keeps it while
+/// `cl_defaultweapon` is unset (binary study player.md F45).
+pub const SPAWN_WEAPON: &str = "weapon_physgun";
 pub const RESPAWN_TICKS: u64 = 135;
 pub const SPAWN_Z_OFFSET: f32 = 1.0;
 pub const LOADOUT: [&str; 13] = [
@@ -8978,15 +8980,13 @@ impl<'w> Server<'w> {
             p.driving = None;
             p.driving = None;
             p.state.velocity = Vec3::ZERO;
-            if dmg_type & DMG_FALL != 0 {
-                // measured: a bot killed by a fall keeps the negative health and does not
-                // respawn by itself within the recording
-                p.death_tick = None;
-            } else {
-                p.health = 0;
-                p.death_tick = Some(tick);
-                p.respawn_ticks = respawn_ticks;
-            }
+            // every death goes through `GM:PlayerDeathThink` (binary study, player.md F38/F40:
+            // only FL_FROZEN blocks it); the earlier "fall deaths never respawn" came from a
+            // recording that ended before the bot's respawn
+            let _ = dmg_type & DMG_FALL;
+            p.health = 0;
+            p.death_tick = Some(tick);
+            p.respawn_ticks = respawn_ticks;
         }
         let died = !p.alive;
         if to_health > 0.0 {
@@ -9006,16 +9006,14 @@ impl<'w> Server<'w> {
                 attacker,
                 inflictor: inflictor.to_string(),
             });
-            // `CBasePlayer::DeathSound` and the dark red fade of `Event_Killed`
-            // (64 0 0 200 over 0.5 s, FFADE_OUT | FFADE_STAYOUT until the respawn)
+            // `CBasePlayer::DeathSound`; GMod draws no death fade (its should-fade virtual
+            // returns false, binary study player.md F34)
             self.sounds.push(WorldSound {
                 name: "Player.Death".to_string(),
                 pos: origin,
                 volume: 1.0,
                 ..Default::default()
             });
-            self.notices
-                .push((id, "ScreenFade 64 0 0 200 0.5 0 10".to_string()));
         }
         to_health
     }
