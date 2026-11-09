@@ -4031,6 +4031,11 @@ pub const NPC_REMOVER_TICKS: u64 = 66;
 /// (measured `server_vehicle_exit_*`, chair: 11.4 / 90.9 u).
 const VEHICLE_EXIT_Z: f32 = 11.4;
 const VEHICLE_EXIT_TOP: f32 = 90.9;
+/// `g_jeepexitspeed`: a driveable (wheeled) vehicle refuses +use exit above this speed
+/// (props.md §7 #89, gap-report #201; SDK `CanExitVehicle`).
+const VEHICLE_EXIT_SPEED: f32 = 100.0;
+/// Seconds on the roof before the driver is let out regardless of speed (props.md #89).
+const VEHICLE_OVERTURNED_EXIT_WAIT: f32 = 2.0;
 
 /// Where `Spawn_NPC` puts an NPC class relative to the hit point.
 /// `SquadName` from the sandbox NPC list's `KeyValues` (lua/autorun/base_npcs.lua), applied by
@@ -5265,6 +5270,9 @@ pub struct VehicleControls {
     /// Signed speed along the car's forward axis, units per second.
     pub speed: f32,
     pub wheels_in_contact: u32,
+    /// Ticks the car has spent on its roof (`IsOverturned`: up.z < 0); after
+    /// `VEHICLE_OVERTURNED_EXIT_WAIT` the driver may leave at any speed and is put out.
+    pub overturned_ticks: u64,
     /// Gear index of the automatic transmission (0 = first).
     pub gear: u8,
     /// Each wheel's ground trace of the last tick (`Vehicle:GetWheelContactPoint`).
@@ -13693,6 +13701,16 @@ impl<'w> Server<'w> {
         let Some(veh) = self.players.get(&player).and_then(|p| p.seat) else {
             return false;
         };
+        // a driveable vehicle keeps its driver above g_jeepexitspeed unless it has been on
+        // its roof for the wait (chairs have no wheels and always let go)
+        if let Some(v) = self.vehicles.get(&veh) {
+            let overturned = v.controls.overturned_ticks as f32
+                * gm_core::tick::DEFAULT_TICK_INTERVAL
+                >= VEHICLE_OVERTURNED_EXIT_WAIT;
+            if !v.wheels.is_empty() && v.controls.speed.abs() > VEHICLE_EXIT_SPEED && !overturned {
+                return false;
+            }
+        }
         if self.ask(Request::ExitVehicle {
             player,
             vehicle: veh,
@@ -14867,6 +14885,7 @@ impl<'w> Server<'w> {
                 ))
             })
             .collect();
+        let mut eject: Vec<u32> = Vec::new();
         for (id, wheels, add_gravity, mass, rest, mut c, spec, tune) in cars {
             let Some(&body) = self.bodies.get(&id) else {
                 continue;
@@ -14875,6 +14894,17 @@ impl<'w> Server<'w> {
                 continue;
             }
             let st = self.physics.state(body);
+            // IsOverturned: the car's up points down; the driver is put out after the wait
+            if (st.rotation * Vec3::Z).z < 0.0 {
+                c.overturned_ticks += 1;
+            } else {
+                c.overturned_ticks = 0;
+            }
+            if c.overturned_ticks as f32 * dt >= VEHICLE_OVERTURNED_EXIT_WAIT {
+                if let Some(d) = self.vehicles.get(&id).and_then(|v| v.driver) {
+                    eject.push(d);
+                }
+            }
             let com = self.physics.center_of_mass(body);
             // the state's angular velocity is in degrees per second
             let omega = st.angular_velocity * (std::f32::consts::PI / 180.0);
@@ -15029,6 +15059,9 @@ impl<'w> Server<'w> {
             if let Some(v) = self.vehicles.get_mut(&id) {
                 v.controls = c;
             }
+        }
+        for d in eject {
+            self.exit_vehicle(d);
         }
     }
 

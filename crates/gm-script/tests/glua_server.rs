@@ -1086,6 +1086,7 @@ fn vehicle_record_reads_the_server_table() {
             key: "Jeep".into(),
             tuning: gm_server::VehicleTuning::default(),
             controls: gm_server::VehicleControls {
+                overturned_ticks: 0,
                 throttle: 1.0,
                 steer: 0.5,
                 handbrake: false,
@@ -1165,6 +1166,7 @@ fn vehicle_driving_readbacks_and_writes() {
             add_gravity: 0.5,
             mass: 1000.0,
             controls: gm_server::VehicleControls {
+                overturned_ticks: 0,
                 throttle: 1.0,
                 steer: 0.5,
                 handbrake: false,
