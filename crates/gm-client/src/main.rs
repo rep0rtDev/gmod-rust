@@ -247,8 +247,13 @@ struct Gfx {
     /// `effects/spark` (tracer streak), `decals/<group>/shot1..5` (bullet holes, by the
     /// surface's game material, loaded on first use).
     fx_muzzle: Option<wgpu::BindGroup>,
-    /// `sprites/zerogxplode`: the explosion fireball, its frames played over the burst.
-    fx_explosion: Vec<wgpu::BindGroup>,
+    /// `C_BaseExplosionEffect` sprites: the smoke puffs (`particle/particle_smokegrenade`),
+    /// the embers (`effects/fire_embers1`/`2`), the fire clouds (`effects/fire_cloud2`) and the
+    /// cement flecks (`effects/fleck_cement1`/`2`).
+    fx_explo_smoke: Option<wgpu::BindGroup>,
+    fx_explo_embers: Vec<wgpu::BindGroup>,
+    fx_explo_fire: Option<wgpu::BindGroup>,
+    fx_explo_flecks: Vec<wgpu::BindGroup>,
     fx_spark: Option<wgpu::BindGroup>,
     fx_decal_mats: std::collections::HashMap<String, Option<gm_render::world::Decal>>,
     /// `sprites/redglow1`: the RPG's laser dot.
@@ -1156,6 +1161,9 @@ struct App {
     fx_prop_decals: std::collections::VecDeque<(u32, Vec3, Vec3, String, std::time::Instant)>,
     /// Flashes: position, size, birth (impact sparks, explosions).
     fx_bursts: Vec<(Vec3, f32, Instant, bool)>,
+    /// Explosion particles (`C_BaseExplosionEffect`), simulated with the shells.
+    fx_sprites: Vec<FxSprite>,
+    fx_seed: u32,
     /// Sounds due later (the crossbow's `BoltElectrify` as the reload seats the bolt).
     fx_sound_queue: Vec<(Instant, String)>,
     /// Own muzzle flash shows until then.
@@ -1441,7 +1449,17 @@ impl App {
         let gg_glow = world.sprite_material(&gpu, &self.mount, "sprites/glow04_noz");
         let gg_beam = world.sprite_material(&gpu, &self.mount, "sprites/orangelight1");
         let fx_muzzle = world.sprite_material(&gpu, &self.mount, "effects/muzzleflash1");
-        let fx_explosion = world.sprite_frames(&gpu, &self.mount, "sprites/zerogxplode");
+        let fx_explo_smoke =
+            world.sprite_material(&gpu, &self.mount, "particle/particle_smokegrenade");
+        let fx_explo_embers = ["effects/fire_embers1", "effects/fire_embers2"]
+            .iter()
+            .filter_map(|m| world.sprite_material(&gpu, &self.mount, m))
+            .collect();
+        let fx_explo_fire = world.sprite_material(&gpu, &self.mount, "effects/fire_cloud2");
+        let fx_explo_flecks = ["effects/fleck_cement1", "effects/fleck_cement2"]
+            .iter()
+            .filter_map(|m| world.sprite_material(&gpu, &self.mount, m))
+            .collect();
         let fx_spark = world.sprite_material(&gpu, &self.mount, "effects/spark");
         let fx_laserdot = world.sprite_material(&gpu, &self.mount, "sprites/redglow1");
         let fx_ball = world.sprite_material(&gpu, &self.mount, "sprites/sent_ball");
@@ -1494,7 +1512,10 @@ impl App {
             gg_glow,
             gg_beam,
             fx_muzzle,
-            fx_explosion,
+            fx_explo_smoke,
+            fx_explo_embers,
+            fx_explo_fire,
+            fx_explo_flecks,
             fx_spark,
             fx_decal_mats: Default::default(),
             fx_laserdot,
@@ -4131,7 +4152,7 @@ impl App {
                         self.fx_tracers.push((player, end, now));
                     }
                     gm_net::msg::EffectEvent::Explosion { pos } => {
-                        self.fx_bursts.push((pos, 96.0, now, false));
+                        self.spawn_explosion(pos, now);
                         // `CBaseGrenade::Explode`: a `Scorch` decal where the line from 8 u
                         // above the blast to 32 u below meets the world
                         let tr = self.sim.collision.trace_ray(
@@ -4427,6 +4448,7 @@ impl App {
             let now = Instant::now();
             let dt = now.duration_since(self.fx_shells_at).as_secs_f32().min(0.1);
             self.fx_shells_at = now;
+            self.tick_explosions(now, dt);
             self.fx_shells
                 .retain(|s| now.duration_since(s.born).as_secs_f32() < 1.0);
             for sh in &mut self.fx_shells {
@@ -5686,11 +5708,6 @@ impl App {
                 let k = 1.0 - age;
                 let (m, color) = if splash {
                     (g.fx_splash.as_ref(), [k, k, k])
-                } else if size > 32.0 {
-                    // the TE_Explosion sprite plays its frames once over the burst
-                    let n = g.fx_explosion.len();
-                    let f = ((age * n as f32) as usize).min(n.saturating_sub(1));
-                    (g.fx_explosion.get(f), [k, k, k])
                 } else {
                     (g.fx_muzzle.as_ref(), [k, k * 0.7, k * 0.4])
                 };
@@ -5698,13 +5715,33 @@ impl App {
                     let (v, i) = g.world.sprite_quad(pos, size * (0.6 + age), color, &camera);
                     additive.push((m, v, i));
                 }
-                if size > 32.0 && !splash {
-                    dlights.push(gm_render::world::DLight {
-                        pos,
-                        radius: 300.0 * k,
-                        color: Vec3::new(1.0, 0.6, 0.3) * k,
-                        ..Default::default()
-                    });
+            }
+            // `C_BaseExplosionEffect`: size is the half-width, the alpha ramp is (1 - t)^2
+            for sp in &self.fx_sprites {
+                let t = (now.duration_since(sp.born).as_secs_f32() / sp.life).clamp(0.0, 1.0);
+                let ramp = 1.0 - t;
+                let size = (sp.size0 + (sp.size1 - sp.size0) * t) * 2.0;
+                let c = sp.color;
+                let (m, a, add) = match sp.kind {
+                    FxKind::Smoke => (g.fx_explo_smoke.as_ref(), ramp * ramp, false),
+                    FxKind::Ember => (g.fx_explo_embers.get(sp.variant), ramp * ramp, true),
+                    FxKind::FireCloud => (g.fx_explo_fire.as_ref(), ramp * ramp, true),
+                    FxKind::Fleck => (g.fx_explo_flecks.get(sp.variant), ramp, false),
+                };
+                if let Some(m) = m {
+                    let (v, i) = g.world.sprite_quad_var(
+                        sp.pos,
+                        size,
+                        [c[0], c[1], c[2], a],
+                        sp.roll,
+                        None,
+                        &camera,
+                    );
+                    if add {
+                        additive.push((m, v, i));
+                    } else {
+                        alpha.push((m, v, i));
+                    }
                 }
             }
             // the RPG's laser dot (`CLaserDot`): a red glow where the aim meets the world
@@ -8045,6 +8082,8 @@ fn main() -> Result<()> {
         fx_decals: Default::default(),
         fx_prop_decals: Default::default(),
         fx_bursts: Vec::new(),
+        fx_sprites: Vec::new(),
+        fx_seed: 0x9e37_79b9,
         fx_sound_queue: Vec::new(),
         fx_muzzle_until: None,
         tool_screen: ToolScreen::default(),
@@ -9160,6 +9199,237 @@ const BRASS_MODELS: [&str; 3] = [
 ];
 
 /// A shell out of the gun: position, velocity, angles and angular velocity (deg/s), birth.
+impl App {
+    /// `C_BaseExplosionEffect::Create` at `pos` (the frag/RPG/SLAM blast): the force is pinned to
+    /// 2 (`EXPLOSION_FORCE_MIN == MAX == 2`, spread 0.7), the direction is the sum of six axis
+    /// probes 125 u long pushed back by how much of each was blocked, and the particles are
+    /// `CreateCore` (4 big + 8 near smoke puffs, a ring of 8 low puffs, 16 embers, 16 fire
+    /// clouds) and `CreateDebris` (16..32 cement flecks). No fireball sprite and no dynamic
+    /// light: the 2013 branch draws neither.
+    fn spawn_explosion(&mut self, pos: Vec3, now: Instant) {
+        let seed = &mut self.fx_seed;
+        let mut dir = Vec3::ZERO;
+        for d in [Vec3::X, -Vec3::X, Vec3::Y, -Vec3::Y, Vec3::Z, -Vec3::Z] {
+            let tr = self
+                .sim
+                .collision
+                .trace_ray(pos, pos + d * 125.0, gm_collision::MASK_SOLID);
+            dir += -d * (1.0 - tr.fraction);
+        }
+        let dir = dir.normalize_or_zero();
+        let dir = if dir == Vec3::ZERO { Vec3::Z } else { dir };
+        let force = 2.0f32;
+        let spread = 1.0 - 0.15 * force;
+        // the puffs take the colour of the light at 32 u along the blast direction
+        let light = self
+            .gfx
+            .as_ref()
+            .map(|g| g.world.light_at(pos + dir * 32.0, Vec3::Z))
+            .unwrap_or(Vec3::splat(0.5));
+        let light = light.clamp(Vec3::ZERO, Vec3::ONE);
+        let lum = light.max_element();
+        // the game's particle colours are display-space bytes; our vertex colours are linear
+        let lin = |c: Vec3| c.powf(2.2).to_array();
+        let dev = |v: Vec3, d: Vec3| spread * v.dot(d).abs();
+        let mut out = Vec::new();
+        let mut smoke = |seed: &mut u32,
+                         at: Vec3,
+                         life: (f32, f32),
+                         fmax: f32,
+                         size: (f32, f32),
+                         roll_d: f32| {
+            let v = (rand_vec(seed, spread) + dir * particles::range(seed, 1.0, 6.0))
+                .normalize_or_zero();
+            let f = particles::range(seed, 1.0, fmax) * force * dev(v, dir);
+            let n = particles::range(seed, lum * 0.5, lum);
+            let size0 = particles::range(seed, size.0, size.1).floor();
+            out.push(FxSprite {
+                kind: FxKind::Smoke,
+                variant: 0,
+                pos: at,
+                vel: v * f,
+                born: now,
+                life: particles::range(seed, life.0, life.1),
+                size0,
+                size1: size0 * 2.0,
+                color: lin(light * n),
+                roll: particles::range(seed, 0.0, std::f32::consts::TAU),
+                roll_d: particles::range(seed, -roll_d, roll_d).to_radians(),
+            });
+        };
+        for _ in 0..4 {
+            smoke(seed, pos, (2.0, 3.0), 750.0, (72.0, 72.0), 2.0);
+        }
+        for _ in 0..8 {
+            let at = pos + rand_vec(seed, 16.0);
+            smoke(seed, at, (0.5, 1.0), 2000.0, (32.0, 64.0), 8.0);
+        }
+        for i in 0..8 {
+            let yaw = std::f32::consts::TAU / 8.0 * (i + 1) as f32;
+            let fwd = Vec3::new(yaw.cos(), yaw.sin(), 0.0);
+            let at = pos + rand_vec(seed, 4.0) + fwd * particles::range(seed, 8.0, 16.0);
+            let f = particles::range(seed, 500.0, 2000.0) * force * spread;
+            let n = particles::range(seed, lum * 0.5, lum);
+            let size0 = particles::range(seed, 16.0, 32.0).floor();
+            out.push(FxSprite {
+                kind: FxKind::Smoke,
+                variant: 0,
+                pos: at,
+                vel: fwd * f,
+                born: now,
+                life: particles::range(seed, 0.5, 1.5),
+                size0,
+                size1: size0 * 4.0,
+                color: lin(light * n),
+                roll: particles::range(seed, 0.0, std::f32::consts::TAU),
+                roll_d: particles::range(seed, -8.0, 8.0).to_radians(),
+            });
+        }
+        for _ in 0..16 {
+            let at = pos + rand_vec(seed, 32.0);
+            let v = (rand_vec(seed, spread * 2.0) + dir).normalize_or_zero();
+            let f = particles::range(seed, 1.0, 400.0);
+            let vd = dev(v, dir);
+            let n = particles::range(seed, 192.0, 255.0) / 255.0;
+            let size0 = (particles::range(seed, 8.0, 16.0).floor() * vd).clamp(4.0, 32.0);
+            out.push(FxSprite {
+                kind: FxKind::Ember,
+                variant: (particles::rng(seed) * 2.0) as usize,
+                pos: at,
+                vel: v * (f * 16.0 * vd * vd * 0.5),
+                born: now,
+                life: particles::range(seed, 2.0, 3.0),
+                size0,
+                size1: size0,
+                color: lin(Vec3::splat(n)),
+                roll: particles::range(seed, 0.0, std::f32::consts::TAU),
+                roll_d: particles::range(seed, -8.0, 8.0).to_radians(),
+            });
+        }
+        for _ in 0..16 {
+            let at = pos + rand_vec(seed, 48.0);
+            let v = (rand_vec(seed, spread * 0.75) + dir).normalize_or_zero();
+            let f = particles::range(seed, 400.0, 800.0);
+            let vd = dev(v, dir);
+            let n = particles::range(seed, 128.0, 255.0) / 255.0;
+            let size0 = (particles::range(seed, 32.0, 85.0).floor() * vd).clamp(32.0, 85.0);
+            out.push(FxSprite {
+                kind: FxKind::FireCloud,
+                variant: 0,
+                pos: at,
+                vel: v * (f * 16.0 * vd * vd * 0.5),
+                born: now,
+                life: particles::range(seed, 0.2, 0.4),
+                size0,
+                size1: (size0 * 1.5).floor(),
+                color: lin(Vec3::splat(n)),
+                roll: particles::range(seed, 0.0, std::f32::consts::TAU),
+                roll_d: particles::range(seed, -16.0, 16.0).to_radians(),
+            });
+        }
+        let flecks = 16 + (particles::rng(seed) * 17.0) as usize;
+        for _ in 0..flecks {
+            let at = pos + dir * 16.0 + rand_vec(seed, 8.0);
+            let d = (dir + rand_vec(seed, 1.0)).normalize_or_zero();
+            let size = 1.0 + (particles::rng(seed) * 3.0).floor();
+            let f = particles::range(seed, 64.0, 256.0) * (4.0 - size);
+            let fd = 0.8 * d.dot(dir).abs();
+            let c = (0.25 * particles::range(seed, 0.5, 1.5)).min(1.0);
+            out.push(FxSprite {
+                kind: FxKind::Fleck,
+                variant: (particles::rng(seed) * 2.0) as usize,
+                pos: at,
+                vel: d * (f * 16.0 * fd * fd * 0.5),
+                born: now,
+                life: 3.0,
+                size0: size,
+                size1: size,
+                color: lin(Vec3::splat(c)),
+                roll: particles::range(seed, 0.0, std::f32::consts::TAU),
+                roll_d: particles::range(seed, 0.0, 360.0).to_radians(),
+            });
+        }
+        self.fx_sprites.extend(out);
+    }
+
+    /// `CExplosionParticle`: velocity decays to 1e-4 over 0.5 s but never below 32 u/s, the
+    /// roll rate decays at 8/s to a floor of 0.5°/s; flecks (`CFleckParticles`) fall at 800 u/s²
+    /// and bounce off the world at 0.9 of their speed, losing half along the surface.
+    fn tick_explosions(&mut self, now: Instant, dt: f32) {
+        self.fx_sprites
+            .retain(|s| now.duration_since(s.born).as_secs_f32() < s.life);
+        if self.fx_sprites.is_empty() {
+            return;
+        }
+        let decay = (1e-4f32.ln() * dt / 0.5).exp();
+        for s in &mut self.fx_sprites {
+            if s.kind == FxKind::Fleck {
+                s.vel.z -= 800.0 * dt;
+                let next = s.pos + s.vel * dt;
+                let tr = self
+                    .sim
+                    .collision
+                    .trace_ray(s.pos, next, gm_collision::MASK_SOLID);
+                if tr.fraction < 1.0 {
+                    let n = tr.normal;
+                    let into = s.vel.dot(n);
+                    let along = s.vel - n * into;
+                    s.vel = (along * 0.5 - n * into) * 0.9;
+                    s.pos = tr.end + n * 0.5;
+                } else {
+                    s.pos = next;
+                }
+                s.roll += s.roll_d * dt;
+                continue;
+            }
+            s.pos += s.vel * dt;
+            let save = s.vel;
+            s.vel *= decay;
+            if s.vel.length_squared() < 32.0 * 32.0 {
+                s.vel = save.normalize_or_zero() * 32.0;
+            }
+            s.roll += s.roll_d * dt;
+            s.roll_d += s.roll_d * (dt * -8.0);
+            let floor = 0.5f32.to_radians();
+            if s.roll_d.abs() < floor {
+                s.roll_d = if s.roll_d > 0.0 { floor } else { -floor };
+            }
+        }
+    }
+}
+
+/// One `C_BaseExplosionEffect` particle; sizes are half-widths in units, roll in radians.
+struct FxSprite {
+    kind: FxKind,
+    variant: usize,
+    pos: Vec3,
+    vel: Vec3,
+    born: Instant,
+    life: f32,
+    size0: f32,
+    size1: f32,
+    color: [f32; 3],
+    roll: f32,
+    roll_d: f32,
+}
+
+#[derive(Clone, Copy, PartialEq)]
+enum FxKind {
+    Smoke,
+    Ember,
+    FireCloud,
+    Fleck,
+}
+
+/// `random->RandomFloat(-r, r)` on each axis.
+fn rand_vec(seed: &mut u32, r: f32) -> Vec3 {
+    Vec3::new(
+        particles::range(seed, -r, r),
+        particles::range(seed, -r, r),
+        particles::range(seed, -r, r),
+    )
+}
+
 struct Shell {
     model: &'static str,
     pos: Vec3,

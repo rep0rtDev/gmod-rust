@@ -124,7 +124,7 @@ pub struct Spawn {
     pub parent: u32,
 }
 
-fn rng(seed: &mut u32) -> f32 {
+pub(crate) fn rng(seed: &mut u32) -> f32 {
     let mut x = *seed;
     x ^= x << 13;
     x ^= x >> 17;
@@ -133,7 +133,7 @@ fn rng(seed: &mut u32) -> f32 {
     (x >> 8) as f32 / (1u32 << 24) as f32
 }
 
-fn range(seed: &mut u32, lo: f32, hi: f32) -> f32 {
+pub(crate) fn range(seed: &mut u32, lo: f32, hi: f32) -> f32 {
     lo + (hi - lo) * rng(seed)
 }
 
