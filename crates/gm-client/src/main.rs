@@ -3931,8 +3931,15 @@ impl App {
                     let color = if i == sel { fg } else { dim };
                     if let Some(glyph) = weapon_icon(class) {
                         let gw = icons.text_width(glyph);
+                        // the selected weapon's `weapon_s` sprite is the
+                        // WeaponIconsSelected font (blur 5, scanlines 2; #161)
+                        let font = if i == sel {
+                            "WeaponIconsSelected"
+                        } else {
+                            "WeaponIcons"
+                        };
                         items.push(UiItem::Text {
-                            font: Some("WeaponIcons".to_string()),
+                            font: Some(font.to_string()),
                             x: x + (wide - gw) / 2.0,
                             y: y + (64.0 * s - icons.line_height) / 2.0,
                             text: glyph.to_string(),
@@ -7840,24 +7847,27 @@ impl App {
                         color: fg,
                     });
                 };
-                // HudAnimations.txt: digits in TextColor with a glow of `Blur` (the
-                // HudNumbersGlow pass, approximated by a second translucent copy), label in
-                // FgColor, panel in BgColor, the whole panel scaled by Alpha
+                // HudAnimations.txt: digits in TextColor, then `Blur` passes of the
+                // HudNumbersGlow font (CHudNumericDisplay::PaintNumbers: one copy per whole
+                // unit of Blur plus a copy at the fractional alpha; ui.md 2.2, #152), label
+                // in FgColor, panel in BgColor, the whole panel scaled by Alpha
                 let digits =
                     |items: &mut Vec<UiItem>, x: f32, text: String, look: &HudPanelLook| {
                         let a = |c: [f32; 4]| [c[0], c[1], c[2], c[3] * look.alpha];
-                        if look.blur > 0.0 {
+                        let mut fl = look.blur;
+                        while fl > 0.0 {
                             let mut glow = a(look.text);
-                            glow[3] *= (look.blur / 5.0) * 0.6;
-                            for dx in [-1.0, 1.0] {
-                                items.push(UiItem::Text {
-                                    font: numbers.clone(),
-                                    x: x + dx * look.blur * 0.5,
-                                    y: y + 2.0 * s,
-                                    text: text.clone(),
-                                    color: glow,
-                                });
+                            if fl < 1.0 {
+                                glow[3] *= fl;
                             }
+                            items.push(UiItem::Text {
+                                font: Some("HudNumbersGlow".to_string()),
+                                x,
+                                y: y + 2.0 * s,
+                                text: text.clone(),
+                                color: glow,
+                            });
+                            fl -= 1.0;
                         }
                         items.push(UiItem::Text {
                             font: numbers.clone(),
@@ -11823,6 +11833,16 @@ fn register_ui_fonts(mount: &gm_content::Mount, ui: &mut UiRenderer, gpu: &Gpu, 
     // scales with the screen, the glyphs do not); only the `yres` blocks step at 600 lines
     let tall = height >= 600;
     ui.register_font(gpu, mount, "HudNumbers", "HalfLife2", 32.0);
+    let glow = |blur| gm_render::ui::FontFx { blur, scanlines: 2 };
+    ui.register_font_fx(gpu, mount, "HudNumbersGlow", "HalfLife2", 32.0, glow(4));
+    ui.register_font_fx(
+        gpu,
+        mount,
+        "WeaponIconsSelected",
+        "HalfLife2",
+        64.0,
+        glow(5),
+    );
     ui.register_font(gpu, mount, "HudNumbersSmall", "HalfLife2", 16.0);
     let hud_default = if tall { 13.0 } else { 9.0 };
     if !ui.register_font(gpu, mount, "HudDefault", "Verdana", hud_default) {

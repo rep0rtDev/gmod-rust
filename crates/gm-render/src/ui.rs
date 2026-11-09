@@ -109,6 +109,55 @@ impl FontMetrics {
     }
 }
 
+/// VGUI font flags that change the glyph bitmaps: `blur N` runs a Gaussian of radius N over
+/// each glyph (HudNumbersGlow 4, WeaponIconsSelected 5) and `scanlines N` dims every row
+/// that is not a multiple of N (both 2). The Gaussian sigma (blur / 2) and the scanline
+/// factor 0.7 are approximations of the engine's font filters, not read from the binary.
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
+pub struct FontFx {
+    pub blur: u32,
+    pub scanlines: u32,
+}
+
+impl FontFx {
+    fn apply(self, cov: &mut [f32], w: u32, h: u32) {
+        if self.blur > 0 {
+            let r = self.blur as i32;
+            let sigma = self.blur as f32 / 2.0;
+            let kernel: Vec<f32> = (-r..=r)
+                .map(|i| (-(i * i) as f32 / (2.0 * sigma * sigma)).exp())
+                .collect();
+            let norm: f32 = kernel.iter().sum();
+            let pass = |src: &[f32], dst: &mut [f32], dx: i32, dy: i32| {
+                for y in 0..h as i32 {
+                    for x in 0..w as i32 {
+                        let mut acc = 0.0;
+                        for (k, kv) in kernel.iter().enumerate() {
+                            let (sx, sy) = (x + dx * (k as i32 - r), y + dy * (k as i32 - r));
+                            if sx >= 0 && sy >= 0 && sx < w as i32 && sy < h as i32 {
+                                acc += kv * src[(sy * w as i32 + sx) as usize];
+                            }
+                        }
+                        dst[(y * w as i32 + x) as usize] = acc / norm;
+                    }
+                }
+            };
+            let mut tmp = vec![0f32; cov.len()];
+            pass(cov, &mut tmp, 1, 0);
+            pass(&tmp, cov, 0, 1);
+        }
+        if self.scanlines >= 2 {
+            for y in 0..h {
+                if y % self.scanlines != 0 {
+                    for v in &mut cov[(y * w) as usize..((y + 1) * w) as usize] {
+                        *v *= 0.7;
+                    }
+                }
+            }
+        }
+    }
+}
+
 struct FontAtlas {
     glyphs: HashMap<char, Glyph>,
     fallback: Glyph,
@@ -126,8 +175,10 @@ impl FontAtlas {
         screen_buffer: &wgpu::Buffer,
         ttf: &[u8],
         px: f32,
+        fx: FontFx,
     ) -> Result<Self> {
         let font = FontArc::try_from_vec(ttf.to_vec()).map_err(|e| anyhow!("font: {e}"))?;
+        let pad = fx.blur;
         let scaled = font.as_scaled(px);
         let ascent = scaled.ascent();
         let line_height = (scaled.height() + scaled.line_gap()).ceil();
@@ -170,7 +221,10 @@ impl FontAtlas {
                 continue;
             };
             let b = outline.px_bounds();
-            let (w, h) = (b.width().ceil() as u32 + 1, b.height().ceil() as u32 + 1);
+            let (w, h) = (
+                b.width().ceil() as u32 + 1 + 2 * pad,
+                b.height().ceil() as u32 + 1 + 2 * pad,
+            );
             if pen_x + w + 1 > ATLAS_SIZE {
                 pen_x = 0;
                 pen_y += row_h + 1;
@@ -179,13 +233,24 @@ impl FontAtlas {
             if pen_y + h + 1 > ATLAS_SIZE {
                 break;
             }
-            outline.draw(|x, y, cov| {
-                let (ax, ay) = (pen_x + x, pen_y + y);
-                if ax < ATLAS_SIZE && ay < ATLAS_SIZE {
-                    let i = ((ay * ATLAS_SIZE + ax) * 4) as usize;
-                    atlas[i..i + 4].copy_from_slice(&[255, 255, 255, (cov * 255.0) as u8]);
+            let mut cov = vec![0f32; (w * h) as usize];
+            outline.draw(|x, y, v| {
+                let (gx, gy) = (x + pad, y + pad);
+                if gx < w && gy < h {
+                    cov[(gy * w + gx) as usize] = v;
                 }
             });
+            fx.apply(&mut cov, w, h);
+            for gy in 0..h {
+                for gx in 0..w {
+                    let (ax, ay) = (pen_x + gx, pen_y + gy);
+                    if ax < ATLAS_SIZE && ay < ATLAS_SIZE {
+                        let i = ((ay * ATLAS_SIZE + ax) * 4) as usize;
+                        let a = (cov[(gy * w + gx) as usize].clamp(0.0, 1.0) * 255.0) as u8;
+                        atlas[i..i + 4].copy_from_slice(&[255, 255, 255, a]);
+                    }
+                }
+            }
             glyphs.insert(
                 c,
                 Glyph {
@@ -196,7 +261,7 @@ impl FontAtlas {
                         (pen_y + h) as f32,
                     ],
                     size: [w as f32, h as f32],
-                    offset: [b.min.x, b.min.y],
+                    offset: [b.min.x - pad as f32, b.min.y - pad as f32],
                     advance,
                 },
             );
@@ -515,7 +580,15 @@ impl UiRenderer {
                 },
             ],
         });
-        let default = FontAtlas::build(gpu, &layout, &sampler, &screen_buffer, ttf, px)?;
+        let default = FontAtlas::build(
+            gpu,
+            &layout,
+            &sampler,
+            &screen_buffer,
+            ttf,
+            px,
+            FontFx::default(),
+        )?;
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("ui"),
             source: wgpu::ShaderSource::Wgsl(include_str!("shaders/ui.wgsl").into()),
@@ -663,6 +736,19 @@ impl UiRenderer {
         family: &str,
         px: f32,
     ) -> bool {
+        self.register_font_fx(gpu, mount, name, family, px, FontFx::default())
+    }
+
+    /// `register_font` with the `blur` / `scanlines` glyph filters.
+    pub fn register_font_fx(
+        &mut self,
+        gpu: &Gpu,
+        mount: &Mount,
+        name: &str,
+        family: &str,
+        px: f32,
+        fx: FontFx,
+    ) -> bool {
         let Some(ttf) = font_file(mount, family) else {
             return false;
         };
@@ -674,6 +760,7 @@ impl UiRenderer {
             &self.screen_buffer,
             &ttf,
             px,
+            fx,
         ) {
             Ok(atlas) => {
                 self.fonts.insert(name.to_string(), atlas);
