@@ -1286,6 +1286,9 @@ struct App {
     fx_vm_muzzle: Vec<(Vec3, f32, f32, usize, Instant, f32)>,
     /// The muzzle event's entity light (clientfx.md 2.1.4, #122): radius randint(32, 64), born.
     fx_muzzle_light: Option<(f32, Instant)>,
+    /// Other players' weapon world-model `muzzle` attachment in world space from the last
+    /// drawn pose (clientfx.md 2.1, gap-report #123).
+    other_muzzles: HashMap<u32, Vec3>,
     fx_muzzle_spawned: Option<Instant>,
     /// Surface property -> game material letter (`scripts/surfaceproperties*.txt`).
     gamematerials: HashMap<String, char>,
@@ -4481,9 +4484,9 @@ impl App {
                                 .is_some_and(|c| c == "weapon_ar2")
                         };
                         self.fx_tracers.push((player, end, now, ar2));
-                        // `FX_MuzzleEffect` for every other shooter (clientfx.md 2.1): the
-                        // weapon's world model has no muzzle attachment yet, so from beside
-                        // their eye along the shot
+                        // `FX_MuzzleEffect` for every other shooter at their weapon's world
+                        // model `muzzle` attachment (clientfx.md 2.1, gap-report #123); a
+                        // point beside the eye when the model has none / was not drawn
                         let me = self.sim.client.player_id;
                         let shooter = self
                             .sim
@@ -4496,7 +4499,12 @@ impl App {
                         if let Some(start) = shooter {
                             let fwd = (end - start).normalize_or_zero();
                             let right = fwd.cross(Vec3::Z).normalize_or_zero();
-                            let muzzle = start + fwd * 16.0 + right * 6.0 - Vec3::Z * 4.0;
+                            let muzzle = self
+                                .other_muzzles
+                                .get(&player)
+                                .copied()
+                                .unwrap_or(start + fwd * 16.0 + right * 6.0 - Vec3::Z * 4.0);
+                            let fwd = (end - muzzle).normalize_or_zero();
                             for (pos, size, roll, variant) in
                                 muzzle_sprites(&mut self.fx_seed, muzzle, fwd, 1.0)
                             {
@@ -5539,7 +5547,21 @@ impl App {
                     let held = world.as_ref().and_then(|w| {
                         let path = world_model_of(p.active)?;
                         let wm = g.models.get(path)?.as_ref()?;
-                        Some((path, wm.pose_merged("idle", 0.0, m, w)?))
+                        let (bones, skin) = wm.bone_world_merged("idle", 0.0, m, w)?;
+                        match wm.attachment("muzzle", &bones) {
+                            Some(at) => {
+                                let to_world = gm_render::world::model_transform(
+                                    origin,
+                                    Vec3::new(0.0, yaw, 0.0),
+                                );
+                                self.other_muzzles
+                                    .insert(p.id, (to_world * at).w_axis.truncate());
+                            }
+                            None => {
+                                self.other_muzzles.remove(&p.id);
+                            }
+                        }
+                        Some((path, skin))
                     });
                     player_poses.push((origin, yaw, pose, held, m));
                 }
@@ -9223,6 +9245,7 @@ fn main() -> Result<()> {
         fx_ar2_impacts: Vec::new(),
         xbow_charge_since: None,
         fx_explosion_lights: Vec::new(),
+        other_muzzles: HashMap::new(),
         fx_decals: Default::default(),
         fx_prop_decals: Default::default(),
         fx_bursts: Vec::new(),
