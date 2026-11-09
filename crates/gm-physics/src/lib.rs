@@ -204,6 +204,11 @@ use std::ptr;
 use std::sync::Once;
 
 pub const UNITS_TO_METERS: f32 = 0.0254;
+/// vphysics hard caps re-applied after every setter and controller (vphysics.md, gap-report
+/// #173): 2000 u/s linear, 3600 deg/s angular; shadow-controlled (held) bodies are exempt from
+/// the angular one, the physgun turns them at the measured 5000 deg/s.
+pub const MAX_LINEAR_VELOCITY: f32 = 2000.0;
+pub const MAX_ANGULAR_VELOCITY: f32 = 3600.0;
 pub const METERS_TO_UNITS: f32 = 1.0 / UNITS_TO_METERS;
 pub const JOLT_GRAVITY: f32 = 9.81;
 /// Resting distance the game keeps between bodies and the world (IVP's 1 cm tolerance), units.
@@ -861,6 +866,7 @@ impl World {
             // Jolt's default cap (0.25 pi rad per 1/60 s, 2700 deg/s) is below the shadow
             // controllers' measured turn rates (carry 3600 deg/s, physgun 5000)
             settings.MaxAngularVelocity = 200.0;
+            settings.MaxLinearVelocity = MAX_LINEAR_VELOCITY * UNITS_TO_METERS;
             settings.LinearDamping = desc.linear_damping;
             settings.AngularDamping = desc.angular_damping;
             settings.GravityFactor = self.gravity_factor();
@@ -1524,6 +1530,8 @@ impl World {
     /// `PhysObj:SetVelocity` + `AddAngleVelocity`: Source units per second and body-local
     /// degrees per second.
     pub fn set_velocity(&mut self, body: BodyHandle, velocity: Vec3, angular: Vec3) {
+        let velocity = velocity.clamp_length_max(MAX_LINEAR_VELOCITY);
+        let angular = angular.clamp_length_max(MAX_ANGULAR_VELOCITY);
         unsafe {
             let bi = JPC_PhysicsSystem_GetBodyInterface(self.system.as_raw());
             JPC_BodyInterface_SetLinearAndAngularVelocity(
@@ -1832,6 +1840,43 @@ impl World {
             gmp_apply_impact_offsets(self.system.as_raw());
             for &(a, b) in &self.pivot_joints {
                 gmp_carry_pivot_velocity(self.system.as_raw(), a, b, self.tick_interval);
+            }
+        }
+        self.cap_velocities();
+    }
+
+    /// The vphysics hard caps (`MAX_LINEAR_VELOCITY` / `MAX_ANGULAR_VELOCITY`) on every
+    /// awake body after the step; held bodies keep the shadow controller's turn rate.
+    fn cap_velocities(&mut self) {
+        let ids: Vec<u32> = self.inertias.keys().copied().collect();
+        unsafe {
+            let bi = JPC_PhysicsSystem_GetBodyInterface(self.system.as_raw());
+            for id in ids {
+                if self.frozen.contains(&id) || !JPC_BodyInterface_IsActive(bi, id) {
+                    continue;
+                }
+                let mut lv = jv(Vec3::ZERO);
+                let mut av = jv(Vec3::ZERO);
+                JPC_BodyInterface_GetLinearAndAngularVelocity(bi, id, &mut lv, &mut av);
+                let lin = gv(lv);
+                let ang = gv(av);
+                let lin_max = MAX_LINEAR_VELOCITY * UNITS_TO_METERS;
+                let ang_max = MAX_ANGULAR_VELOCITY * DEG;
+                let over_lin = lin.length_squared() > lin_max * lin_max;
+                let over_ang = !self.held.contains(&id) && ang.length_squared() > ang_max * ang_max;
+                if over_lin || over_ang {
+                    let lin = if over_lin {
+                        lin.clamp_length_max(lin_max)
+                    } else {
+                        lin
+                    };
+                    let ang = if over_ang {
+                        ang.clamp_length_max(ang_max)
+                    } else {
+                        ang
+                    };
+                    JPC_BodyInterface_SetLinearAndAngularVelocity(bi, id, jv(lin), jv(ang));
+                }
             }
         }
     }
