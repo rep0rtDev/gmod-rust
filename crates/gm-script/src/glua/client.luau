@@ -1257,6 +1257,18 @@ HUD_ELEMENTS = { "CHudHealth", "CHudBattery", "CHudAmmo", "CHudSecondaryAmmo", "
 if events then
 	-- `Think` / `Tick` run once per client frame (the game calls the client's Think every frame)
 	events.on("tick.client", function() hook.Run("Think"); hook.Run("Tick") end)
+	-- a chat line relayed by the server: GM:OnPlayerChat formats it (base gamemode: `*DEAD* `,
+	-- `(TEAM) `, team-coloured name, white text) unless a hook returns true
+	events.on("chat.line", function(p)
+		local ply = p.player and p.player > 0 and Player(p.player) or NULL
+		if hook.Run("OnPlayerChat", ply, p.text or "", p.team == true, p.dead == true) == true then return end
+		local tab = {}
+		if p.dead then tab[#tab + 1] = Color(255, 30, 40); tab[#tab + 1] = "*DEAD* " end
+		if p.team then tab[#tab + 1] = Color(30, 160, 40); tab[#tab + 1] = "(TEAM) " end
+		if IsValid(ply) then tab[#tab + 1] = ply else tab[#tab + 1] = Color(255, 200, 0); tab[#tab + 1] = p.name or "Console" end
+		tab[#tab + 1] = Color(255, 255, 255); tab[#tab + 1] = ": " .. (p.text or "")
+		chat.AddText(unpack(tab))
+	end)
 	events.on("render.hud", function(p)
 		__glua_input_frame(p)
 		local w, h = p.w or scr_w, p.h or scr_h

@@ -2525,7 +2525,7 @@ fn the_admin_console_answers_status_cvar_say_and_denies_others() {
     assert!(a.contains("admin\n") || a.contains(" admin"), "{a}");
     assert!(a.matches("sbox_maxprops = 25").count() == 2, "{a}");
     assert_eq!(server.sandbox.limits.max_props, 25);
-    assert!(a.contains("[server] hello all"), "{a}");
+    assert!(a.contains("Chat 0 0 Console\x1fhello all"), "{a}");
     assert!(a.contains("bogus: unknown command"), "{a}");
     assert!(a.contains("kick 999: no such player"), "{a}");
     // the ip filter answers with srcds's strings (recorded live)
@@ -2539,7 +2539,7 @@ fn the_admin_console_answers_status_cvar_say_and_denies_others() {
     assert!(a.contains("Writing cfg/banned_ip.cfg."), "{a}");
     let p = peer.events.join("\n");
     assert!(
-        p.contains("[server] hello all") && p.contains("Console denied"),
+        p.contains("Chat 0 0 Console\x1fhello all") && p.contains("Console denied"),
         "{p}"
     );
     assert!(!p.contains("gm_construct tick"), "{p}");
@@ -3030,11 +3030,11 @@ fn player_chat_is_rewritten_or_dropped_by_an_actor_before_it_reaches_the_clients
     let chat = |c: &gm_net::ClientNet| -> Vec<String> {
         c.events
             .iter()
-            .filter(|e| e.contains(": "))
-            .cloned()
+            .filter_map(|e| e.strip_prefix("Chat "))
+            .filter_map(|e| e.splitn(3, ' ').nth(2).map(str::to_string))
             .collect()
     };
-    assert_eq!(chat(&alice), vec!["alice: HELLO THERE", "bob:   hi  "]);
+    assert_eq!(chat(&alice), vec!["alice\x1fHELLO THERE", "bob\x1f  hi  "]);
     assert_eq!(chat(&bob), chat(&alice));
     assert!(sn.take_log().iter().any(|l| l == "chat alice: HELLO THERE"));
 }

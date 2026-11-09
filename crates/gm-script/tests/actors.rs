@@ -1889,3 +1889,76 @@ fn glua_client_effect_touch_callbacks() {
     // one frame in the box (StartTouch + Touch), the move of the second Think leaves it
     assert_eq!((start, touch, stop, who, pos), (1, 1, 1, 3, 101.0));
 }
+
+/// A chat line relayed by the server (`chat.line`): the base gamemode's `GM:OnPlayerChat`
+/// prefixes `*DEAD* ` and the team-coloured name, `chat.AddText` keeps it on the HUD for
+/// hud_saytext_time (12 s); a hook returning true swallows it; the `ChatText` hook sees it.
+#[test]
+fn glua_client_chat_line_reaches_the_chat_box_through_onplayerchat() {
+    let mut rt = Runtime::client();
+    rt.load(ActorSpec {
+        addon: "chat".into(),
+        name: "watch".into(),
+        priority: 0,
+        source: r#"
+            hook.Add("ChatText", "test", function(index, name, text, kind) CHAT_TEXT = text end)
+            hook.Add("OnPlayerChat", "test", function(ply, text, team, dead)
+                if text == "quiet" then return true end
+            end)
+            hook.Add("HUDPaint", "test", function()
+                draw.SimpleText(CHAT_TEXT or "-", "DermaDefault", 0, 0, Color(255, 255, 255))
+            end)
+        "#
+        .into(),
+        config: ActorConfig {
+            cpu_budget: Duration::from_millis(500),
+            ..ActorConfig::default()
+        },
+    })
+    .expect("actor");
+    let mut world = gm_net::ClientWorld::default();
+    world.local_id = Some(3);
+    world.players.push(gm_net::msg::PlayerSnap {
+        id: 3,
+        name: "alice".into(),
+        ..Default::default()
+    });
+    let line = |text: &str, dead: bool| {
+        let mut p = gm_script::api::Payload::default();
+        p.ints.push(("player", 3));
+        p.bools.push(("dead", dead));
+        p.bools.push(("team", false));
+        p.strs.push(("name", "alice".into()));
+        p.strs.push(("text", text.into()));
+        p
+    };
+    rt.client_event(&world, "chat.line", &line("quiet", false));
+    let draws = rt.client_render(&world, 1280, 720);
+    let texts = |draws: &[gm_script::DrawCmd]| -> Vec<String> {
+        draws
+            .iter()
+            .filter_map(|d| match d {
+                gm_script::DrawCmd::Text { text, .. } => Some(text.clone()),
+                _ => None,
+            })
+            .collect()
+    };
+    let t = texts(&draws);
+    assert!(
+        !t.iter().any(|s| s.contains("quiet")),
+        "an OnPlayerChat hook returning true swallows the line: {t:?}"
+    );
+    rt.client_event(&world, "chat.line", &line("hello all", true));
+    let draws = rt.client_render(&world, 1280, 720);
+    let t = texts(&draws);
+    assert!(
+        t.iter().any(|s| s == "*DEAD* ")
+            && t.iter().any(|s| s == "alice")
+            && t.iter().any(|s| s == ": hello all"),
+        "the base OnPlayerChat formats dead prefix, name and text: {t:?}"
+    );
+    assert!(
+        t.iter().any(|s| s == "*DEAD* alice: hello all"),
+        "ChatText sees the whole line: {t:?}"
+    );
+}

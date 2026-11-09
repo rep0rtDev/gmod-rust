@@ -866,7 +866,7 @@ impl ServerNet {
                     "\"Console<0><Console><Console>\" say \"{}\"",
                     rest.join(" ")
                 ));
-                let text = format!("[server] {}", rest.join(" "));
+                let text = format!("Chat 0 0 Console\x1f{}", rest.join(" "));
                 for c in self.clients.values_mut() {
                     if c.welcomed && !c.closing {
                         c.pending_events.push(text.clone());
@@ -1389,8 +1389,11 @@ impl ServerNet {
                 None => Some(text),
             };
             if let Some(text) = text {
-                let line = format!("{name}: {text}");
-                self.log.push(format!("chat {line}"));
+                self.log.push(format!("chat {name}: {text}"));
+                // the client formats the line itself (GM:OnPlayerChat: `*DEAD*` prefix,
+                // team-coloured name); `\x1f` separates the name from the text
+                let dead = server.players.get(&player).is_some_and(|pl| !pl.alive);
+                let line = format!("Chat {player} {} {name}\x1f{text}", u8::from(dead));
                 let identity = self
                     .clients
                     .values()

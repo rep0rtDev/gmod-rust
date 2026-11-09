@@ -702,12 +702,12 @@ if CLIENT then
                 end
             end
         elseif bind == "messagemode" or bind == "messagemode2" then
-            if p.down and hook.Run("StartChat", bind == "messagemode2") ~= true then lp.__chat_open = true end
+            if p.down and chat and chat.Open then chat.Open(bind == "messagemode2" and 2 or 1) end
         elseif bind == "invprev" or bind == "invnext" or bind == "lastinv" or string.sub(bind, 1, 4) == "slot" then
             if IsValid(lp) then lp.__weapon_selection_open = p.down and CurTime() or lp.__weapon_selection_open end
         end
-        if IsValid(lp) and lp.__chat_open and p.down then
-            if p.key == "Tab" then hook.Run("OnChatTab", lp.__chat_text or "") elseif p.key == "Enter" or p.key == "Escape" then lp.__chat_open = false; hook.Run("FinishChat") else hook.Run("ChatTextChanged", lp.__chat_text or "") end
+        if chat and chat.IsOpen and chat.IsOpen() and p.down then
+            if p.key == "Tab" then hook.Run("OnChatTab", "") elseif p.key == "Escape" then chat.Close() end
         end
         if string.sub(p.key, 1, 5) == "Mouse" and (spawnmenu_open or context_open) then
             local code = MOUSE_LEFT or 107

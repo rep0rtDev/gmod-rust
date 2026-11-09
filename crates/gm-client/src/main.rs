@@ -4166,6 +4166,28 @@ impl App {
                 if let Some(d) = DeathNotice::parse(&e, &self.sim.client.world.players) {
                     self.deaths.push(d);
                 }
+                // `Chat <player> <dead> <name>\x1f<text>`: the console gets `name: text`, the
+                // chat box the Lua side (GM:OnPlayerChat -> chat.AddText)
+                if let Some(rest) = e.strip_prefix("Chat ") {
+                    let mut it = rest.splitn(3, ' ');
+                    let player: i64 = it.next().and_then(|v| v.parse().ok()).unwrap_or(0);
+                    let dead = it.next() == Some("1");
+                    let (name, text) = it
+                        .next()
+                        .and_then(|r| r.split_once('\x1f'))
+                        .unwrap_or(("", rest));
+                    self.console.log(format!("{name}: {text}"));
+                    let mut p = gm_script::api::Payload::default();
+                    p.ints.push(("player", player));
+                    p.bools.push(("dead", dead));
+                    p.bools.push(("team", false));
+                    p.strs.push(("name", name.to_string()));
+                    p.strs.push(("text", text.to_string()));
+                    self.sim
+                        .script
+                        .client_event(&self.sim.client.world, "chat.line", &p);
+                    continue;
+                }
                 // GM:OnUndo: hint.undoneX with `language.GetPhrase(name)` (prop_physics is
                 // "Physics Prop", a `#class` its entities.properties name)
                 let named = match e.strip_prefix("Undone ") {
@@ -7926,7 +7948,7 @@ impl App {
                     _ => self.console.log(format!("unknown weapon {class}")),
                 }
             }
-            "say" => self.sim.client.command(Command::Chat {
+            "say" | "say_team" => self.sim.client.command(Command::Chat {
                 text: rest.join(" "),
             }),
             "noclip" => {

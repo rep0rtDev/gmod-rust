@@ -4161,12 +4161,19 @@ function UGCPublishWindow:UpdateWorkshopItems() end
 ------------------------------------------------------------------------ chat / notification / frame_blend
 chat = chat or {}
 local chat_lines, chat_entry = {}, nil
+-- ClientScheme.res DullWhite: the default chat text colour; a Player argument prints its
+-- name in its team colour (team.GetColor)
 function chat.AddText(...)
-	local parts, col = {}, Color(255, 255, 255)
+	local parts, col = {}, Color(190, 190, 190)
 	for i = 1, select("#", ...) do
 		local v = select(i, ...)
-		if IsColor(v) then col = v elseif IsEntity(v) and v.Nick then parts[#parts + 1] = { text = v:Nick(), color = Color(255, 200, 0) } else parts[#parts + 1] = { text = tostring(v), color = col } end
+		if IsColor(v) then col = v
+		elseif IsEntity(v) and v.Nick then
+			local tc = team and team.GetColor and v.Team and team.GetColor(v:Team()) or Color(255, 200, 0)
+			parts[#parts + 1] = { text = v:Nick(), color = Color(tc.r, tc.g, tc.b, 255) }
+		else parts[#parts + 1] = { text = tostring(v), color = col } end
 	end
+	chat.PlaySound()
 	chat_lines[#chat_lines + 1] = { parts = parts, time = RealTime() }
 	if #chat_lines > 10 then table.remove(chat_lines, 1) end
 	hook.Run("ChatText", 0, "", table.concat((function() local t = {} for i, p in ipairs(parts) do t[i] = p.text end return t end)()), "none")
@@ -4174,25 +4181,51 @@ end
 function chat.GetChatBoxPos() return 8, ScrH() - 300 end
 function chat.GetChatBoxSize() return math.min(ScrW() * 0.4, 600), 180 end
 function chat.PlaySound() if surface.PlaySound then surface.PlaySound("common/talk.wav") end end
+-- CHudChat: `messagemode` / `messagemode2` open the entry behind a "Say :" / "Say (TEAM) :"
+-- prompt; refused while cl_drawhud is 0; Enter sends `say` / `say_team`, Escape closes
+function chat.IsOpen() return chat_entry ~= nil and chat_entry.__valid == true end
 function chat.Open(mode)
-	if chat_entry and chat_entry.__valid then return end
+	if chat.IsOpen() then return end
+	if GetConVar and GetConVar("cl_drawhud") and GetConVar("cl_drawhud"):GetInt() == 0 then return end
+	if hook.Run("StartChat", mode == 2) == true then return end
 	local x, y = chat.GetChatBoxPos()
 	local w, h = chat.GetChatBoxSize()
-	chat_entry = vgui.Create("DTextEntry"); chat_entry:SetPos(x, y + h - 24); chat_entry:SetSize(w, 22); chat_entry:MakePopup(); chat_entry:RequestFocus()
+	surface.SetFont("ChatFont")
+	local prompt = mode == 2 and "Say (TEAM) :" or "Say :"
+	local pw = math.max(surface.GetTextSize(prompt), #prompt * 7) + 6
+	chat_entry = vgui.Create("DTextEntry"); chat_entry:SetPos(x + pw, y + h - 24); chat_entry:SetSize(w - pw, 22); chat_entry:MakePopup(); chat_entry:RequestFocus()
 	chat_entry.__team = mode == 2
-	chat_entry.OnEnter = function(e) local t = e:GetText() if t ~= "" and hook.Run("OnPlayerChat", LocalPlayer(), t, e.__team, false) ~= true then RunConsoleCommand(e.__team and "say_team" or "say", t) end chat.Close() end
-	hook.Run("StartChat", chat_entry.__team)
+	chat_entry.__prompt = prompt
+	chat_entry.OnEnter = function(e) local t = e:GetText() if t ~= "" then RunConsoleCommand(e.__team and "say_team" or "say", t) end chat.Close() end
+	chat_entry.OnChange = function(e) hook.Run("ChatTextChanged", e:GetText()) end
 end
 function chat.Close() if chat_entry and chat_entry.__valid then chat_entry:Remove() end chat_entry = nil; hook.Run("FinishChat") end
+function chat.Prompt() if chat.IsOpen() then return chat_entry.__prompt end end
+-- lines live hud_saytext_time (12 s) and fade over their last second; all stay while typing
 if events then events.on("render.hud", function()
-	if #chat_lines == 0 then return end
+	local open = chat.IsOpen()
+	if #chat_lines == 0 and not open then return end
 	local x, y = chat.GetChatBoxPos()
+	local _, h = chat.GetChatBoxSize()
 	surface.SetFont("ChatFont")
-	for i, line in ipairs(chat_lines) do
-		if RealTime() - line.time < 12 or (chat_entry and chat_entry.__valid) then
-			local cx = x
-			for _, p in ipairs(line.parts) do surface.SetTextColor(p.color); surface.SetTextPos(cx, y + (i - 1) * 18); surface.DrawText(p.text); cx = cx + math.max(surface.GetTextSize(p.text), #p.text * 7) end
+	local _, lh = surface.GetTextSize("Ay")
+	lh = math.max(lh or 0, 14) + 2
+	local shown = {}
+	for _, line in ipairs(chat_lines) do
+		local age = RealTime() - line.time
+		local a = open and 1 or math.Clamp(12 - age, 0, 1)
+		if a > 0 then shown[#shown + 1] = { line = line, a = a } end
+	end
+	local bottom = y + h - 28
+	for i, s in ipairs(shown) do
+		local cx, cy = x, bottom - (#shown - i + 1) * lh
+		for _, p in ipairs(s.line.parts) do
+			surface.SetTextColor(Color(p.color.r, p.color.g, p.color.b, (p.color.a or 255) * s.a)); surface.SetTextPos(cx, cy); surface.DrawText(p.text)
+			cx = cx + math.max(surface.GetTextSize(p.text), #p.text * 7)
 		end
+	end
+	if open then
+		surface.SetTextColor(Color(255, 255, 255)); surface.SetTextPos(x, y + h - 22); surface.DrawText(chat.Prompt() or "Say :")
 	end
 end, 5e5) end
 notification = notification or {}
