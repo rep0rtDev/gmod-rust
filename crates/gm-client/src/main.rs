@@ -1181,6 +1181,8 @@ struct App {
     claw_pose: f32,
     claw_at: Instant,
     gg_core_alpha: f32,
+    /// When the room around the listener was last measured for `dsp_room`.
+    room_at: Instant,
     /// Explosion particles (`C_BaseExplosionEffect`), simulated with the shells.
     fx_sprites: Vec<FxSprite>,
     fx_seed: u32,
@@ -4830,6 +4832,47 @@ impl App {
                 & gm_formats::bsp::lumps::contents::WATER
                 != 0,
         );
+        // `dsp_room` auto node (sound.md 3.2): every half second the room around the listener
+        // is measured with 8 horizontal 4800 u traces and one up (sky), and the preset is
+        // picked from its size and openness. The game's node table and `dsp_presets.txt`
+        // processors are not reproduced: the decay / wet mapping here is an approximation
+        // (outdoors nearly dry, small rooms short, halls up to 1.5 s).
+        if self.room_at.elapsed().as_secs_f32() >= 0.5 {
+            self.room_at = Instant::now();
+            let eye = camera.position;
+            let reach = 4800.0;
+            let mut sum = 0.0;
+            for k in 0..8 {
+                let a = k as f32 * std::f32::consts::FRAC_PI_4;
+                let d = Vec3::new(a.cos(), a.sin(), 0.0);
+                let tr =
+                    self.sim
+                        .collision
+                        .trace_ray(eye, eye + d * reach, gm_collision::MASK_SOLID);
+                sum += tr.fraction * reach;
+            }
+            let size = sum / 8.0;
+            let up =
+                self.sim
+                    .collision
+                    .trace_ray(eye, eye + Vec3::Z * reach, gm_collision::MASK_SOLID);
+            let height = up.fraction * reach;
+            let open = up.fraction >= 1.0 || height > 2000.0;
+            let room = if open && size > 1200.0 {
+                gm_audio::Room {
+                    reverb_times: [0.35, 0.3, 0.25],
+                    wet: 0.12,
+                }
+            } else {
+                let rt =
+                    (0.35 + (size / 1600.0 + height.min(1200.0) / 1200.0) * 0.9).clamp(0.35, 1.5);
+                gm_audio::Room {
+                    reverb_times: [rt * 1.1, rt, rt * 0.8],
+                    wet: (0.25 + size / 4000.0).clamp(0.25, 0.5),
+                }
+            };
+            self.sounds.mixer.set_room(Some(room));
+        }
         {
             let collision = self.sim.collision;
             let sees = |from: Vec3, to: Vec3| {
@@ -8389,6 +8432,7 @@ fn main() -> Result<()> {
         claw_pose: 0.0,
         claw_at: Instant::now(),
         gg_core_alpha: 0.0,
+        room_at: Instant::now() - std::time::Duration::from_secs(1),
         fx_sprites: Vec::new(),
         fx_seed: 0x9e37_79b9,
         fx_sound_queue: Vec::new(),

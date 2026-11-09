@@ -20,7 +20,7 @@ use glam::Vec3;
 
 pub use acoustics::{Acoustics, Occluder, Snapshot};
 pub use engine::{Engine, Path, Play, VoiceState};
-pub use mixer::{distance_gain, Listener, Mixer};
+pub use mixer::{distance_gain, Listener, Mixer, Room};
 pub use scene::Geometry;
 pub use script::{Entry, Scripts};
 pub use soundscape::{Definitions as SoundscapeDefinitions, Env as SoundscapeEnv, Soundscapes};

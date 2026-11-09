@@ -157,6 +157,10 @@ pub struct Engine {
     /// low-pass; ours is a one-pole at [`UNDERWATER_CUTOFF`] over the mix.
     pub underwater: bool,
     lp: [f32; 2],
+    /// The room preset the client measured; while set it replaces the traced reverb and the
+    /// wet send grows with distance like the engine's `dsp_mix_min/max` 0.2..0.8 over
+    /// `dsp_dist_min/max` 0..1400 u.
+    room: Option<crate::mixer::Room>,
 }
 
 /// Underwater low-pass cutoff (Hz).
@@ -213,6 +217,7 @@ impl Engine {
             shared: None,
             reverb: Some(reverb),
             underwater: false,
+            room: None,
             lp: [0.0; 2],
         })
     }
@@ -401,7 +406,11 @@ impl Engine {
                         AudioBufferMut::try_new(&mut self.direct_out, 1).expect("direct frame");
                     let _ = v.direct.apply(&params, &input, &mut dout);
                     if let Some(r) = &mut self.reverb {
-                        let g = v.gain * master * REVERB_SEND;
+                        let send = match &self.room {
+                            Some(room) => room.wet * (0.2 + 0.6 * (dist / 1400.0).clamp(0.0, 1.0)),
+                            None => REVERB_SEND,
+                        };
+                        let g = v.gain * master * send;
                         for (w, d) in r.wet.iter_mut().zip(&self.direct_out) {
                             *w += d * g;
                         }
@@ -515,9 +524,24 @@ impl Engine {
         if let Some(r) = &mut self.reverb {
             if let Ok(mut fresh) = shared.reverb.try_lock() {
                 if let Some(p) = fresh.take() {
-                    r.params = Some(p);
+                    if self.room.is_none() {
+                        r.params = Some(p);
+                    }
                 }
             }
+        }
+    }
+
+    /// `dsp_room`: the measured room's decay replaces the traced reverb (`None` lets the next
+    /// traced one back in).
+    pub fn set_room(&mut self, room: Option<crate::mixer::Room>) {
+        self.room = room;
+        if let (Some(r), Some(room)) = (&mut self.reverb, room) {
+            r.params = Some(ReflectionEffectParams::<Parametric>::new(
+                room.reverb_times,
+                r.channels as u32,
+                (REVERB_DURATION * self.rate as f32) as u32,
+            ));
         }
     }
 }

@@ -92,6 +92,16 @@ pub enum Cmd {
     Master(f32),
     Scene(Arc<Shared>),
     Underwater(bool),
+    Room(Option<Room>),
+}
+
+/// The room's reverb as the game's `dsp_room` auto node picks it (sound.md 3.2): the client
+/// measures the room around the listener (8 horizontal traces + sky) and sends the decay
+/// (3-band RT60) and the wet level it maps to; `None` returns to the traced reverb.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Room {
+    pub reverb_times: [f32; 3],
+    pub wet: f32,
 }
 
 fn apply(engine: &mut Engine, cmd: Cmd) {
@@ -114,6 +124,7 @@ fn apply(engine: &mut Engine, cmd: Cmd) {
         Cmd::Master(m) => engine.master = m.clamp(0.0, 1.0),
         Cmd::Scene(shared) => engine.shared = Some(shared),
         Cmd::Underwater(u) => engine.underwater = u,
+        Cmd::Room(r) => engine.set_room(r),
     }
 }
 
@@ -391,6 +402,11 @@ impl Mixer {
     /// The listener's eyes are under water: low-pass the mix.
     pub fn set_underwater(&self, underwater: bool) {
         let _ = self.tx.send(Cmd::Underwater(underwater));
+    }
+
+    /// The measured room's reverb (`dsp_room`), `None` for the traced one.
+    pub fn set_room(&self, room: Option<Room>) {
+        let _ = self.tx.send(Cmd::Room(room));
     }
 
     /// Start a sound; the id stops or moves it later.
