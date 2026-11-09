@@ -1190,6 +1190,9 @@ struct App {
     wsel_at: Option<Instant>,
     /// HUD_PRINTCENTER text (CHudMessage) and when it arrived.
     center_print: Option<(String, Instant)>,
+    /// Lua `DynamicLight`s by key: the light, its `Decay` (units/s), when it dies, when it
+    /// was last sent (the decay runs from there), and `nomodel`/`noworld`.
+    lua_dlights: HashMap<i32, (gm_render::world::DLight, f32, Instant, Instant, bool, bool)>,
     /// CHudSuitPower: when the last active device went off (SuitAuxPowerMax 0.4 s fade).
     aux_off_at: std::cell::RefCell<Option<Instant>>,
     /// CHudZoom: when the FOV dropped below fov_desired / came back (0.4 s fades).
@@ -5125,8 +5128,23 @@ impl App {
             self.camera_fov()
         };
         let Some(g) = &mut self.gfx else { return };
-        g.world
-            .set_lightstyles(&g.gpu, &self.sim.client.world.lightstyles);
+        // light styles 1..=12 animate at 10 Hz from the engine's pattern strings (render.md
+        // §9, gap-report #150); the rest are the server's values
+        let t = self.epoch.elapsed().as_secs_f32();
+        let mut styles = self.sim.client.world.lightstyles.clone();
+        for (style, b) in &mut styles {
+            if let Some(v) = gm_render::lightmap::pattern_value(*style, t) {
+                *b = v;
+            }
+        }
+        for style in 1..=12u8 {
+            if !styles.iter().any(|(s, _)| *s == style) {
+                if let Some(v) = gm_render::lightmap::pattern_value(style, t) {
+                    styles.push((style, v));
+                }
+            }
+        }
+        g.world.set_lightstyles(&g.gpu, &styles);
         for r in &self.sim.client.world.ropes {
             if !g.rope_mats.contains_key(&r.material) {
                 let m = g.world.sprite_material(&g.gpu, &self.mount, &r.material);
@@ -5752,6 +5770,20 @@ impl App {
         let mut alpha: Vec<(&wgpu::BindGroup, Vec<gm_render::world::Vertex>, Vec<u32>)> =
             Vec::new();
         let mut dlights: Vec<gm_render::world::DLight> = Vec::new();
+        // Lua DynamicLights (render.md §4.1, gap-report #146-#147): radius -= Decay * dt
+        // since the last update, gone at DieTime; nomodel/noworld are carried but the
+        // renderer lights both (open)
+        {
+            let now = Instant::now();
+            self.lua_dlights
+                .retain(|_, (_, _, die, _, _, _)| *die > now);
+            for (l, decay, _, since, _, _) in self.lua_dlights.values() {
+                let r = l.radius - decay * now.duration_since(*since).as_secs_f32();
+                if r > 0.0 {
+                    dlights.push(gm_render::world::DLight { radius: r, ..*l });
+                }
+            }
+        }
         let mut modulate: Vec<(&wgpu::BindGroup, Vec<gm_render::world::Vertex>, Vec<u32>)> =
             Vec::new();
         // a viewmodel attachment in world space (the viewmodel sits at the eye)
@@ -7260,6 +7292,36 @@ impl App {
                     gm_script::DrawCmd::OpenUrl { url } => {
                         let _ = std::process::Command::new("xdg-open").arg(url).spawn();
                     }
+                    gm_script::DrawCmd::DLight {
+                        key,
+                        pos,
+                        color,
+                        brightness,
+                        size,
+                        decay,
+                        remaining,
+                        dir,
+                        outer,
+                        nomodel,
+                        noworld,
+                        ..
+                    } => {
+                        let now = Instant::now();
+                        let light = gm_render::world::DLight {
+                            pos: Vec3::from_array(*pos),
+                            radius: *size,
+                            color: Vec3::from_array(*color) * *brightness,
+                            dir: Vec3::from_array(*dir).normalize_or_zero(),
+                            cone: if *outer > 0.0 {
+                                (*outer).to_radians().cos()
+                            } else {
+                                0.0
+                            },
+                        };
+                        let die = now + std::time::Duration::from_secs_f32(remaining.max(0.0));
+                        self.lua_dlights
+                            .insert(*key, (light, *decay, die, now, *nomodel, *noworld));
+                    }
                     gm_script::DrawCmd::Particle {
                         name,
                         pos,
@@ -7754,6 +7816,7 @@ impl App {
                     gm_script::DrawCmd::WorldTri { .. } => continue,
                     gm_script::DrawCmd::ScreenClicker { .. }
                     | gm_script::DrawCmd::Particle { .. }
+                    | gm_script::DrawCmd::DLight { .. }
                     | gm_script::DrawCmd::OpenUrl { .. }
                     | gm_script::DrawCmd::Audio { .. }
                     | gm_script::DrawCmd::Servers { .. } => continue,
@@ -9586,6 +9649,7 @@ fn main() -> Result<()> {
         center_print: None,
         zoom_at: Default::default(),
         aux_off_at: Default::default(),
+        lua_dlights: HashMap::new(),
         wsel_opened: None,
         epoch: Instant::now(),
         // cl_hints.lua: GM:AddHint( "OpeningMenu", 30 ), Annoy1 5, Annoy2 7

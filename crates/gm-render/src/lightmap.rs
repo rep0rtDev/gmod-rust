@@ -21,6 +21,17 @@ const STYLE_PATTERNS: [&str; 13] = [
     "mmnnmmnnnmmnn",
 ];
 
+/// `(c - 'a') * 22 / 256` of the built-in pattern's letter at 10 Hz (render.md §9, gap-report
+/// #150): the animated value of style 1..=12 at time `t`, `None` for other styles.
+pub fn pattern_value(style: u8, t: f32) -> Option<f32> {
+    let p = STYLE_PATTERNS.get(style as usize)?.as_bytes();
+    if style == 0 || p.is_empty() {
+        return None;
+    }
+    let i = (t * 10.0).floor().max(0.0) as usize % p.len();
+    Some(f32::from(p[i].saturating_sub(b'a')) * 22.0 / 256.0)
+}
+
 /// Mean brightness of a light style pattern string.
 pub fn pattern_mean(pattern: &str) -> f32 {
     let n = pattern.len().max(1) as f32;

@@ -921,6 +921,22 @@ pub enum DrawCmd {
         h: f32,
         color: [f32; 4],
     },
+    /// A Lua `DynamicLight` this frame (render.md §4.1, gap-report #146): `remaining` seconds
+    /// to DieTime, `color` 0..1 times Brightness applied by the client, `outer` 0 = point.
+    DLight {
+        key: i32,
+        pos: [f32; 3],
+        color: [f32; 3],
+        brightness: f32,
+        size: f32,
+        decay: f32,
+        remaining: f32,
+        style: u8,
+        dir: [f32; 3],
+        outer: f32,
+        nomodel: bool,
+        noworld: bool,
+    },
     /// `font` is a name given to `draw.font`, the client's default font when `None`.
     Text {
         x: f32,
@@ -1709,10 +1725,32 @@ pub fn install(lua: &Lua, shared: Arc<Shared>) -> Result<()> {
             Ok(())
         })?,
     )?;
+    // `draw.dlight({key, x, y, z, r, g, b, brightness, size, decay, remaining, style, dx, dy,
+    // dz, outer, nomodel, noworld})`: a Lua DynamicLight for this frame
+    let sh = shared.clone();
+    let draw_dlight = lua.create_function(move |_, t: Table| {
+        let f = |i: i64| -> f32 { t.get::<Option<f32>>(i).ok().flatten().unwrap_or(0.0) };
+        sh.draws.lock().unwrap().push(DrawCmd::DLight {
+            key: f(1) as i32,
+            pos: [f(2), f(3), f(4)],
+            color: [f(5) / 255.0, f(6) / 255.0, f(7) / 255.0],
+            brightness: f(8),
+            size: f(9),
+            decay: f(10),
+            remaining: f(11),
+            style: f(12).clamp(0.0, 255.0) as u8,
+            dir: [f(13), f(14), f(15)],
+            outer: f(16),
+            nomodel: f(17) != 0.0,
+            noworld: f(18) != 0.0,
+        });
+        Ok(())
+    })?;
     // `draw.rect(x, y, w, h, color?)` / `draw.text(x, y, text, color?)`: color is a table
     // {r, g, b, a?} in 0..255 (the game's Color), white when omitted; the client draws the list
     // after the handler returned, in call order
     let draw = lua.create_table()?;
+    draw.set("dlight", draw_dlight)?;
     let sh = shared.clone();
     draw.set(
         "rect",

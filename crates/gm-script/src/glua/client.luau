@@ -1202,10 +1202,31 @@ function CNP:GetRenderBounds() return Vector(), Vector() end
 function CNP:Render() end
 function CNP:StartEmission() self.__stopped = false end
 
--- lights: DynamicLight / ProjectedTexture keep the documented state; the client's lighting
--- does not read them yet (open)
+-- lights: DynamicLight tables live in DLIGHT by key; every render.hud frame the ones whose
+-- DieTime is ahead go to the client as draw.dlight (32 lit at most). The engine's dlights
+-- decay on the client (Size -= Decay * frametime). ProjectedTexture keeps its documented
+-- state only (open).
 local DLIGHT = {}
-function DynamicLight(index, elight) return { Pos = Vector(), r = 255, g = 255, b = 255, Brightness = 1, Size = 0, Decay = 0, DieTime = 0, Style = 0, Dir = Vector(), InnerAngle = 0, OuterAngle = 0, MinLight = 0, NoModel = false, NoWorld = false, Key = index } end
+function DynamicLight(index, elight)
+	local t = DLIGHT[index]
+	if not t then
+		t = { Pos = Vector(), r = 255, g = 255, b = 255, Brightness = 1, Size = 0, Decay = 0, DieTime = 0, Style = 0, Dir = Vector(), InnerAngle = 0, OuterAngle = 0, MinLight = 0, NoModel = false, NoWorld = false, Key = index }
+		DLIGHT[index] = t
+	end
+	return t
+end
+local function emit_dlights()
+	local now = CurTime()
+	for k, t in pairs(DLIGHT) do
+		local die = tonumber(t.DieTime) or 0
+		if die > now and (tonumber(t.Size) or 0) > 0 then
+			local p, d = t.Pos or Vector(), t.Dir or Vector()
+			draw.dlight({ k, p.x or 0, p.y or 0, p.z or 0, t.r or 255, t.g or 255, t.b or 255, t.Brightness or 1, t.Size or 0, t.Decay or 0, die - now, t.Style or 0, d.x or 0, d.y or 0, d.z or 0, t.OuterAngle or 0, t.NoModel and 1 or 0, t.NoWorld and 1 or 0 })
+		elseif die + 5 < now then
+			DLIGHT[k] = nil
+		end
+	end
+end
 local PT = {}
 PT.__index = PT
 __glua_classes.ProjectedTexture = PT
@@ -1271,6 +1292,7 @@ if events then
 	end)
 	events.on("render.hud", function(p)
 		__glua_input_frame(p)
+		emit_dlights()
 		local w, h = p.w or scr_w, p.h or scr_h
 		if w ~= scr_w or h ~= scr_h then
 			local ow, oh = scr_w, scr_h

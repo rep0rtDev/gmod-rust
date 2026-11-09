@@ -487,12 +487,12 @@ fn gm_hooks_bridge_more_events_and_defaults() {
         "PlayerInitialSpawn once per player: {log:?}"
     );
     assert_eq!(log.iter().filter(|l| *l == "tick").count(), 2, "{log:?}");
+    // the game raises EntityNetworkedVarChanged only on the client (entity.luau SetNW*)
     assert_eq!(
         log.iter().filter(|l| l.starts_with("nw")).count(),
-        1,
+        0,
         "{log:?}"
     );
-    assert!(log.contains(&"nw score nil>7".to_string()), "{log:?}");
     let desc: String = a.eval("return state.desc").unwrap();
     assert_eq!(desc, "Sandbox");
     let suicide: bool = a.eval("return state.suicide").unwrap();

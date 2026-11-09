@@ -377,7 +377,7 @@ struct CameraUniform {
 }
 
 /// Dynamic lights lit per frame.
-pub const MAX_DLIGHTS: usize = 8;
+pub const MAX_DLIGHTS: usize = 32;
 
 /// A dynamic point light for this frame (the physgun beam's end, a muzzle flash): colour times
 /// `(1 - d / radius)^2` times the surface's facing, added to the baked light.

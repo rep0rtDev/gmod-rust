@@ -11,9 +11,9 @@ struct Camera {
     clip: vec4<f32>,
     // the reflection pass clips everything behind this plane (normal, distance)
     clip_plane: vec4<f32>,
-    dlight_pos: array<vec4<f32>, 8>,
-    dlight_color: array<vec4<f32>, 8>,
-    dlight_dir: array<vec4<f32>, 8>,
+    dlight_pos: array<vec4<f32>, 32>,
+    dlight_color: array<vec4<f32>, 32>,
+    dlight_dir: array<vec4<f32>, 32>,
     sun: vec4<f32>,
     // env_skypaint: top colour + fade bias, bottom colour + HDR scale, sun normal + size,
     // sun colour + star drift, dusk colour + intensity, dusk scale + star scale / fade / layers
@@ -230,7 +230,7 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     }
     light = light * camera.lm_scale;
     // dynamic lights: colour * (1 - d / r)^2 * facing (unlit surfaces skip them)
-    for (var i = 0u; i < 8u; i++) {
+    for (var i = 0u; i < 32u; i++) {
         let lp = camera.dlight_pos[i];
         if lp.w > 0.0 {
             let dv = lp.xyz - in.world;
@@ -333,7 +333,7 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
         let tint = mix(vec3<f32>(1.0), albedo.rgb, material.phong.w * tint_mask);
         shaded = shaded + lc * (spec * phong_fres * ndl * bump_a) * tint * camera.exposure;
         var local = vec3<f32>(0.0);
-        for (var i = 0u; i < 8u; i++) {
+        for (var i = 0u; i < 32u; i++) {
             let lp = camera.dlight_pos[i];
             if lp.w > 0.0 {
                 let dv = lp.xyz - in.world;
