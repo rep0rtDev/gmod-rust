@@ -8610,6 +8610,9 @@ pub struct Server<'w> {
     wet_props: std::collections::HashSet<u32>,
     /// Fractional prop damage carried between hits (the game's health is a float).
     prop_damage_frac: HashMap<u32, f32>,
+    /// Death ragdolls oldest first; `g_ragdoll_maxcount` (8) retires the oldest (props.md #52,
+    /// gap-report #191). The game fades it over 0.5 s; here it goes at once.
+    death_ragdoll_lru: std::collections::VecDeque<u32>,
     /// First id of each class family's private schedules, handed out in spawn order like the
     /// game's schedule namespace.
     class_sched_bases: BTreeMap<String, u16>,
@@ -8883,6 +8886,7 @@ impl<'w> Server<'w> {
             bodies: BTreeMap::new(),
             wet_props: std::collections::HashSet::new(),
             prop_damage_frac: HashMap::new(),
+            death_ragdoll_lru: std::collections::VecDeque::new(),
             ragdoll_bodies: BTreeMap::new(),
             ragdoll_spawn_pose: BTreeMap::new(),
             bone_scales: BTreeMap::new(),
@@ -9507,6 +9511,9 @@ impl<'w> Server<'w> {
                 let at = pos + Vec3::new(r(4) * 4.0, r(5) * 4.0, 4.0 + r(6).abs() * 4.0);
                 let angles = Vec3::new(r(7) * 180.0, r(1) * 180.0, 0.0);
                 if let Some(gib) = self.script_spawn_prop(0, model, at, angles, false) {
+                    // CreateGibsFromList: a gib without a `health` in the break list is
+                    // DAMAGE_NO, so impacts and bullets do not break it further
+                    self.sandbox.set_health(gib, 0);
                     if let Some(&body) = self.bodies.get(&gib) {
                         self.physics
                             .set_velocity(body, vel + dir * 100.0, Vec3::ZERO);
@@ -11325,10 +11332,8 @@ impl<'w> Server<'w> {
                     .map(|r| (id, r, p.view_angles.y, p.ragdoll_ent))
             })
             .collect();
-        for (id, rag, yaw, previous) in pending {
-            if let Some(prev) = previous {
-                self.remove_prop(prev);
-            }
+        for (id, rag, yaw, _previous) in pending {
+            // the previous ragdoll stays until the LRU of 8 retires it (g_ragdoll_maxcount)
             if !self.models.contains_key(&rag.model) {
                 if let Some(loaded) = self.model_loader.as_mut().and_then(|f| f(&rag.model)) {
                     self.register_model(&rag.model, loaded);
@@ -11358,6 +11363,14 @@ impl<'w> Server<'w> {
             if let Some(p) = self.players.get_mut(&id) {
                 p.ragdoll = None;
                 p.ragdoll_ent = Some(ent);
+            }
+            self.death_ragdoll_lru.push_back(ent);
+            while self.death_ragdoll_lru.len() > 8 {
+                if let Some(old) = self.death_ragdoll_lru.pop_front() {
+                    if self.sandbox.props().iter().any(|p| p.id == old) {
+                        self.remove_prop(old);
+                    }
+                }
             }
         }
     }
@@ -26271,6 +26284,18 @@ impl<'w> Server<'w> {
                             our_vel: imp.velocities[i],
                             their_vel: imp.velocities[1 - i],
                         });
+                        // props.md #28 / #48 / #51 (gap-report #188): the prop damages itself
+                        // by the default NPC impact table, DMG_CRUSH
+                        let m_self = self.physics.mass(imp.bodies[i]);
+                        let m_other = if other == 0 {
+                            0.0
+                        } else {
+                            self.physics.mass(imp.bodies[1 - i])
+                        };
+                        let dmg = prop_impact_damage(m_self, m_other, other == 0, imp.speed);
+                        if dmg > 0.0 {
+                            self.damage_prop(ent, dmg, weapons::DMG_CRUSH);
+                        }
                     }
                 }
             }
@@ -26754,6 +26779,53 @@ pub fn player_impact_damage(mass: f32, speed: f32) -> f32 {
 }
 
 pub const PLAYER_MASS: f32 = 85.0;
+
+/// `CalculateDefaultPhysicsDamage` with the default NPC table for a prop hit (props.md #48,
+/// #51, SDK): the eliminated energy `dv^2 (m_self + m_other)` times `energyScale` 0.1 over
+/// `m_self`, looked up in the linear table [(150 u/s)^2 -> 5 .. (1000)^2 -> 500]; nothing under
+/// 24 u/s or from an object lighter than 2 kg; a "small" prop (< 5 kg) is capped at 5 and needs
+/// 36 u/s; a 500 kg object counts its energy x4. The approach speed stands in for the
+/// velocity change; the world contributes no mass (its velocity does not change).
+pub fn prop_impact_damage(m_self: f32, m_other: f32, world: bool, speed: f32) -> f32 {
+    const TABLE: [(f32, f32); 5] = [
+        (150.0, 5.0),
+        (250.0, 10.0),
+        (350.0, 50.0),
+        (500.0, 100.0),
+        (1000.0, 500.0),
+    ];
+    if m_self <= 0.0 || speed < 24.0 || (!world && m_other < 2.0) {
+        return 0.0;
+    }
+    let small = m_self < 5.0;
+    if small && speed < 36.0 {
+        return 0.0;
+    }
+    let other_energy = if world {
+        0.0
+    } else {
+        speed * speed * m_other * if m_other >= 500.0 { 4.0 } else { 1.0 }
+    };
+    let energy = (speed * speed * m_self + other_energy) * 0.1 / m_self;
+    let eq = energy.sqrt();
+    let mut damage = if eq < TABLE[0].0 {
+        0.0
+    } else {
+        let mut d = TABLE[4].1;
+        for w in TABLE.windows(2) {
+            let ((s0, d0), (s1, d1)) = (w[0], w[1]);
+            if eq <= s1 {
+                d = d0 + (d1 - d0) * (eq - s0) / (s1 - s0);
+                break;
+            }
+        }
+        d
+    };
+    if small {
+        damage = damage.min(5.0);
+    }
+    damage
+}
 pub const PROP_HIT_MIN_SPEED: f32 = 100.0;
 pub const PROP_HIT_MIN_MASS: f32 = 2.0;
 pub const PROP_HIT_COOLDOWN: u64 = 33;
