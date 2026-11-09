@@ -11937,7 +11937,12 @@ impl<'w> Server<'w> {
         self.cannon_hold_loop(player, false);
         if let Some(b) = self.bodies.get(&ent).copied() {
             self.physics.release(b);
-            self.physics.set_velocity(b, Vec3::ZERO, Vec3::ZERO);
+            // `DetachObject` (gravgun.md 5.5, gap-report #86): the dropped body keeps its
+            // motion clamped to 285 u/s and 720 deg/s (a launch clears it afterwards)
+            let st = self.physics.state(b);
+            let v = st.velocity.clamp_length_max(285.0);
+            let w = st.angular_velocity.clamp_length_max(720.0_f32.to_radians());
+            self.physics.set_velocity(b, v, w);
         }
         self.game_events.push(GameEvent::Drop { player, ent });
     }
@@ -22777,7 +22782,18 @@ impl<'w> Server<'w> {
                             && (self.sandbox.props().iter().any(|p| p.id == ent && p.frozen)
                                 || self.part_frozen(ent, h.bone))
                         {
-                            self.set_prop_frozen(ent, false);
+                            // a prop comes wholly unfrozen; of a ragdoll only the grabbed bone
+                            // (physgun.md 4, gap-report #76)
+                            if !self.set_prop_frozen(ent, false) {
+                                if let Some(r) = self.ragdoll_bodies.get_mut(&ent) {
+                                    if let Some(f) = r.frozen.get_mut(h.bone as usize) {
+                                        *f = false;
+                                    }
+                                    if let Some(b) = r.bodies.get(h.bone as usize).copied() {
+                                        self.physics.unfreeze(b);
+                                    }
+                                }
+                            }
                         }
                         let body = allowed.then(|| self.part_body(ent, h.bone)).flatten();
                         body.map(|b| {
