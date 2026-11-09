@@ -4029,6 +4029,8 @@ pub const NPC_CORPSE_TICKS: u64 = 133;
 pub const NPC_REMOVER_TICKS: u64 = 66;
 /// Vehicle exit point height over the vehicle origin and the "all sides blocked" top exit
 /// (measured `server_vehicle_exit_*`, chair: 11.4 / 90.9 u).
+/// `RAGDOLL_MAX_ELEMENTS`: a ragdoll with more solids than this is refused.
+const RAGDOLL_MAX_ELEMENTS: usize = 32;
 const VEHICLE_EXIT_Z: f32 = 11.4;
 const VEHICLE_EXIT_TOP: f32 = 90.9;
 /// `g_jeepexitspeed`: a driveable (wheeled) vehicle refuses +use exit above this speed
@@ -22584,6 +22586,18 @@ impl<'w> Server<'w> {
                         continue;
                     };
                     if let Some(rd) = info.ragdoll.clone() {
+                        // `CRagdollProp::InitRagdoll`: more than 32 elements is refused and
+                        // the entity removed (props.md §4, gap-report #190)
+                        if rd.solids.len() > RAGDOLL_MAX_ELEMENTS {
+                            eprintln!(
+                                "ragdoll {} has {} elements, max {RAGDOLL_MAX_ELEMENTS}",
+                                p.model,
+                                rd.solids.len()
+                            );
+                            let id = p.id;
+                            self.remove_prop(id);
+                            continue;
+                        }
                         self.spawn_ragdoll_bodies(p, &rd);
                         continue;
                     }
