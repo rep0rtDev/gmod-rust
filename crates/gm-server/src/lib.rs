@@ -1818,6 +1818,9 @@ pub trait ServerHooks {
     }
     /// `entity.removed` after an entity left the table through a player's command.
     fn entity_removed(&mut self, _server: &mut Server<'_>, _player: u32, _ent: u32) {}
+    /// The level is shutting down: the game's first action is the `ShutDown` hook
+    /// (luabind.md F18, gap-report #210).
+    fn shutdown(&mut self, _server: &mut Server<'_>) {}
     /// `GetGameDescription`: what the server advertises as its game (None keeps the last).
     fn game_description(&mut self, _server: &mut Server<'_>) -> Option<String> {
         None

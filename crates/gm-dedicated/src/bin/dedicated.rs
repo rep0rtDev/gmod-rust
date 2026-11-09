@@ -365,6 +365,9 @@ fn main() -> Result<()> {
         (gm_net::master::HEARTBEAT_S as f32 / gm_core::tick::DEFAULT_TICK_INTERVAL) as u64;
     loop {
         if !RUNNING.load(std::sync::atomic::Ordering::Relaxed) {
+            if let Some(h) = net.hooks.as_mut() {
+                h.shutdown(&mut server);
+            }
             drop(event_log);
             return Ok(());
         }

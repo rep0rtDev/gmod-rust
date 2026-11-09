@@ -1581,7 +1581,9 @@ function ENT:SetNWVar(key, v)
     base_set_nw(self, key, v)
     local fn = nw_proxies[self.__id] and nw_proxies[self.__id][key]
     if fn and old ~= v then fn(self, key, old, v) end
-    if old ~= v then hook.Run("EntityNetworkedVarChanged", self, key, old, v) end
+    -- the game raises EntityNetworkedVarChanged only on the client, from the NW2 receive
+    -- (luabind.md F43/F51, gap-report #212); the server-side proxy stays
+    if CLIENT and old ~= v then hook.Run("EntityNetworkedVarChanged", self, key, old, v) end
 end
 ENT.SetNetworkedVar = ENT.SetNWVar
 for _, t in ipairs({ "Angle", "Bool", "Entity", "Float", "Int", "String", "Vector" }) do

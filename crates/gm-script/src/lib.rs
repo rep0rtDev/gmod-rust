@@ -2146,6 +2146,9 @@ impl gm_server::ServerHooks for Runtime {
     fn player_disconnected(&mut self, server: &mut Server<'_>, player: u32) {
         Runtime::player_disconnected(self, server, player);
     }
+    fn shutdown(&mut self, server: &mut Server<'_>) {
+        self.run_event(server, "server.shutdown", api::Payload::default());
+    }
     fn game_events(&mut self, server: &mut Server<'_>, events: Vec<gm_server::GameEvent>) {
         Runtime::game_events(self, server, events);
     }
@@ -2382,6 +2385,9 @@ impl gm_server::ServerHooks for SharedRuntime {
     }
     fn player_disconnected(&mut self, server: &mut Server<'_>, player: u32) {
         self.0.lock().unwrap().player_disconnected(server, player);
+    }
+    fn shutdown(&mut self, server: &mut Server<'_>) {
+        gm_server::ServerHooks::shutdown(&mut *self.0.lock().unwrap(), server);
     }
     fn game_events(&mut self, server: &mut Server<'_>, events: Vec<gm_server::GameEvent>) {
         self.0.lock().unwrap().game_events(server, events);

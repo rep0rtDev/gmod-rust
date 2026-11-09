@@ -1078,6 +1078,8 @@ local prev_move = {}
     end, -1e9 + 1)
     events.on("addon.reloaded", function() hook.Run("OnReloaded") end)
     events.on("addon.reloaded", function() hook.Run("ShutDown") end, 1e9)
+    -- the level shutdown's first action (luabind.md F18, gap-report #210)
+    events.on("server.shutdown", function() hook.Run("ShutDown") end, 1e9)
     events.on("entity.created", function(p) hook.Run("OnEntityCreated", Entity(p.entity)) end)
     events.on("entity.spawned", function(p) if not p.tag then local e = Entity(p.entity); if e:GetClass() == "prop_ragdoll" then hook.Run("PlayerSpawnedRagdoll", Player(p.player), e:GetModel(), e) else hook.Run("PlayerSpawnedProp", Player(p.player), e:GetModel(), e) end end end)
     events.on("entity.removed", function(p) hook.Run("EntityRemoved", Entity(p.entity), false) end)
