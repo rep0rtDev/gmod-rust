@@ -1039,6 +1039,9 @@ impl ServerNet {
                 }
                 gm_server::WorldEffect::Explosion { pos } => EffectEvent::Explosion { pos },
                 gm_server::WorldEffect::Splash { pos } => EffectEvent::Splash { pos },
+                gm_server::WorldEffect::PhyscannonImpact { player, pos } => {
+                    EffectEvent::PhyscannonImpact { player, pos }
+                }
                 gm_server::WorldEffect::PropImpact {
                     ent,
                     lpos,
@@ -1700,6 +1703,7 @@ impl ServerNet {
                     .unwrap_or_default(),
                 held: p.held.map(|h| h.0),
                 held_pos: server.held_point(*id).unwrap_or(Vec3::ZERO),
+                claws: p.claws_open,
                 driving: p.driving.as_ref().map(|d| d.prop),
                 alive: p.alive,
                 frags: p.frags.min(u16::MAX as u32) as u16,

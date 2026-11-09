@@ -649,6 +649,8 @@ pub enum WorldEffect {
     Tracer { player: u32, end: Vec3 },
     /// The `Explosion` effect at `pos`.
     Explosion { pos: Vec3 },
+    /// `PhyscannonImpact`: `player`'s gravity gun punted at `pos`.
+    PhyscannonImpact { player: u32, pos: Vec3 },
     /// `WaterSplash` at `pos`: a player entering or leaving the water.
     Splash { pos: Vec3 },
     /// A bullet hit on a prop: a decal in the entity's frame (`lpos` / `lnormal`), `surface`
@@ -5719,6 +5721,12 @@ pub struct Player {
     pub reload_down: bool,
     /// Tick of the last physgun unfreeze: a second press within 0.25 s unfreezes everything.
     pub last_unfreeze: Option<u64>,
+    /// Gravity gun claws open (`m_bOpen`), the tick its close debounce / target check suppression
+    /// end, and the entity it last punted with the tick the re-punt guard ends (gravgun.md 3.2).
+    pub claws_open: bool,
+    pub claw_debounce: u64,
+    pub claw_suppress: u64,
+    pub punt_guard: Option<(u32, u64)>,
     pub alive: bool,
     pub health: i32,
     pub armor: i32,
@@ -7462,6 +7470,10 @@ impl Player {
             use_target: None,
             reload_down: false,
             last_unfreeze: None,
+            claws_open: false,
+            claw_debounce: 0,
+            claw_suppress: 0,
+            punt_guard: None,
             alive: true,
             health: PLAYER_HEALTH,
             armor: 0,
@@ -11205,6 +11217,11 @@ impl<'w> Server<'w> {
     /// Let the carried prop go where it is, at rest (the game drops it with no velocity).
     /// The physcannon's target: the prop the aim hits within `reach` u of the eye.
     fn cannon_target(&self, eye: Vec3, forward: Vec3, reach: f32) -> Option<u32> {
+        self.cannon_trace(eye, forward, reach).map(|(e, _)| e)
+    }
+
+    /// The prop the gravity gun's trace hits within `reach` and the hit point.
+    fn cannon_trace(&self, eye: Vec3, forward: Vec3, reach: f32) -> Option<(u32, Vec3)> {
         let bodies = self.trace_bodies();
         let h = gm_sandbox::tool_trace(self.collision, &bodies, eye, forward)?;
         let ent = h.ent?;
@@ -11215,7 +11232,52 @@ impl<'w> Server<'w> {
             .props()
             .iter()
             .any(|p| p.id == ent)
-            .then_some(ent)
+            .then_some((ent, h.pos))
+    }
+
+    /// Open or close the gravity gun's claws, playing `OpenClaws` / `CloseClaws` on a change.
+    fn set_claws(&mut self, player: u32, open: bool) {
+        let Some(p) = self.players.get_mut(&player) else {
+            return;
+        };
+        if p.claws_open == open {
+            return;
+        }
+        p.claws_open = open;
+        let name = if open { "OpenClaws" } else { "CloseClaws" };
+        self.emit_sound(player, format!("Weapon_PhysCannon.{name}"), 1.0);
+    }
+
+    /// `CheckForTarget` (gravgun.md 3.3): every tick with the gravity gun out and nothing held,
+    /// the claws open when a liftable prop is within `physcannon_tracelength` and close (0.5 s
+    /// debounce) when there is none; suppressed for 0.25 s after a punt.
+    fn cannon_feeler(&mut self, player: u32, eye: Vec3, ang: Vec3) {
+        let tick = self.tick_count;
+        let Some(p) = self.players.get(&player) else {
+            return;
+        };
+        if p.carry.is_some() {
+            self.set_claws(player, true);
+            return;
+        }
+        if tick < p.claw_suppress {
+            return;
+        }
+        let (open, debounce) = (p.claws_open, p.claw_debounce);
+        let forward = gm_sandbox::forward(ang.x, ang.y);
+        let found = self
+            .cannon_trace(eye, forward, weapons::PHYSCANNON_TRACELENGTH)
+            .filter(|(e, _)| !self.sandbox.props().iter().any(|p| p.id == *e && p.frozen))
+            .and_then(|(e, _)| self.bodies.get(&e).copied())
+            .is_some_and(|b| self.physics.mass(b) <= weapons::PHYSCANNON_MAXMASS);
+        if found {
+            self.set_claws(player, true);
+        } else if open && tick > debounce {
+            self.set_claws(player, false);
+            if let Some(p) = self.players.get_mut(&player) {
+                p.claw_debounce = tick + 34;
+            }
+        }
     }
     /// weapon_physcannon.cpp. Primary: the carried prop, else an unfrozen prop within 250 u, is
     /// launched along the aim at `physcannon_maxforce` 1500 u/s (`minforce` 700 above `maxmass`
@@ -11237,38 +11299,103 @@ impl<'w> Server<'w> {
         let frozen = |s: &Self, ent: u32| s.sandbox.props().iter().any(|p| p.id == ent && p.frozen);
         match intent {
             weapons::CannonIntent::Punt => {
-                let target = match carried {
+                let tick = self.tick_count;
+                // a held object is launched; otherwise the aimed prop is punted at the hit point
+                let (target, hit) = match carried {
                     Some(e) => {
                         self.drop_carry(player);
-                        Some(e)
+                        (Some(e), None)
                     }
-                    None => self
-                        .cannon_target(eye, forward, weapons::PHYSCANNON_TRACELENGTH)
-                        .filter(|e| !frozen(self, *e)),
+                    None => {
+                        let h = self.cannon_trace(eye, forward, weapons::PHYSCANNON_TRACELENGTH);
+                        (h.map(|(e, _)| e), h.map(|(_, p)| p))
+                    }
                 };
-                let Some(b) = target.and_then(|e| self.bodies.get(&e).copied()) else {
+                let Some((ent, b)) = target.and_then(|e| self.bodies.get(&e).map(|b| (e, *b)))
+                else {
                     snd(self, "DryFire");
                     return;
                 };
-                let speed = if self.physics.mass(b) > weapons::PHYSCANNON_MAXMASS {
-                    weapons::PHYSCANNON_MINFORCE
-                } else {
-                    weapons::PHYSCANNON_MAXFORCE
-                };
-                let st = self.physics.state(b);
-                self.physics
-                    .set_velocity(b, forward * speed, st.angular_velocity);
-                if let Some(e) = target {
-                    self.game_events
-                        .push(GameEvent::GravGunPunt { player, ent: e });
+                // re-punt guard: the same entity cannot be punted again for 0.5 s
+                let guarded = self
+                    .players
+                    .get(&player)
+                    .and_then(|p| p.punt_guard)
+                    .is_some_and(|(e, until)| e == ent && tick < until);
+                if guarded {
+                    return;
                 }
+                if let Some(p) = self.players.get_mut(&player) {
+                    p.punt_guard = Some((ent, tick + 34));
+                }
+                // `Physgun_OnPhysGunPickup(PUNTED_BY_CANNON)` unfreezes a frozen prop
+                if frozen(self, ent) {
+                    self.set_prop_frozen(ent, false);
+                }
+                let mass = self.physics.mass(b).max(1.0);
+                let st = self.physics.state(b);
+                // tick-seeded pseudo-random in -1..1 (`RandomAngularImpulse` / view punch)
+                let rnd = |k: u64| -> f32 {
+                    let h = (tick ^ (u64::from(player) << 20))
+                        .wrapping_add(k.wrapping_mul(0x9E37_79B9_7F4A_7C15))
+                        .wrapping_mul(0xD6E8_FEB8_6659_FD93);
+                    ((h >> 40) as f32 / 16_777_216.0) * 2.0 - 1.0
+                };
+                let impact = match hit {
+                    // `LaunchObject` -> `ApplyVelocityBasedForce` (gravgun.md 6.4): 1500 u/s up to
+                    // 100 kg, a smoothstep down to 700 u/s by 600 kg, random spin +-600 deg/s
+                    None => {
+                        let speed = if mass > 100.0 {
+                            let t = ((mass.min(1000.0) - 100.0) / 500.0).clamp(0.0, 1.0);
+                            let t = t * t * (3.0 - 2.0 * t);
+                            weapons::PHYSCANNON_MAXFORCE
+                                + (weapons::PHYSCANNON_MINFORCE - weapons::PHYSCANNON_MAXFORCE) * t
+                        } else {
+                            weapons::PHYSCANNON_MAXFORCE
+                        };
+                        let spin = Vec3::new(rnd(1), rnd(2), rnd(3)) * 600.0;
+                        self.physics.set_velocity(b, forward * speed, spin);
+                        st.position
+                    }
+                    // `PuntVPhysics` (gravgun.md 6.2): impulse 15000 at the centre plus
+                    // min(mass, 250) * 600 at the hit point; aiming down flips the vertical
+                    // component up at 0.65
+                    Some(hp) => {
+                        let mut f = forward;
+                        if f.z < 0.0 {
+                            f.z *= -0.65;
+                        }
+                        let m = mass.min(weapons::PHYSCANNON_MAXMASS);
+                        self.physics.add_impulse(b, f * 15000.0);
+                        self.physics.add_impulse_at(b, hp, f * m * 600.0);
+                        hp
+                    }
+                };
+                // `PrimaryFireEffect` + punt recoil (gravgun.md 6.6 / 6.2 step 4): view punch
+                // (-6, rand -2..2, 0) + (rand 1..2, rand -1..1, 0), a 0.1 s white-blue fade,
+                // the `PhyscannonImpact` effect, claws closed (debounce 0.5 s, feeler off 0.25 s)
+                let punch = Vec3::new(-6.0 + 1.5 + 0.5 * rnd(4), 2.0 * rnd(5) + rnd(6), 0.0);
+                self.view_punch(player, Some(punch), None, true);
+                self.notices
+                    .push((player, "ScreenFade 245 245 255 32 0.1 0 1".to_string()));
+                self.effects.push(WorldEffect::PhyscannonImpact {
+                    player,
+                    pos: impact,
+                });
+                self.set_claws(player, false);
+                if let Some(p) = self.players.get_mut(&player) {
+                    p.claw_debounce = tick + 34;
+                    p.claw_suppress = tick + 17;
+                }
+                self.game_events
+                    .push(GameEvent::GravGunPunt { player, ent });
                 snd(self, "Launch");
             }
             weapons::CannonIntent::Grab => {
                 if carried.is_some() {
                     self.drop_carry(player);
                     snd(self, "Drop");
-                    snd(self, "CloseClaws");
+                    self.set_claws(player, false);
                     return;
                 }
                 let Some(ent) = self.cannon_target(eye, forward, weapons::PHYSCANNON_TRACELENGTH)
@@ -11284,7 +11411,8 @@ impl<'w> Server<'w> {
                 }
                 if self.pickup_with(player, ent, ang.y, f32::MAX, f32::MAX) {
                     snd(self, "Pickup");
-                    snd(self, "OpenClaws");
+                    self.set_claws(player, true);
+                    self.cannon_hold_loop(player, true);
                 }
             }
             weapons::CannonIntent::Pull => {
@@ -11307,7 +11435,8 @@ impl<'w> Server<'w> {
                 if d.length() <= weapons::PHYSCANNON_TRACELENGTH {
                     if self.pickup_with(player, ent, ang.y, f32::MAX, f32::MAX) {
                         snd(self, "Pickup");
-                        snd(self, "OpenClaws");
+                        self.set_claws(player, true);
+                        self.cannon_hold_loop(player, true);
                     }
                     return;
                 }
@@ -11318,10 +11447,29 @@ impl<'w> Server<'w> {
             }
         }
     }
+    /// `Weapon_PhysCannon.HoldSound` (gravgun.md 7.5): a loop on the carrying player from pickup
+    /// (ramping in over 0.5 s) to drop / launch (fading out over 1 s).
+    fn cannon_hold_loop(&mut self, player: u32, on: bool) {
+        let Some(pos) = self.players.get(&player).map(|p| p.state.origin) else {
+            return;
+        };
+        self.sounds.push(WorldSound {
+            name: "Weapon_PhysCannon.HoldSound".to_string(),
+            pos,
+            volume: 0.8,
+            ent: player,
+            looping: on,
+            stop: !on,
+            fade: if on { 0.5 } else { 1.0 },
+            ..Default::default()
+        });
+    }
+
     fn drop_carry(&mut self, player: u32) {
         let Some((ent, _)) = self.players.get_mut(&player).and_then(|p| p.carry.take()) else {
             return;
         };
+        self.cannon_hold_loop(player, false);
         if let Some(b) = self.bodies.get(&ent).copied() {
             self.physics.release(b);
             self.physics.set_velocity(b, Vec3::ZERO, Vec3::ZERO);
@@ -22650,6 +22798,7 @@ impl<'w> Server<'w> {
         let mut launches = Vec::new();
         let mut sweps = Vec::new();
         let mut cannons = Vec::new();
+        let mut feelers = Vec::new();
         for (id, p) in self.players.iter_mut() {
             if !p.alive {
                 continue;
@@ -22678,6 +22827,11 @@ impl<'w> Server<'w> {
                     let forward = gm_sandbox::forward(pc.cmd.view_angles.x, pc.cmd.view_angles.y);
                     swings.push((*id, eye, forward));
                 }
+                if p.active_weapon == "weapon_physcannon" {
+                    feelers.push((*id, eye, pc.cmd.view_angles));
+                } else if p.claws_open {
+                    p.claws_open = false;
+                }
                 if let Some(kind) = p.inventory.launched.take() {
                     launches.push((*id, kind, eye, pc.cmd.view_angles, p.inventory.lob));
                 }
@@ -22695,6 +22849,9 @@ impl<'w> Server<'w> {
         }
         for (attacker, eye, forward) in swings {
             self.resolve_melee(attacker, eye, forward);
+        }
+        for (id, eye, ang) in feelers {
+            self.cannon_feeler(id, eye, ang);
         }
         for (id, intent, eye, ang) in cannons {
             self.physcannon(id, intent, eye, ang);

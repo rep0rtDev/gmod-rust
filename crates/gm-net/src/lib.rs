@@ -82,6 +82,7 @@ mod tests {
                 model: 0,
                 held: Some(2),
                 held_pos: glam::Vec3::ZERO,
+                claws: false,
                 driving: None,
                 alive: true,
                 frags: 0,

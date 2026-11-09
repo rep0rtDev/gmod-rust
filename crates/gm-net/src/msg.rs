@@ -298,6 +298,8 @@ pub struct PlayerSnap {
     pub held: Option<u32>,
     /// The physgun grab point on `held` in world space (the beam's end).
     pub held_pos: Vec3,
+    /// Gravity gun claws open (its `m_bOpen` element state).
+    pub claws: bool,
     /// The prop the player is driving (the `drive` property), if any.
     pub driving: Option<u32>,
     pub alive: bool,
@@ -553,6 +555,11 @@ pub enum EffectEvent {
         pos: Vec3,
     },
     Splash {
+        pos: Vec3,
+    },
+    /// `PhyscannonImpact`: `player`'s gravity gun punted at `pos` (blast at the gun, beam to it).
+    PhyscannonImpact {
+        player: u32,
         pos: Vec3,
     },
     /// Bullet hit on a prop: a decal in the entity's frame, `surface` its surface property.
@@ -1138,6 +1145,7 @@ impl ServerMsg {
                     w.str(&p.name);
                     w.u32(p.held.unwrap_or(0));
                     w.vec3(p.held_pos);
+                    w.bool(p.claws);
                     w.u32(p.driving.unwrap_or(0));
                     w.bool(p.alive);
                     w.u16(p.frags);
@@ -1513,6 +1521,11 @@ impl ServerMsg {
                             w.u8(3);
                             w.vec3(*pos);
                         }
+                        EffectEvent::PhyscannonImpact { player, pos } => {
+                            w.u8(7);
+                            w.varint(*player as u64);
+                            w.vec3(*pos);
+                        }
                         EffectEvent::PropImpact {
                             ent,
                             lpos,
@@ -1585,6 +1598,7 @@ impl ServerMsg {
                             h => Some(h),
                         },
                         held_pos: r.vec3()?,
+                        claws: r.bool()?,
                         driving: match r.u32()? {
                             0 => None,
                             h => Some(h),
@@ -1891,6 +1905,10 @@ impl ServerMsg {
                         },
                         2 => EffectEvent::Explosion { pos: r.vec3()? },
                         3 => EffectEvent::Splash { pos: r.vec3()? },
+                        7 => EffectEvent::PhyscannonImpact {
+                            player: r.varint()? as u32,
+                            pos: r.vec3()?,
+                        },
                         4 => EffectEvent::PropImpact {
                             ent: r.u32()?,
                             lpos: r.vec3()?,

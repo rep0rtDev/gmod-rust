@@ -239,6 +239,11 @@ struct Gfx {
     /// `orangelight1` beams from the tips to the held prop (the game's physcannon sprites).
     gg_core: Option<wgpu::BindGroup>,
     gg_glow: Option<wgpu::BindGroup>,
+    /// `orangecore2_gmod` (launch blast), `orangeflare1_gmod` (fork end caps while holding),
+    /// `orangelight1_noz` (first-person hold beams).
+    gg_core2: Option<wgpu::BindGroup>,
+    gg_endcap: Option<wgpu::BindGroup>,
+    gg_beam_noz: Option<wgpu::BindGroup>,
     gg_beam: Option<wgpu::BindGroup>,
     /// Shot effects: `effects/muzzleflash1` (muzzle flash, impact and explosion flashes),
     /// `effects/spark` (tracer streak), `decals/<group>/shot1..5` (bullet holes, by the
@@ -1163,6 +1168,13 @@ struct App {
     fx_prop_decals: std::collections::VecDeque<(u32, Vec3, Vec3, String, std::time::Instant)>,
     /// Flashes: position, size, birth (impact sparks, explosions).
     fx_bursts: Vec<(Vec3, f32, Instant, bool)>,
+    /// `PhyscannonImpact` effects: the punting player, the punt point and when.
+    fx_cannon: Vec<(u32, Vec3, Instant)>,
+    /// Gravity gun claw pose parameter (`active`: 0 closed .. 1 open), when it was last stepped,
+    /// and the core sprite's current opacity (gravgun.md 7.3 interpolations).
+    claw_pose: f32,
+    claw_at: Instant,
+    gg_core_alpha: f32,
     /// Explosion particles (`C_BaseExplosionEffect`), simulated with the shells.
     fx_sprites: Vec<FxSprite>,
     fx_seed: u32,
@@ -1447,9 +1459,12 @@ impl App {
             if glow1.is_some() { "ok" } else { "MISSING" }
         );
         let glow2 = world.sprite_material(&gpu, &self.mount, "sprites/physg_glow2");
-        let gg_core = world.sprite_material(&gpu, &self.mount, "sprites/orangecore1");
-        let gg_glow = world.sprite_material(&gpu, &self.mount, "sprites/glow04_noz");
-        let gg_beam = world.sprite_material(&gpu, &self.mount, "sprites/orangelight1");
+        let gg_core = world.sprite_material(&gpu, &self.mount, "sprites/orangecore1_gmod");
+        let gg_glow = world.sprite_material(&gpu, &self.mount, "sprites/glow04_noz_gmod");
+        let gg_beam = world.sprite_material(&gpu, &self.mount, "sprites/orangelight1_gmod");
+        let gg_core2 = world.sprite_material(&gpu, &self.mount, "sprites/orangecore2_gmod");
+        let gg_endcap = world.sprite_material(&gpu, &self.mount, "sprites/orangeflare1_gmod");
+        let gg_beam_noz = world.sprite_material(&gpu, &self.mount, "sprites/orangelight1_noz");
         let fx_muzzle = world.sprite_material(&gpu, &self.mount, "effects/muzzleflash1");
         let fx_explo_smoke =
             world.sprite_material(&gpu, &self.mount, "particle/particle_smokegrenade");
@@ -1513,6 +1528,9 @@ impl App {
             gg_core,
             gg_glow,
             gg_beam,
+            gg_core2,
+            gg_endcap,
+            gg_beam_noz,
             fx_muzzle,
             fx_explo_smoke,
             fx_explo_embers,
@@ -4157,6 +4175,12 @@ impl App {
                     gm_net::msg::EffectEvent::Tracer { player, end } => {
                         self.fx_tracers.push((player, end, now));
                     }
+                    // the blast / beam at the gun are drawn from `fx_cannon`; `FX_GaussExplosion`
+                    // at the punt point stands in as a spark burst
+                    gm_net::msg::EffectEvent::PhyscannonImpact { player, pos } => {
+                        self.fx_cannon.push((player, pos, now));
+                        self.fx_bursts.push((pos, 5.0, now, false));
+                    }
                     gm_net::msg::EffectEvent::Explosion { pos } => {
                         self.spawn_explosion(pos, now);
                         // `CBaseGrenade::Explode`: a `Scorch` decal where the line from 8 u
@@ -4407,6 +4431,36 @@ impl App {
         let dead = self.local_snap().is_some_and(|s| !s.alive);
         let vm = if dead { None } else { self.vm_of(self.weapon) };
         let vm_seq = vm.as_ref().map(|vm| self.vm_sequence(vm));
+        // gravity gun claws (gravgun.md 3.2 / #18): the `active` pose parameter runs 0 -> 1 over
+        // 0.2 s when the server opens them, 1 -> 0 over 0.5 s on close; the core sprite's opacity
+        // follows the effect state (255 holding over 0.1 s, 128 ready over 0.2 s)
+        {
+            let now = Instant::now();
+            let dt = now.duration_since(self.claw_at).as_secs_f32().min(0.1);
+            self.claw_at = now;
+            let me = self.sim.client.player_id;
+            let mine = self
+                .sim
+                .client
+                .world
+                .players
+                .iter()
+                .find(|p| Some(p.id) == me);
+            let open = mine.is_some_and(|p| p.claws);
+            let holding = mine.is_some_and(|p| p.held_pos != Vec3::ZERO);
+            self.claw_pose = if open {
+                (self.claw_pose + dt / 0.2).min(1.0)
+            } else {
+                (self.claw_pose - dt / 0.5).max(0.0)
+            };
+            let (target, time) = if holding {
+                (1.0, 0.1)
+            } else {
+                (128.0 / 255.0, 0.2)
+            };
+            let step = dt / time;
+            self.gg_core_alpha += (target - self.gg_core_alpha).clamp(-step, step);
+        }
         let vm_prev = self.vm_prev;
         // the viewmodel sequence's animation events as `C_BaseViewModel::FireEvent`: the
         // muzzle flash (AE_MUZZLEFLASH / 5001), brass out of attachment 2 (6001, the shell by
@@ -5088,7 +5142,7 @@ impl App {
             let w = m.bone_world_transition(
                 seq,
                 t,
-                &[],
+                &[("active", self.claw_pose)],
                 Self::vm_transition(vm_prev, |s| m.sequence_fade_out(s)),
             )?;
             let a = m.attachment(name, &w)?;
@@ -5515,36 +5569,84 @@ impl App {
             );
             alpha.push((bm, v, i));
         }
-        // gravity gun: the core glows at the muzzle, the fork tips glow, and while a prop is
-        // held the tips beam to it and the gun lights its surroundings orange
+        // gravity gun (gravgun.md 7.2-7.4, the `_gmod` sprite set): the core at the muzzle
+        // (14 u, alpha 128 ready / 255 holding), six flickering fork glows (6.4..9.6 u, alpha
+        // 16..24, orange), three end caps and three noisy beams to the held prop while holding,
+        // the launch blast (8 -> 64 u over 0.1 s, fading over 0.2 s) and a 0.1 s beam
+        // (12 -> 4 u) to the punt point
         if self.weapon == GRAVGUN_SLOT {
             let fwd = camera.forward();
             let right = fwd.cross(Vec3::Z).normalize_or_zero();
             let core = vm_attach("muzzle")
                 .unwrap_or(camera.position + right * 6.0 - Vec3::Z * 5.0 + fwd * 14.0);
             let holding = held_pos.is_some();
-            let orange = [1.0f32, 0.45, 0.1];
+            let t = self.fps_at.elapsed().as_secs_f32();
+            let seed = &mut self.fx_seed;
+            let noise = |k: u32, frame: u32| -> f32 {
+                let h = (k.wrapping_mul(0x9E37_79B9) ^ frame.wrapping_mul(0x85EB_CA6B))
+                    .wrapping_mul(0xC2B2_AE35);
+                (h >> 8) as f32 / 16_777_216.0 * 2.0 - 1.0
+            };
             if let Some(m) = &g.gg_core {
-                let size = if holding { 10.0 } else { 6.0 };
-                let (v, i) = g.world.sprite_quad(core, size, orange, &camera);
+                let a = self.gg_core_alpha;
+                let (v, i) =
+                    g.world
+                        .sprite_quad_var(core, 14.0, [a, a, a, 0.0], 0.0, None, &camera);
                 additive.push((m, v, i));
             }
-            for tip in ["fork1t", "fork2t"] {
-                let Some(p) = vm_attach(tip) else {
+            for (k, name) in ["fork1m", "fork1t", "fork2m", "fork2t", "fork3m", "fork3t"]
+                .iter()
+                .enumerate()
+            {
+                let Some(p) = vm_attach(name) else {
                     continue;
                 };
                 if let Some(m) = &g.gg_glow {
-                    let (v, i) = g.world.sprite_quad(p, 4.0, orange, &camera);
+                    let size = particles::range(seed, 6.4, 9.6);
+                    let a = particles::range(seed, 16.0, 24.0) / 255.0;
+                    let (v, i) = g.world.sprite_quad_var(
+                        p,
+                        size,
+                        [a, 0.5 * a, 0.0, 0.0],
+                        0.0,
+                        None,
+                        &camera,
+                    );
                     additive.push((m, v, i));
                 }
-                if let (Some(m), Some(end)) = (&g.gg_beam, held_pos) {
-                    let scroll = -self.fps_at.elapsed().as_secs_f32() * 4.0;
+                let (Some(end), true) = (held_pos, name.ends_with('t')) else {
+                    continue;
+                };
+                if let Some(m) = &g.gg_endcap {
+                    let size = particles::range(seed, 3.0, 5.0);
+                    let a = particles::range(seed, 200.0, 255.0) / 255.0;
+                    let (v, i) =
+                        g.world
+                            .sprite_quad_var(p, size, [a, a, a, 0.0], 0.0, None, &camera);
+                    additive.push((m, v, i));
+                }
+                if let Some(m) = &g.gg_beam_noz {
+                    // `TE_BEAMPOINTS` width 4, amplitude 16, 8 segments, noise at 30 fps
+                    let frame = (t * 30.0) as u32;
+                    let axis = (end - p).normalize_or_zero();
+                    let side = axis.cross(Vec3::Z).normalize_or_zero();
+                    let up = side.cross(axis);
+                    let points: Vec<Vec3> = (0..=8u32)
+                        .map(|sg| {
+                            let f = sg as f32 / 8.0;
+                            let env = (f * std::f32::consts::PI).sin() * 16.0;
+                            let kk = ((k as u32) << 8) | sg;
+                            p.lerp(end, f)
+                                + side * (noise(kk, frame) * env)
+                                + up * (noise(kk ^ 0x55, frame) * env)
+                        })
+                        .collect();
                     let (v, i) = g.world.beam_strip(
-                        &[p, end],
-                        2.5,
-                        orange,
+                        &points,
+                        4.0,
+                        [1.0, 1.0, 1.0],
                         camera.position,
-                        scroll,
+                        -t * 150.0 / 32.0,
                         1.0 / 32.0,
                     );
                     additive.push((m, v, i));
@@ -5554,9 +5656,37 @@ impl App {
                 dlights.push(gm_render::world::DLight {
                     pos: core,
                     radius: 128.0,
-                    color: Vec3::from(orange),
+                    color: Vec3::new(1.0, 0.5, 0.1),
                     ..Default::default()
                 });
+            }
+            self.fx_cannon
+                .retain(|(_, _, at)| at.elapsed().as_secs_f32() < 0.2);
+            for (player, pos, at) in &self.fx_cannon {
+                if Some(*player) != me {
+                    continue;
+                }
+                let age = at.elapsed().as_secs_f32();
+                if let Some(m) = &g.gg_core2 {
+                    let size = 8.0 + 56.0 * (age / 0.1).min(1.0);
+                    let a = 1.0 - (age / 0.2).min(1.0);
+                    let (v, i) =
+                        g.world
+                            .sprite_quad_var(core, size, [a, a, a, 0.0], 0.0, None, &camera);
+                    additive.push((m, v, i));
+                }
+                if let (Some(m), true) = (&g.gg_beam, age < 0.1) {
+                    let width = 12.0 - 8.0 * (age / 0.1);
+                    let (v, i) = g.world.beam_strip(
+                        &[core, *pos],
+                        width,
+                        [1.0, 1.0, 1.0],
+                        camera.position,
+                        0.0,
+                        1.0 / 32.0,
+                    );
+                    additive.push((m, v, i));
+                }
             }
         }
         let mut vm_flash: Option<Vec3> = None;
@@ -5577,7 +5707,7 @@ impl App {
                     let w = m.bone_world_transition(
                         seq,
                         t,
-                        &[],
+                        &[("active", self.claw_pose)],
                         Self::vm_transition(vm_prev, |s| m.sequence_fade_out(s)),
                     )?;
                     let a = m.attachment_at(1, &w)?;
@@ -5976,7 +6106,7 @@ impl App {
                 let world = m.bone_world_transition(
                     seq,
                     t,
-                    &[],
+                    &[("active", self.claw_pose)],
                     Self::vm_transition(vm_prev, |s| m.sequence_fade_out(s)),
                 );
                 let pose = world.as_ref().map(|w| m.skin_matrices(w));
@@ -8144,6 +8274,10 @@ fn main() -> Result<()> {
         fx_decals: Default::default(),
         fx_prop_decals: Default::default(),
         fx_bursts: Vec::new(),
+        fx_cannon: Vec::new(),
+        claw_pose: 0.0,
+        claw_at: Instant::now(),
+        gg_core_alpha: 0.0,
         fx_sprites: Vec::new(),
         fx_seed: 0x9e37_79b9,
         fx_sound_queue: Vec::new(),
