@@ -10446,21 +10446,40 @@ impl<'w> Server<'w> {
     /// before the world.
     fn resolve_melee(&mut self, attacker: u32, eye: Vec3, forward: Vec3) {
         let end = eye + forward * weapons::MELEE_RANGE;
-        let world = self
+        let mut world = self
             .collision
             .trace_ray(eye, end, gm_collision::MASK_PLAYERSOLID);
         let mut best: Option<(u32, f32)> = None;
-        for (id, p) in &self.players {
-            if *id == attacker || !p.alive {
-                continue;
+        // the bludgeon `Swing`: a line first, then a +-16 u hull where the line found
+        // nothing (hl2weapons.md, gap-report #112)
+        for grow in [0.0, 16.0] {
+            if grow > 0.0 && (best.is_some() || world.fraction < 1.0) {
+                break;
             }
-            let (mins, maxs) = p.move_override.hull(&self.mover.cfg, p.state.ducked);
-            if let Some(t) =
-                ray_box_entry(eye, forward, p.state.origin + mins, p.state.origin + maxs)
-            {
-                if t <= weapons::MELEE_RANGE && best.is_none_or(|b| t < b.1) {
-                    best = Some((*id, t));
+            for (id, p) in &self.players {
+                if *id == attacker || !p.alive {
+                    continue;
                 }
+                let (mins, maxs) = p.move_override.hull(&self.mover.cfg, p.state.ducked);
+                if let Some(t) = ray_box_entry(
+                    eye,
+                    forward,
+                    p.state.origin + mins - Vec3::splat(grow),
+                    p.state.origin + maxs + Vec3::splat(grow),
+                ) {
+                    if t <= weapons::MELEE_RANGE && best.is_none_or(|b| t < b.1) {
+                        best = Some((*id, t));
+                    }
+                }
+            }
+            if grow > 0.0 && best.is_none() {
+                world = self.collision.trace_box(
+                    eye,
+                    end,
+                    Vec3::splat(-16.0),
+                    Vec3::splat(16.0),
+                    gm_collision::MASK_PLAYERSOLID,
+                );
             }
         }
         let prop = gm_sandbox::trace_line(self.collision, &self.prop_bodies(), eye, end)
