@@ -21781,7 +21781,31 @@ impl<'w> Server<'w> {
     /// The tool gun's trace from the player's eye: what a click would hit.
     pub fn tool_hit(&self, player: u32) -> Option<ToolHit> {
         let (eye, eye_angles) = self.eye(player)?;
-        let bodies = self.trace_bodies();
+        let mut bodies = self.trace_bodies();
+        // the tool trace's mask takes players too (MASK_SOLID | MONSTER, filter: the owner and
+        // the vehicle he sits in; toolgun.md F20, gap-report #93): the other players' hulls
+        for (&id, p) in &self.players {
+            if id == player || !p.alive {
+                continue;
+            }
+            let (mins, maxs) = p.move_override.hull(&self.mover.cfg, p.state.ducked);
+            let c = (mins + maxs) * 0.5;
+            let half = (maxs - mins) * 0.5;
+            bodies.push(PropBody {
+                id,
+                bone: 0,
+                pos: p.state.origin + c,
+                angles: Vec3::ZERO,
+                hulls: vec![vec![
+                    (Vec3::X, half.x),
+                    (-Vec3::X, half.x),
+                    (Vec3::Y, half.y),
+                    (-Vec3::Y, half.y),
+                    (Vec3::Z, half.z),
+                    (-Vec3::Z, half.z),
+                ]],
+            });
+        }
         let dir = gm_sandbox::forward(eye_angles.x, eye_angles.y);
         gm_sandbox::tool_trace(self.collision, &bodies, eye, dir)
     }

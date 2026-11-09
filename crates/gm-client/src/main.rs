@@ -1218,6 +1218,12 @@ struct App {
     claw_pose: f32,
     claw_at: Instant,
     gg_core_alpha: f32,
+    /// The toolgun's predicted click (sound + fire animation played locally; the server's
+    /// matching fire event within the window is skipped).
+    tool_predicted: Option<Instant>,
+    /// `gmod_camera`: last photo time (0.4 s rate limit) and a pending frame capture.
+    cam_photo_at: Option<Instant>,
+    cam_photo_pending: bool,
     /// When the room around the listener was last measured for `dsp_room`.
     room_at: Instant,
     /// Explosion particles (`C_BaseExplosionEffect`), simulated with the shells.
@@ -3878,6 +3884,26 @@ impl App {
         Some((seq, t, 1.0 - (3.0 * x * x - 2.0 * x * x * x)))
     }
 
+    /// The toolgun's predicted trace: the game's tool trace from the eye along the view
+    /// (56756 u); the world and the entities we see are enough to know the click lands.
+    fn predict_tool_hit(&self) -> bool {
+        let Some(p) = self.local_snap() else {
+            return false;
+        };
+        let eye = p.origin + Vec3::Z * if p.ducked { 28.0 } else { 64.0 };
+        let (pitch, yaw) = (p.view_angles.x.to_radians(), p.view_angles.y.to_radians());
+        let fwd = Vec3::new(
+            pitch.cos() * yaw.cos(),
+            pitch.cos() * yaw.sin(),
+            -pitch.sin(),
+        );
+        let tr = self
+            .sim
+            .collision
+            .trace_ray(eye, eye + fwd * 56756.0, gm_collision::MASK_SOLID);
+        tr.fraction < 1.0
+    }
+
     fn vm_sequence_raw(&mut self, vm: &Viewmodel) -> (&'static str, f32) {
         // server-decided events: reload (manual, empty clip, automatic), pump, dry fire
         if let Some((act, serial, active)) =
@@ -3906,14 +3932,20 @@ impl App {
                     }),
                     _ => None,
                 };
-                if let Some(seq) = seq {
+                let predicted = act == 6
+                    && gm_server::LOADOUT.get(active as usize) == Some(&"gmod_tool")
+                    && self
+                        .tool_predicted
+                        .take()
+                        .is_some_and(|t| t.elapsed().as_secs_f32() < 0.3);
+                if let (Some(seq), false) = (seq, predicted) {
                     self.vm_anim = Some((seq, Instant::now()));
                 }
                 if act == 6 && fires_bullets(active) {
                     self.fx_muzzle_until =
                         Some(Instant::now() + std::time::Duration::from_millis(60));
                 }
-                if let Some(name) = weapon_sound(act, active) {
+                if let (Some(name), false) = (weapon_sound(act, active), predicted) {
                     self.sounds.emit(&self.mount, &name, None);
                 }
                 // the crossbow's load effect (`SPECIAL1`, Weapon_Crossbow.BoltElectrify) comes
@@ -6704,6 +6736,36 @@ impl App {
         let g = self.gfx.as_ref().unwrap();
         g.ui.draw(&g.gpu, &view, g.config.width, g.config.height, &ui_items);
         let g = self.gfx.as_ref().unwrap();
+        if std::mem::take(&mut self.cam_photo_pending) {
+            // the game's `jpeg` console command writes screenshots/<map>NNNN.jpg; we have a PNG
+            // encoder, so the photo is a .png next to it
+            let (w, h) = (g.config.width, g.config.height);
+            if let Ok(mut rgba) = g.gpu.read_texture(&frame.texture, w, h) {
+                if matches!(
+                    g.config.format,
+                    wgpu::TextureFormat::Bgra8Unorm | wgpu::TextureFormat::Bgra8UnormSrgb
+                ) {
+                    for px in rgba.as_chunks_mut::<4>().0 {
+                        px.swap(0, 2);
+                    }
+                }
+                let dir = settings::home_dir().join("screenshots");
+                let _ = std::fs::create_dir_all(&dir);
+                let map = self
+                    .map_name
+                    .rsplit('/')
+                    .next()
+                    .unwrap_or("photo")
+                    .to_owned();
+                let n = (0..10_000)
+                    .find(|n| !dir.join(format!("{map}{n:04}.png")).exists())
+                    .unwrap_or(0);
+                let path = dir.join(format!("{map}{n:04}.png"));
+                if let Err(e) = gm_render::gpu::write_png(&path, w, h, &rgba) {
+                    eprintln!("photo: {e}");
+                }
+            }
+        }
         g.gpu.queue.present(frame);
         self.frames += 1;
         let el = self.fps_at.elapsed().as_secs_f32();
@@ -8419,6 +8481,33 @@ impl ApplicationHandler for App {
                                 reload: false,
                                 settings: self.tool_settings_list(),
                             });
+                            // the shared PrimaryAttack is predicted (toolgun.md F13/F15,
+                            // gap-report #91): the first prediction plays Toolgun.Single and
+                            // ACT_VM_PRIMARYATTACK at once when the trace lands; a stool
+                            // refusing the hit is not predicted (the game runs the stool's
+                            // LeftClick on the client, our stools are server-side)
+                            if b < 2 && self.predict_tool_hit() {
+                                if let Some(vm) = self.vm_of(1) {
+                                    self.vm_anim = Some((vm.fire, Instant::now()));
+                                }
+                                self.sounds.emit(&self.mount, "Toolgun.Single", None);
+                                self.tool_predicted = Some(Instant::now());
+                            }
+                        }
+                        // gmod_camera `PrimaryAttack` (toolgun.md F35/F39, gap-report #95):
+                        // 0.4 s between photos, the attack animation, then the screenshot
+                        if self.weapon == CAMERA_SLOT && b == 0 {
+                            let now = Instant::now();
+                            if self
+                                .cam_photo_at
+                                .is_none_or(|t| now.duration_since(t).as_secs_f32() >= 0.4)
+                            {
+                                self.cam_photo_at = Some(now);
+                                self.cam_photo_pending = true;
+                                if let Some(vm) = self.vm_of(CAMERA_SLOT) {
+                                    self.vm_anim = Some((vm.fire, now));
+                                }
+                            }
                         }
                         if let Some(vm) = self.vm_of(self.weapon) {
                             // left: the shot comes back as the server's fire event (so held
@@ -8775,6 +8864,9 @@ fn main() -> Result<()> {
         claw_pose: 0.0,
         claw_at: Instant::now(),
         gg_core_alpha: 0.0,
+        tool_predicted: None,
+        cam_photo_at: None,
+        cam_photo_pending: false,
         room_at: Instant::now() - std::time::Duration::from_secs(1),
         fx_sprites: Vec::new(),
         fx_seed: 0x9e37_79b9,
