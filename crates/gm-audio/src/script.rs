@@ -102,6 +102,22 @@ pub fn wave_path(w: &str) -> &str {
     })
 }
 
+/// The legacy `attenuation` key (`ATTN_*` names or a number): the engine turns it into a
+/// sound level with `50 + 20 / attn` (`ATTN_TO_SNDLVL`), `ATTN_NONE` meaning no falloff.
+pub fn parse_attenuation(s: &str) -> Option<f32> {
+    let s = s.trim();
+    let attn = match s.to_ascii_uppercase().as_str() {
+        "ATTN_NONE" => 0.0,
+        "ATTN_NORM" => 0.8,
+        "ATTN_IDLE" => 2.0,
+        "ATTN_STATIC" => 1.25,
+        "ATTN_RICOCHET" => 1.5,
+        "ATTN_GUNFIRE" => 0.27,
+        _ => s.parse::<f32>().ok()?,
+    };
+    Some(if attn <= 0.0 { 0.0 } else { 50.0 + 20.0 / attn })
+}
+
 fn entry(node: &Node) -> Option<Entry> {
     let Value::Block(kids) = &node.value else {
         return None;
@@ -122,6 +138,11 @@ fn entry(node: &Node) -> Option<Entry> {
             ("volume", Value::Str(v)) => e.volume = parse_range(v, 1.0),
             ("pitch", Value::Str(v)) => e.pitch = parse_range(v, 100.0),
             ("soundlevel", Value::Str(v)) => e.level = parse_level(v).unwrap_or(SNDLVL_NORM),
+            ("attenuation", Value::Str(v)) => {
+                if let Some(l) = parse_attenuation(v) {
+                    e.level = l;
+                }
+            }
             ("channel", Value::Str(v)) => e.channel = parse_channel(v),
             _ => {}
         }
@@ -167,6 +188,14 @@ impl Scripts {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn attenuation_key_maps_to_sound_level() {
+        assert_eq!(super::parse_attenuation("ATTN_NORM"), Some(75.0));
+        assert_eq!(super::parse_attenuation("ATTN_NONE"), Some(0.0));
+        assert_eq!(super::parse_attenuation("0.5"), Some(90.0));
+        assert_eq!(super::parse_attenuation("junk"), None);
+    }
+
     use super::*;
 
     #[test]
