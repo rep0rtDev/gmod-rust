@@ -6267,6 +6267,10 @@ impl App {
                     g.fx_decal_mats.insert(name.clone(), m);
                 }
             }
+            if !g.fx_decal_mats.contains_key("decals/simpleshadow") {
+                let m = g.world.decal(&g.gpu, &self.mount, "decals/simpleshadow");
+                g.fx_decal_mats.insert("decals/simpleshadow".to_owned(), m);
+            }
             for (pos, normal, name, _) in &self.fx_decals {
                 if let Some(Some(d)) = g.fx_decal_mats.get(name) {
                     let (v, i) = g.world.decal_quad_uv(*pos, *normal, d.size, [1.0; 3], d.uv);
@@ -6293,6 +6297,47 @@ impl App {
                 if d.modulate {
                     modulate.push((&d.bind, v, i));
                 } else {
+                    alpha.push((&d.bind, v, i));
+                }
+            }
+        }
+        // entity shadows (gap-report #32, render.md 11): the game's blob shadow is the
+        // `decals/simpleshadow` texture projected under every prop and player onto the world
+        // within `r_shadowdist` (50 u), tinted `r_shadowcolor` (black); the shadow footprint
+        // is the model's horizontal extent
+        {
+            if let Some(Some(d)) = g.fx_decal_mats.get("decals/simpleshadow") {
+                let mut casters: Vec<(Vec3, f32, f32)> = Vec::new();
+                for e in ents.values() {
+                    let Some(Some(m)) = g.models.get(e.model.as_str()) else {
+                        continue;
+                    };
+                    let (mins, maxs) = m.bounds();
+                    let ext = (maxs - mins) * 0.5;
+                    let centre = e.pos + Vec3::new(0.0, 0.0, (mins.z + maxs.z) * 0.5);
+                    casters.push((centre, ext.x.max(ext.y) * 2.0, ext.z));
+                }
+                for p in self.sim.client.world.players.iter() {
+                    if !p.alive {
+                        continue;
+                    }
+                    let h = if p.ducked { 36.0 } else { 72.0 };
+                    casters.push((p.origin + Vec3::Z * (h * 0.5), 32.0, h * 0.5));
+                }
+                for (centre, size, half_h) in casters.into_iter().take(32) {
+                    let tr = self.sim.collision.trace_box(
+                        centre,
+                        centre - Vec3::Z * (half_h + 50.0),
+                        Vec3::splat(-0.5),
+                        Vec3::splat(0.5),
+                        gm_collision::MASK_SOLID,
+                    );
+                    if tr.start_solid || tr.fraction >= 1.0 || tr.normal.z < 0.3 {
+                        continue;
+                    }
+                    let (v, i) = g
+                        .world
+                        .decal_quad_uv(tr.end, tr.normal, size, [0.0; 3], d.uv);
                     alpha.push((&d.bind, v, i));
                 }
             }
