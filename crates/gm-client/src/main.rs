@@ -587,6 +587,8 @@ const WEAPONS: [Viewmodel; 14] = [
     },
     Viewmodel {
         alt: Some("IR_fire2"),
+        // the pulse rifle's reload is `IR_reload` on c_irifle (the stock `vm()` has none)
+        reload: Some("IR_reload"),
         ..vm(
             "weapon_ar2",
             "ar2",
