@@ -1359,7 +1359,10 @@ struct App {
     /// Options dialog cvars and binds (`cfg/config.cfg`).
     settings: settings::Settings,
     /// The camera FOV being blended toward the server's `Player:SetFOV` target (value, last frame).
-    fov_blend: Option<(f32, std::time::Instant)>,
+    /// `(start fov, target fov, when the target changed, current)`: the game's SetFOV blend
+    /// (render.md §1.1, gap-report #141) runs from the FOV at the call with
+    /// `start + (target - start) * (3t^2 - 2t^3)`, t = elapsed / rate.
+    fov_blend: Option<(f32, f32, std::time::Instant, f32)>,
     /// `Player:SendHint` tokens waiting for their delay.
     hint_queue: Vec<(Instant, String)>,
     /// `Player:ScreenFade`: the running full-screen fade.
@@ -1723,14 +1726,19 @@ impl App {
             .filter(|p| p.fov > 0.0)
             .map_or((own, 0.0), |p| (p.fov, p.fov_time));
         let now = std::time::Instant::now();
-        let (cur, last) = self.fov_blend.unwrap_or((target, now));
-        let dt = now.duration_since(last).as_secs_f32();
-        let next = if secs > 0.0 && (target - cur).abs() > 0.01 {
-            cur + (target - cur) * (dt / secs).min(1.0)
+        let (start, tgt, since, cur) = self.fov_blend.unwrap_or((target, target, now, target));
+        let (start, since) = if (tgt - target).abs() > 0.01 {
+            (cur, now)
+        } else {
+            (start, since)
+        };
+        let next = if secs > 0.0 {
+            let t = (now.duration_since(since).as_secs_f32() / secs).clamp(0.0, 1.0);
+            start + (target - start) * (3.0 * t * t - 2.0 * t * t * t)
         } else {
             target
         };
-        self.fov_blend = Some((next, now));
+        self.fov_blend = Some((start, target, since, next));
         next
     }
 
@@ -8849,8 +8857,15 @@ impl ApplicationHandler for App {
                 self.cam_zoom = (self.cam_zoom + delta.1 as f32 * dt * 6.6).clamp(0.1, 175.0);
                 self.cam_roll += delta.0 as f32 * dt * 1.65;
             } else if self.grabbed {
-                // m_yaw / m_pitch 0.022 * sensitivity (3 by default)
-                let k = 0.022 * self.settings.sensitivity;
+                // m_yaw / m_pitch 0.022 * sensitivity (3 by default), scaled while zoomed by
+                // zoom_sensitivity_ratio (1) * fov / default fov (render.md §1.2, #143)
+                let zoom = self
+                    .fov_blend
+                    .map_or(1.0, |(_, _, _, cur)| {
+                        cur / self.settings.fov_desired.max(1.0)
+                    })
+                    .clamp(0.01, 1.0);
+                let k = 0.022 * self.settings.sensitivity * zoom;
                 let pitch = if self.settings.m_pitch_invert { -k } else { k };
                 self.view.y -= delta.0 as f32 * k;
                 self.view.x = (self.view.x + delta.1 as f32 * pitch).clamp(-89.0, 89.0);
