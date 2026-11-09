@@ -606,26 +606,8 @@ events.on("tick.pre", function()
     for id, i in pairs(by_id) do
         if i.PhysicsUpdate then i:PhysicsUpdate(i.Entity:GetPhysicsObject()) end
         -- @hook ENTITY:PhysicsSimulate
-        -- (linear, angular, SIM_*) per tick: accelerations in u/s^2 (deg/s^2), forces over the
-        -- mass; LOCAL in the entity's frame, GLOBAL in the world's; applied as velocity this tick
-        if i.PhysicsSimulate then
-            local phys = i.Entity:GetPhysicsObject()
-            local dt = FrameTime()
-            local lin, ang, mode = i:PhysicsSimulate(phys, dt)
-            mode = mode or SIM_NOTHING
-            if mode ~= SIM_NOTHING and IsValid(phys) then
-                lin, ang = lin or Vector(), ang or Vector()
-                if mode == SIM_LOCAL_FORCE or mode == SIM_GLOBAL_FORCE then
-                    local m = math.max(phys:GetMass(), 1e-3)
-                    lin, ang = lin / m, ang / m
-                end
-                if mode == SIM_LOCAL_ACCELERATION or mode == SIM_LOCAL_FORCE then
-                    lin = i.Entity:LocalToWorld(lin) - i.Entity:GetPos()
-                end
-                phys:AddVelocity(lin * dt)
-                phys:AddAngleVelocity(ang * dt)
-            end
-        end
+        -- runs only for entities that called StartMotionController (entity.luau), returning
+        -- (angular, linear, SIM_*) like the game's motion controller (toolgun.md F57, #97)
     end
     -- @hook WEAPON:Tick
     -- @hook WEAPON:FreezeMovement

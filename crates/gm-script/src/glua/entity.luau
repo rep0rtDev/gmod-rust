@@ -2470,7 +2470,9 @@ function ENT:StartMotionController()
         for _, p in ipairs(evars(me).__motion_objs or {}) do
             if IsValid(p) and me.PhysicsSimulate then
                 local ang, lin, mode = me:PhysicsSimulate(p, dt)
-                mode = mode or SIM_LOCAL_FORCE or 0
+                -- a mode below SIM_LOCAL_ACCELERATION (1) ignores both vectors (toolgun.md F57)
+                mode = tonumber(mode) or 0
+                if mode < 1 then lin, ang = nil, nil end
                 if lin and lin ~= 0 then
                     if mode == (SIM_GLOBAL_ACCELERATION or 3) then p:AddVelocity(lin * dt)
                     elseif mode == (SIM_GLOBAL_FORCE or 2) then p:ApplyForceCenter(lin)

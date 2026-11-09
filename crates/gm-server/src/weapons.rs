@@ -640,6 +640,12 @@ pub enum VmAct {
     AltFire = 8,
     /// `ACT_VM_FIDGET`: the AR2's 0.5 s combine-ball charge.
     Fidget = 9,
+    /// The frag's primary pull-back, its throw, the secondary's roll (`ACT_VM_HAULBACK`) and
+    /// pull-back (`ACT_VM_PULLBACK_LOW`) (hl2weapons.md, gap-report #100).
+    PullbackHigh = 10,
+    Throw = 11,
+    Haulback = 12,
+    PullbackLow = 13,
 }
 
 fn vm_event(slot: &mut VmAct, serial: &mut u8, act: VmAct) {
@@ -1048,7 +1054,6 @@ impl Inventory {
             }
             self.throw_in = None;
             *self.ammo.entry(w.ammo1.to_string()).or_insert(0) -= 1;
-            vm_event(&mut self.vm_act, &mut self.vm_serial, VmAct::Fire);
             self.launched = Some(Launch::Grenade);
             self.next_primary = th.cycle;
             self.next_secondary = th.cycle;
@@ -1059,6 +1064,13 @@ impl Inventory {
             if !pressed_any && n >= th.drawback_ticks {
                 self.throw_press = None;
                 self.throw_in = Some(th.throw_ticks - 1);
+                // the release plays ACT_VM_THROW (ACT_VM_HAULBACK for the roll), #100
+                let act = if self.lob {
+                    VmAct::Haulback
+                } else {
+                    VmAct::Throw
+                };
+                vm_event(&mut self.vm_act, &mut self.vm_serial, act);
             }
             return None;
         }
@@ -1078,6 +1090,13 @@ impl Inventory {
             self.throw_press = Some(0);
             self.lob = pressed2 && !pressed;
             self.next_primary = f32::MAX;
+            // the press pulls back: ACT_VM_PULLBACK_HIGH, the roll's PULLBACK_LOW (#100)
+            let act = if self.lob {
+                VmAct::PullbackLow
+            } else {
+                VmAct::PullbackHigh
+            };
+            vm_event(&mut self.vm_act, &mut self.vm_serial, act);
         }
         None
     }

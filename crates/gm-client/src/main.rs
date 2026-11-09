@@ -974,7 +974,7 @@ fn weapon_sound(act: u8, active: u8) -> Option<String> {
         (9, "Weapon_AR2") => return Some("Weapon_CombineGuard.Special1".into()),
         // the stunstick's deploy is `Activate` (hl2weapons.md #113)
         (7, "Weapon_StunStick") => "Activate",
-        (9, _) => return None,
+        (9, _) | (10, _) | (11, _) | (12, _) | (13, _) => return None,
         (8, "Weapon_AR2") => return Some("Weapon_IRifle.Single".into()),
         (3, "Weapon_357") => return Some("Weapon_Pistol.Empty".into()),
         (3, "Weapon_AR2") => return Some("Weapon_IRifle.Empty".into()),
@@ -3964,12 +3964,22 @@ impl App {
                             .and_then(|m| m.sequence_for_activity("ACT_VM_SECONDARYATTACK"))?;
                         Some(static_seq_name(name))
                     }),
-                    9 => self
+                    // the frag's pull-back / throw / roll and the AR2 charge resolve through
+                    // the model's activity tags (hl2weapons.md, #100)
+                    9..=13 => self
                         .gfx
                         .as_ref()
                         .and_then(|g| g.models.get(vm.path))
                         .and_then(|m| m.as_ref())
-                        .and_then(|m| m.sequence_for_activity("ACT_VM_FIDGET"))
+                        .and_then(|m| {
+                            m.sequence_for_activity(match act {
+                                9 => "ACT_VM_FIDGET",
+                                10 => "ACT_VM_PULLBACK_HIGH",
+                                11 => "ACT_VM_THROW",
+                                12 => "ACT_VM_HAULBACK",
+                                _ => "ACT_VM_PULLBACK_LOW",
+                            })
+                        })
                         .map(static_seq_name),
                     _ => None,
                 };
