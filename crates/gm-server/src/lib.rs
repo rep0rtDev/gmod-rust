@@ -8996,7 +8996,12 @@ impl<'w> Server<'w> {
             .get(&id)
             .filter(|p| p.alive)
             .map_or(0, |p| p.armor);
-        let armored = amount > 0.0 && armor_now > 0 && dmg_type & (DMG_FALL | DMG_DROWN) == 0;
+        // the base gamemode's armour rule (player.md F7): fall, drowning, poison and
+        // radiation damage bypass the suit
+        let armored = amount > 0.0
+            && armor_now > 0
+            && dmg_type & (DMG_FALL | DMG_DROWN | weapons::DMG_POISON | weapons::DMG_RADIATION)
+                == 0;
         let scripted_split = if armored {
             match self.ask(Request::PlayerArmor {
                 player: id,
@@ -9022,6 +9027,12 @@ impl<'w> Server<'w> {
             p.armor = armor.min(p.max_armor);
         } else if armored {
             let mut to_armor = amount * ARMOR_SHARE;
+            // a cost under 0.1 is free, under 1 costs a point (player.md F7)
+            if to_armor < 0.1 {
+                to_armor = 0.0;
+            } else if to_armor < 1.0 {
+                to_armor = 1.0;
+            }
             if to_armor > p.armor as f32 {
                 to_armor = p.armor as f32;
             }
@@ -9083,10 +9094,23 @@ impl<'w> Server<'w> {
                 attacker,
                 inflictor: inflictor.to_string(),
             });
-            // `CBasePlayer::DeathSound`; GMod draws no death fade (its should-fade virtual
-            // returns false, binary study player.md F34)
+            // `GM:DoPlayerDeath`: the killer scores a frag, a suicide costs one (player.md F35)
+            if attacker != id && self.players.contains_key(&attacker) {
+                if let Some(k) = self.players.get_mut(&attacker) {
+                    k.frags += 1;
+                }
+            } else if let Some(v) = self.players.get_mut(&id) {
+                v.frags = v.frags.saturating_sub(1);
+            }
+            // `CBasePlayer::DeathSound`: `Player.FallGib` for a fall, `Player.Death` otherwise
+            // (player.md F33); GMod draws no death fade (its should-fade virtual returns
+            // false, binary study player.md F34)
             self.sounds.push(WorldSound {
-                name: "Player.Death".to_string(),
+                name: if dmg_type & DMG_FALL != 0 {
+                    "Player.FallGib".to_string()
+                } else {
+                    "Player.Death".to_string()
+                },
                 pos: origin,
                 volume: 1.0,
                 ..Default::default()

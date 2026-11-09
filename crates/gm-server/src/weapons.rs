@@ -1097,6 +1097,7 @@ pub const DMG_SLASH: u32 = 4;
 /// `DMG_SHOCK`: the rollermine's and stunstick's electric hit.
 pub const DMG_SHOCK: u32 = 256;
 pub const DMG_POISON: u32 = 0x20000;
+pub const DMG_RADIATION: u32 = 0x80000;
 pub const DMG_BUCKSHOT: u32 = 1 << 29;
 pub const DMG_ALWAYSGIB: u32 = 1 << 13;
 
@@ -1118,9 +1119,13 @@ pub const HITGROUP_STOMACH: u8 = 3;
 
 /// The gamemode's damage scale per hit group: the head doubles (12 -> 24, 75 -> 150), chest and
 /// stomach are unscaled; limbs not measured yet (a centre-line shot passes between the legs).
+/// The base gamemode's `GM:ScalePlayerDamage` (player.md F15/F16): head x2, the limbs
+/// (groups 4..7) and gear (10) x0.25; the `sk_player_*` convars are not consulted.
 pub fn hitgroup_scale(group: u8) -> f32 {
     if group == HITGROUP_HEAD {
         2.0
+    } else if (4..=7).contains(&group) || group == 10 {
+        0.25
     } else {
         1.0
     }
