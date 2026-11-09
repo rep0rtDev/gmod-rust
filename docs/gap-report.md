@@ -189,7 +189,7 @@ Ordering: P0 before P1 before P2; inside a priority the subsystems are ordered b
 | 139 | P1 | render | Other players' flashlight | origin from gmod_flashlight / anim_attachment_RH attachment, eye dir | origin + (0,0,64) | main.rs L5786-5795 | render.md §3.3 bin H |
 | 140 | P1 | render | Flashlight on models | r_flashlightmodels with the projected law | (1-d/r)^2 law | world.wgsl L278-296 | render.md H |
 | 141 | P1 | render | Zoom FOV blend | start + (target-start)*(3t^2-2t^3), t = (now - changeTime)/rate, from the FOV at the SetFOV call; start value networked | linear frame-dependent cur += (target-cur)*(dt/secs); server stores (fov, secs) only | main.rs L1541-1557; gm-server lib.rs L5711-5713 | render.md §1.1 server bin H |
-| 142 | P1 | render | Vehicle FOV | replaces default while seated | none | - | render.md §1.1 bin H |
+| 142 | P1 | render | Vehicle FOV | replaces default while seated | none | - | render.md §1.1 bin H — resolved 2026-10-28: no vehicle script in the Steam content (gmod/hl2 VPKs) carries a view `fov`, so the vehicle FOV is 0 for every vehicle and the default applies, which is what the client does |
 | 143 | P1 | render | Zoom sensitivity | zoom_sensitivity_ratio * fov/defaultFov | not scaled | - | render.md §1.2 SDK M |
 | 144 | P1 | render | Viewmodel FOV fixed | 54 default; Lua SWEPs use SWEP.ViewModelFOV (62 default) minus weapon FOV offset | VIEWMODEL_FOV = 54 for every weapon | main.rs L348 | render.md §2.1 H |
 | 145 | P1 | render | Dlight world law | per-luxel linear radius - distance into the lightmap | per-pixel (1 - d/r)^2 * facing | world.wgsl L180-201 | render.md §4.2 L (engine pass not in dump) |

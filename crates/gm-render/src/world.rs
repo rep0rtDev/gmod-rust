@@ -1562,6 +1562,27 @@ impl DynModel {
         Some(self.skin_matrices(&world))
     }
 
+    /// [`pose_merged`](Self::pose_merged) returning the bones' model-space matrices (for
+    /// [`attachment`](Self::attachment)) next to the skin matrices.
+    pub fn bone_world_merged(
+        &self,
+        name: &str,
+        time: f32,
+        host: &DynModel,
+        host_world: &[Mat4],
+    ) -> Option<(Vec<Mat4>, Vec<Mat4>)> {
+        let hs = host.skeleton.as_ref()?;
+        let lookup = |bone: &str| {
+            hs.bones
+                .iter()
+                .position(|b| b.name == bone)
+                .and_then(|i| host_world.get(i).copied())
+        };
+        let world = self.bone_world(name, time, Some(&lookup), &[])?;
+        let skin = self.skin_matrices(&world);
+        Some((world, skin))
+    }
+
     /// The ground speed of sequence `name` at the pose parameters `params` (the root movement
     /// per second of its blended animations), `None` when the model has no such sequence.
     pub fn ground_speed(&self, name: &str, params: &[(&str, f32)]) -> Option<f32> {
