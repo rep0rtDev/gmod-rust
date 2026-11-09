@@ -14,6 +14,8 @@ pub struct NetCmd {
     pub up_move: f32,
     pub mouse_x: f32,
     pub mouse_y: f32,
+    /// Mouse wheel lines this command (the physgun's hold distance).
+    pub wheel: f32,
     /// Active weapon: 0 none, 1 physgun, 2 tool gun.
     pub weapon: u8,
     /// Console `impulse N` fired this command (100 flashlight), 0 none.
@@ -630,6 +632,7 @@ const CMD_MOUSE: u16 = 32;
 const CMD_WEAPON: u16 = 64;
 const CMD_SEEN: u16 = 128;
 const CMD_IMPULSE: u16 = 256;
+const CMD_WHEEL: u16 = 512;
 
 fn w_cmd(w: &mut Writer, c: &NetCmd, prev: &NetCmd) {
     let mut mask = 0u16;
@@ -657,6 +660,9 @@ fn w_cmd(w: &mut Writer, c: &NetCmd, prev: &NetCmd) {
     if c.impulse != 0 {
         mask |= CMD_IMPULSE;
     }
+    if c.wheel != 0.0 {
+        mask |= CMD_WHEEL;
+    }
     if c.seen_tick != prev.seen_tick {
         mask |= CMD_SEEN;
     }
@@ -682,6 +688,9 @@ fn w_cmd(w: &mut Writer, c: &NetCmd, prev: &NetCmd) {
     }
     if mask & CMD_WEAPON != 0 {
         w.u8(c.weapon);
+    }
+    if mask & CMD_WHEEL != 0 {
+        w.f32(c.wheel);
     }
     if mask & CMD_IMPULSE != 0 {
         w.u8(c.impulse);
@@ -718,6 +727,7 @@ fn r_cmd(r: &mut Reader, prev: &NetCmd, tick: u32) -> Result<NetCmd, Truncated> 
         c.weapon = r.u8()?;
     }
     c.impulse = if mask & CMD_IMPULSE != 0 { r.u8()? } else { 0 };
+    c.wheel = if mask & CMD_WHEEL != 0 { r.f32()? } else { 0.0 };
     if mask & CMD_SEEN != 0 {
         c.seen_tick = r.varint()? as u32;
     }

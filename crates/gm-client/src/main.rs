@@ -1136,6 +1136,8 @@ struct App {
     /// Mouse counts since the last command while rotating a held prop (physgun + E): the view
     /// stays locked (`DIROVERRIDE`) and the counts go to the server as `mouse_x` / `mouse_y`.
     rotate_delta: (f32, f32),
+    /// Wheel lines since the last command while holding with the physgun (hold distance).
+    wheel_delta: f32,
     /// One-shot viewmodel sequence playing (draw, fire) and when it started.
     vm_anim: Option<(&'static str, Instant)>,
     /// Last frame's viewmodel (sequence, seconds into it) and the sequence left before it with
@@ -3997,6 +3999,7 @@ impl App {
             let (mx, my) = std::mem::take(&mut self.rotate_delta);
             cmd.mouse_x = mx;
             cmd.mouse_y = my;
+            cmd.wheel = std::mem::take(&mut self.wheel_delta);
             self.sim.tick(cmd);
             let keys = std::mem::take(&mut self.pending_input);
             self.sim.script.client_input(&self.sim.client.world, &keys);
@@ -7634,7 +7637,20 @@ impl ApplicationHandler for App {
                 let screen_w = self.gfx.as_ref().map_or(1280.0, |g| g.config.width as f32);
                 let in_menu = self.main_menu;
                 let cursor_x = self.cursor.0;
-                if let Some(ng) = self.newgame.as_mut().filter(|_| in_menu) {
+                let me = self.sim.client.player_id;
+                let hold_wheel = !in_menu
+                    && self.options.is_none()
+                    && self.weapon == 0
+                    && self
+                        .sim
+                        .client
+                        .world
+                        .players
+                        .iter()
+                        .any(|p| Some(p.id) == me && p.held.is_some());
+                if hold_wheel {
+                    self.wheel_delta += lines;
+                } else if let Some(ng) = self.newgame.as_mut().filter(|_| in_menu) {
                     if cursor_x > screen_w - 16.0 - 226.0 {
                         ng.settings_scroll = (ng.settings_scroll - lines * 40.0).max(0.0);
                     } else {
@@ -8093,6 +8109,7 @@ fn main() -> Result<()> {
         noclip: false,
         impulse: 0,
         rotate_delta: (0.0, 0.0),
+        wheel_delta: 0.0,
         vm_anim: None,
         vm_last: None,
         vm_event_t: None,

@@ -2694,6 +2694,7 @@ fn run_physgun_ragdoll(scn: &Scenario) -> Result<Value> {
                 physgun: true,
                 mouse_x: mx,
                 mouse_y: my,
+                wheel: 0.0,
                 impulse: 0,
             },
         );
@@ -3685,15 +3686,23 @@ fn run_fire(scn: &Scenario) -> Result<Value> {
                         removed.push(json!({ "t": t, "class": gm_server::projectile::class_name(pr.kind), "pos": [at.x, at.y, at.z] }));
                         false
                     }
-                    gm_server::projectile::Event::None => true,
+                    gm_server::projectile::Event::None
+                    | gm_server::projectile::Event::Stuck(_) => true,
                 });
                 if died {
                     inv.rocket_died();
                 }
                 if let Some(kind) = inv.launched.take() {
-                    if let Some(pr) =
-                        gm_server::projectile::spawn(kind, 1, eye, pitch, yaw, world, phys.as_mut())
-                    {
+                    if let Some(pr) = gm_server::projectile::spawn(
+                        kind,
+                        1,
+                        eye,
+                        pitch,
+                        yaw,
+                        world,
+                        phys.as_mut(),
+                        false,
+                    ) {
                         projs.push(pr);
                     }
                 }
@@ -5012,6 +5021,7 @@ fn run_server_segments(
                     physgun: true,
                     mouse_x: sg.mouse_x,
                     mouse_y: sg.mouse_y,
+                    wheel: 0.0,
                     impulse: 0,
                 },
             )]);
@@ -8164,6 +8174,7 @@ fn rocket_residual(golden: &std::path::Path) -> Result<()> {
         yaw,
         &collision,
         None,
+        false,
     )
     .context("spawn")?;
     let ticks = res["ticks"].as_array().context("ticks")?;

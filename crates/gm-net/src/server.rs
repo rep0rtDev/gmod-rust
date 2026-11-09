@@ -476,6 +476,7 @@ impl ServerNet {
                                     impulse: c.impulse,
                                     mouse_x: c.mouse_x,
                                     mouse_y: c.mouse_y,
+                                    wheel: c.wheel,
                                 });
                             }
                         }

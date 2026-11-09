@@ -8345,6 +8345,8 @@ pub struct PlayerCmd {
     pub physgun: bool,
     pub mouse_x: f32,
     pub mouse_y: f32,
+    /// Mouse wheel lines this command: the physgun's hold distance (`physgun_wheelspeed`).
+    pub wheel: f32,
     /// Console `impulse N` of this command: 100 toggles the flashlight (`PlayerSwitchFlashlight`).
     pub impulse: u8,
 }
@@ -22137,6 +22139,11 @@ impl<'w> Server<'w> {
                 if let Some(b) = self.part_body(ent, g.bone) {
                     if use_key {
                         g.rotate(pc.mouse_x, pc.mouse_y, right);
+                    }
+                    // wheel: distance += lines * physgun_wheelspeed (10), clamped to
+                    // physgun_minrange..maxrange only when the wheel moved (physgun.md 5.4)
+                    if pc.wheel != 0.0 {
+                        g.distance = (g.distance + pc.wheel * 10.0).clamp(40.0, 4096.0);
                     }
                     // the target itself is set in `hold_targets` after this tick's move
                     let _ = b;

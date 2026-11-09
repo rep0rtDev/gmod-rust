@@ -44,6 +44,7 @@ mod tests {
                     up_move: 0.0,
                     mouse_x: 3.0,
                     mouse_y: -2.0,
+                    wheel: 0.0,
                     weapon: 1,
                     impulse: 0,
                     seen_tick: 0,
