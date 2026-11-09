@@ -128,8 +128,8 @@ pub enum Event {
     None,
     /// Removed this tick at the point (rocket explosion, bolt on the sky, ball expiry).
     Removed(Vec3),
-    /// Stuck into the world this tick at the point (bolt).
-    Stuck(Vec3),
+    /// Stuck into the world this tick at the point with the surface normal (bolt).
+    Stuck(Vec3, Vec3),
     /// The combine ball bounced this tick at the point (`cball_bounce` + `NPC_CombineBall.Impact`).
     Bounced(Vec3),
 }
@@ -542,6 +542,10 @@ impl Projectile {
 
     fn step_bolt(&mut self, world: &World) -> Event {
         if self.movetype == MoveType::None {
+            // crossbow_bolt `BoltTouch`: the stuck bolt is removed 2 s later (hl2weapons.md #106)
+            if self.age >= self.fuse {
+                return Event::Removed(self.origin);
+            }
             return Event::None;
         }
         self.gravity_half();
@@ -560,6 +564,8 @@ impl Projectile {
             if hit_dot < 0.5 && speed > 100.0 {
                 self.velocity = (2.0 * n * hit_dot + dir) * speed * BOLT_REFLECT;
                 self.gravity = 1.0;
+                // every contact plays BoltHitWorld (the ricochet too)
+                return Event::Bounced(self.origin);
             } else {
                 // the stuck bolt keeps the angles of its flight (zero velocity has none)
                 self.angles = Some(Vec3::new(
@@ -569,7 +575,8 @@ impl Projectile {
                 ));
                 self.movetype = MoveType::None;
                 self.velocity = Vec3::ZERO;
-                return Event::Stuck(self.origin);
+                self.fuse = self.age + (2.0 / DT) as u32;
+                return Event::Stuck(self.origin, n);
             }
         }
         Event::None

@@ -10847,18 +10847,33 @@ impl<'w> Server<'w> {
                 });
                 self.effects.push(WorldEffect::BallBounce { pos: at });
             }
+            if let (projectile::Event::Bounced(at), weapons::Launch::Bolt) = (ev, pr.kind) {
+                self.sounds.push(WorldSound {
+                    name: "Weapon_Crossbow.BoltHitWorld".to_string(),
+                    pos: at,
+                    volume: 1.0,
+                    ..Default::default()
+                });
+            }
             match ev {
                 projectile::Event::Removed(at) => {
                     died.push((pr.kind, pr.owner, at));
                     keep.push(false);
                 }
-                projectile::Event::Stuck(at) => {
-                    // crossbow_bolt `BoltTouch` on the world
+                projectile::Event::Stuck(at, normal) => {
+                    // crossbow_bolt `BoltTouch` on the world: BoltHitWorld and the BoltImpact
+                    // effect (sparks whatever the material, hl2weapons.md #106)
                     self.sounds.push(WorldSound {
                         name: "Weapon_Crossbow.BoltHitWorld".to_string(),
                         pos: at,
                         volume: 1.0,
                         ..Default::default()
+                    });
+                    self.effects.push(WorldEffect::Impact {
+                        pos: at,
+                        normal,
+                        surface: "metal".to_string(),
+                        melee: false,
                     });
                     keep.push(true);
                 }
@@ -22897,6 +22912,12 @@ impl<'w> Server<'w> {
             if let Some((ent, _)) = &held {
                 self.game_events
                     .push(GameEvent::PhysgunPickup { player, ent: *ent });
+                // grenade_frag `OnPhysGunPickup`: the fuse shortens to 1.5 s (hl2weapons.md #109)
+                for pr in &mut self.projectiles {
+                    if pr.kind == weapons::Launch::Grenade && pr.id == *ent {
+                        pr.fuse = pr.fuse.min(pr.age + (1.5 / projectile::DT) as u32);
+                    }
+                }
             }
         }
         let held = match held {

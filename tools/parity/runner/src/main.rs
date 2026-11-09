@@ -3687,7 +3687,7 @@ fn run_fire(scn: &Scenario) -> Result<Value> {
                         false
                     }
                     gm_server::projectile::Event::None
-                    | gm_server::projectile::Event::Stuck(_)
+                    | gm_server::projectile::Event::Stuck(..)
                     | gm_server::projectile::Event::Bounced(_) => true,
                 });
                 if died {
