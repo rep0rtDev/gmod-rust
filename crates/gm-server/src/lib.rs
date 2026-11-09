@@ -25768,6 +25768,21 @@ impl<'w> Server<'w> {
         let surface = material
             .map(|m| self.brush_surfaceprop(&m))
             .unwrap_or_else(|| "concrete".to_owned());
+        // the surface's `bulletimpact` script (`Impact.*` through surfaceproperties, clientfx.md
+        // §3.1, gap-report #125); the crowbar plays its own Melee_HitWorld instead
+        if !melee {
+            let name = self
+                .surface_table
+                .as_ref()
+                .and_then(|t| t.sound(&surface, "bulletimpact"))
+                .unwrap_or_else(|| "Default.BulletImpact".to_owned());
+            self.sounds.push(WorldSound {
+                name,
+                pos: world.end,
+                volume: 1.0,
+                ..Default::default()
+            });
+        }
         self.effects.push(WorldEffect::Impact {
             pos: world.end,
             normal: world.normal,
