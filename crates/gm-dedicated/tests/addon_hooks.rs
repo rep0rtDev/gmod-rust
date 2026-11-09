@@ -2937,7 +2937,10 @@ fn game_events_reach_actors_and_a_script_plays_a_sound() {
         .unwrap()
         .pos;
     assert!(server.teleport_prop(dropped, pos + glam::Vec3::Z * 100.0, glam::Vec3::ZERO));
-    step(&mut sn, &mut client, &mut server, &mut crt, 0, 200);
+    // the dead human respawns on a press (GM:PlayerDeathThink), not by itself
+    step(&mut sn, &mut client, &mut server, &mut crt, 0, 140);
+    step(&mut sn, &mut client, &mut server, &mut crt, ATTACK, 1);
+    step(&mut sn, &mut client, &mut server, &mut crt, 0, 59);
     let log: Vec<String> = crt.actors()[0].eval("return state.d.log").unwrap();
     assert_eq!(
         log,
@@ -4028,7 +4031,17 @@ fn sandbox_gamemode_hooks_loadout_undo_unfreeze_and_fall_damage_are_asked() {
 
     // respawn: the second loadout is refused and replaced by the hook's pistol
     server.damage_player(1, 1000.0, 0);
-    step(&mut sn, &mut client, &mut server, &mut crt, 0, 0, 160);
+    step(&mut sn, &mut client, &mut server, &mut crt, 0, 0, 140);
+    step(
+        &mut sn,
+        &mut client,
+        &mut server,
+        &mut crt,
+        gm_move::buttons::ATTACK,
+        0,
+        1,
+    );
+    step(&mut sn, &mut client, &mut server, &mut crt, 0, 0, 19);
     assert!(server.players[&1].alive);
     assert_eq!(
         server.players[&1].weapons,
@@ -4062,6 +4075,7 @@ fn sandbox_gamemode_package_applies_godmode_bare_loadout_and_prop_limit() {
     let net = gm_net::Loopback::new(1, 0.0, 7);
     let (mut s_ep, mut c_ep) = (net.endpoint(0), net.endpoint(1));
     let mut client = gm_net::ClientNet::new(1, "bot");
+    let press = std::cell::Cell::new(0u32);
     let mut step = |sn: &mut gm_net::ServerNet,
                     client: &mut gm_net::ClientNet,
                     server: &mut gm_server::Server<'_>,
@@ -4070,6 +4084,7 @@ fn sandbox_gamemode_package_applies_godmode_bare_loadout_and_prop_limit() {
             client.tick(
                 gm_net::NetCmd {
                     view_angles: glam::Vec3::new(30.0, 0.0, 0.0),
+                    buttons: press.get(),
                     ..Default::default()
                 },
                 &mut c_ep,
@@ -4107,7 +4122,11 @@ fn sandbox_gamemode_package_applies_godmode_bare_loadout_and_prop_limit() {
     // sbox_weapons 0: the respawn holds camera, tool gun and physgun, physgun out
     assert!(server.set_cvar("sbox_weapons", "0"));
     server.damage_player(1, 1000.0, 0);
-    step(&mut sn, &mut client, &mut server, 160);
+    step(&mut sn, &mut client, &mut server, 140);
+    press.set(gm_move::buttons::ATTACK);
+    step(&mut sn, &mut client, &mut server, 1);
+    press.set(0);
+    step(&mut sn, &mut client, &mut server, 19);
     assert!(server.players[&1].alive);
     assert_eq!(
         server.players[&1].weapons,
@@ -4617,7 +4636,15 @@ fn properties_apply_to_the_prop_under_the_crosshair_after_can_property() {
         0,
         400,
     );
-    assert!(server.sandbox.props().is_empty(), "burnt down");
+    assert!(
+        !server.sandbox.props().iter().any(|p| p.id == c),
+        "burnt down"
+    );
+    // its gibs lie under the crosshair: out of the way for the next crate
+    let gibs: Vec<u32> = server.sandbox.props().iter().map(|p| p.id).collect();
+    for g in gibs {
+        server.remove_prop(g);
+    }
     let (asked, applied, last, broke): (i64, i64, String, i64) = crt.actors()[0]
         .eval("return state.d.asked, state.d.applied, state.d.last, state.d.broke")
         .unwrap();
@@ -4985,13 +5012,20 @@ fn player_model_choice_is_worn_from_the_next_spawn_and_player_set_model_may_repl
         config: relaxed(),
     })
     .unwrap();
+    let press = std::cell::Cell::new(0u32);
     let mut step = |sn: &mut gm_net::ServerNet,
                     client: &mut gm_net::ClientNet,
                     server: &mut gm_server::Server<'_>,
                     crt: &mut gm_script::Runtime,
                     n: usize| {
         for _ in 0..n {
-            client.tick(gm_net::NetCmd::default(), &mut c_ep);
+            client.tick(
+                gm_net::NetCmd {
+                    buttons: press.get(),
+                    ..Default::default()
+                },
+                &mut c_ep,
+            );
             net.tick();
             sn.receive(server, &mut s_ep);
             sn.tick(server);
@@ -5016,7 +5050,11 @@ fn player_model_choice_is_worn_from_the_next_spawn_and_player_set_model_may_repl
     step(&mut sn, &mut client, &mut server, &mut crt, 5);
     assert_eq!(server.players[&1].model, "models/player/kleiner.mdl");
     server.kill_player(1);
-    step(&mut sn, &mut client, &mut server, &mut crt, 160);
+    step(&mut sn, &mut client, &mut server, &mut crt, 140);
+    press.set(gm_move::buttons::ATTACK);
+    step(&mut sn, &mut client, &mut server, &mut crt, 1);
+    press.set(0);
+    step(&mut sn, &mut client, &mut server, &mut crt, 19);
     assert!(server.players[&1].alive, "respawned");
     assert_eq!(
         server.players[&1].model,
@@ -5038,7 +5076,11 @@ fn player_model_choice_is_worn_from_the_next_spawn_and_player_set_model_may_repl
     client.command(gm_net::Command::Kill);
     step(&mut sn, &mut client, &mut server, &mut crt, 5);
     assert!(!server.players[&1].alive, "kill command");
-    step(&mut sn, &mut client, &mut server, &mut crt, 160);
+    step(&mut sn, &mut client, &mut server, &mut crt, 140);
+    press.set(gm_move::buttons::ATTACK);
+    step(&mut sn, &mut client, &mut server, &mut crt, 1);
+    press.set(0);
+    step(&mut sn, &mut client, &mut server, &mut crt, 19);
     assert!(server.players[&1].alive, "respawned after kill");
     assert_eq!(
         (server.players[&1].skin, server.players[&1].body.as_str()),
@@ -5059,7 +5101,11 @@ fn player_model_choice_is_worn_from_the_next_spawn_and_player_set_model_may_repl
     });
     step(&mut sn, &mut client, &mut server, &mut crt, 5);
     server.kill_player(1);
-    step(&mut sn, &mut client, &mut server, &mut crt, 160);
+    step(&mut sn, &mut client, &mut server, &mut crt, 140);
+    press.set(gm_move::buttons::ATTACK);
+    step(&mut sn, &mut client, &mut server, &mut crt, 1);
+    press.set(0);
+    step(&mut sn, &mut client, &mut server, &mut crt, 19);
     assert_eq!(server.players[&1].model, "models/player/kleiner.mdl");
     // the hook replaces alyx with breen
     client.command(gm_net::Command::PlayerModel {
@@ -5067,7 +5113,11 @@ fn player_model_choice_is_worn_from_the_next_spawn_and_player_set_model_may_repl
     });
     step(&mut sn, &mut client, &mut server, &mut crt, 5);
     server.kill_player(1);
-    step(&mut sn, &mut client, &mut server, &mut crt, 160);
+    step(&mut sn, &mut client, &mut server, &mut crt, 140);
+    press.set(gm_move::buttons::ATTACK);
+    step(&mut sn, &mut client, &mut server, &mut crt, 1);
+    press.set(0);
+    step(&mut sn, &mut client, &mut server, &mut crt, 19);
     assert_eq!(server.players[&1].model, "models/player/breen.mdl");
     assert_eq!(snap_model(&client), "models/player/breen.mdl");
     let (n, last): (i64, String) = crt.actors()[0]
@@ -5290,7 +5340,27 @@ fn prop_protection_example_keeps_other_players_off_a_prop() {
         &mut other,
         0,
         0,
-        200,
+        140,
+    );
+    step(
+        &mut sn,
+        &mut server,
+        &mut crt,
+        &mut owner,
+        &mut other,
+        0,
+        gm_move::buttons::ATTACK,
+        1,
+    );
+    step(
+        &mut sn,
+        &mut server,
+        &mut crt,
+        &mut owner,
+        &mut other,
+        0,
+        0,
+        59,
     );
     let (blocked, physgun, pickup, property): (i64, i64, i64, i64) = crt.actors()[0]
         .eval("return state.d.blocked, state.d.physgun, state.d.use, state.d.property")
