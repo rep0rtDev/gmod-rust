@@ -1139,6 +1139,9 @@ struct App {
     prev_weapons: Option<u64>,
     /// Kill feed (`cl_deathnotice.lua`): attacker, victim, inflictor class, when.
     deaths: Vec<DeathNotice>,
+    /// HudAnimations.txt state of the health and suit panels
+    hud_health_anim: std::cell::RefCell<HudPanelAnim>,
+    hud_suit_anim: std::cell::RefCell<HudPanelAnim>,
     mount: gm_content::Mount,
     bsp_data: Vec<u8>,
     sim: Sim,
@@ -7121,13 +7124,17 @@ impl App {
                 // scaled by the screen height, ClientScheme.res fonts and colours
                 let s = h / 480.0;
                 let fg = [1.0, 235.0 / 255.0, 20.0 / 255.0, 1.0];
-                let bg = [0.0, 0.0, 0.0, 76.0 / 255.0];
                 let numbers = Some("HudNumbers".to_string());
                 let small = Some("HudNumbersSmall".to_string());
                 let label_font = Some("HudDefault".to_string());
                 let y = 432.0 * s;
                 let tall = 36.0 * s;
-                let panel = |items: &mut Vec<UiItem>, x: f32, wide: f32, label: &str| {
+                let panel = |items: &mut Vec<UiItem>,
+                             x: f32,
+                             wide: f32,
+                             label: &str,
+                             fg: [f32; 4],
+                             bg: [f32; 4]| {
                     items.push(UiItem::Rect {
                         x,
                         y,
@@ -7142,6 +7149,41 @@ impl App {
                         text: label.to_string(),
                         color: fg,
                     });
+                };
+                // HudAnimations.txt: digits in TextColor with a glow of `Blur` (the
+                // HudNumbersGlow pass, approximated by a second translucent copy), label in
+                // FgColor, panel in BgColor, the whole panel scaled by Alpha
+                let digits =
+                    |items: &mut Vec<UiItem>, x: f32, text: String, look: &HudPanelLook| {
+                        let a = |c: [f32; 4]| [c[0], c[1], c[2], c[3] * look.alpha];
+                        if look.blur > 0.0 {
+                            let mut glow = a(look.text);
+                            glow[3] *= (look.blur / 5.0) * 0.6;
+                            for dx in [-1.0, 1.0] {
+                                items.push(UiItem::Text {
+                                    font: numbers.clone(),
+                                    x: x + dx * look.blur * 0.5,
+                                    y: y + 2.0 * s,
+                                    text: text.clone(),
+                                    color: glow,
+                                });
+                            }
+                        }
+                        items.push(UiItem::Text {
+                            font: numbers.clone(),
+                            x,
+                            y: y + 2.0 * s,
+                            text,
+                            color: a(look.text),
+                        });
+                    };
+                let hud_now = Instant::now();
+                let (health_look, suit_look) = {
+                    let mut hh = self.hud_health_anim.borrow_mut();
+                    let mut sa = self.hud_suit_anim.borrow_mut();
+                    hh.update(i32::from(p.health).max(0), hud_now, true);
+                    sa.update(i32::from(p.armor).max(0), hud_now, false);
+                    (hh.look(hud_now), sa.look(hud_now))
                 };
                 // HudCrosshair: the weapon script's Crosshairs glyph (Q for every weapon the
                 // loadout has) centred, ClientScheme Normal 255 208 64
@@ -7331,24 +7373,37 @@ impl App {
                     }
                 }
                 if !hidden("CHudHealth") {
-                    panel(&mut items, 16.0 * s, 102.0 * s, "HEALTH");
-                    items.push(UiItem::Text {
-                        font: numbers.clone(),
-                        x: 16.0 * s + 50.0 * s,
-                        y: y + 2.0 * s,
-                        text: p.health.max(0).to_string(),
-                        color: fg,
-                    });
+                    panel(
+                        &mut items,
+                        16.0 * s,
+                        102.0 * s,
+                        "HEALTH",
+                        health_look.fg,
+                        health_look.bg,
+                    );
+                    digits(
+                        &mut items,
+                        16.0 * s + 50.0 * s,
+                        p.health.max(0).to_string(),
+                        &health_look,
+                    );
                 }
-                if p.armor > 0 && !hidden("CHudBattery") {
-                    panel(&mut items, 140.0 * s, 102.0 * s, "SUIT");
-                    items.push(UiItem::Text {
-                        font: numbers.clone(),
-                        x: 140.0 * s + 50.0 * s,
-                        y: y + 2.0 * s,
-                        text: p.armor.to_string(),
-                        color: fg,
-                    });
+                if suit_look.alpha > 0.0 && !hidden("CHudBattery") {
+                    let a = |c: [f32; 4]| [c[0], c[1], c[2], c[3] * suit_look.alpha];
+                    panel(
+                        &mut items,
+                        140.0 * s,
+                        102.0 * s,
+                        "SUIT",
+                        a(suit_look.fg),
+                        a(suit_look.bg),
+                    );
+                    digits(
+                        &mut items,
+                        140.0 * s + 50.0 * s,
+                        p.armor.max(0).to_string(),
+                        &suit_look,
+                    );
                 }
                 // PaintNotes -> notification Think: spring the panels to the anchor at 80 %
                 // height, charge left 4 % at 0.7 s left, leave right at 0.2 s
@@ -7612,7 +7667,14 @@ impl App {
                 }
                 if (p.clip >= 0 || p.reserve > 0) && !hidden("CHudAmmo") {
                     let ax = w - 150.0 * s;
-                    panel(&mut items, ax, 136.0 * s, "AMMO");
+                    panel(
+                        &mut items,
+                        ax,
+                        136.0 * s,
+                        "AMMO",
+                        FG_COLOR_HUD,
+                        BG_COLOR_HUD,
+                    );
                     let clip = if p.clip >= 0 { p.clip } else { p.reserve };
                     items.push(UiItem::Text {
                         font: numbers.clone(),
@@ -7633,7 +7695,7 @@ impl App {
                     // HudSecondaryAmmo: r150 wide 60 to the left of the ammo panel
                     if p.alt >= 0 {
                         let bx = ax - 60.0 * s - 6.0 * s;
-                        panel(&mut items, bx, 60.0 * s, "ALT");
+                        panel(&mut items, bx, 60.0 * s, "ALT", FG_COLOR_HUD, BG_COLOR_HUD);
                         items.push(UiItem::Text {
                             font: numbers.clone(),
                             x: bx + 8.0 * s,
@@ -8652,6 +8714,8 @@ fn main() -> Result<()> {
         pickups: std::cell::RefCell::new(PickupHistory::default()),
         prev_weapons: None,
         deaths: Vec::new(),
+        hud_health_anim: Default::default(),
+        hud_suit_anim: Default::default(),
         mount,
         bsp_data,
         sim,
@@ -10503,19 +10567,278 @@ fn fx_time() -> f32 {
         .as_secs_f32()
 }
 
+/// ClientScheme.res colours the HudAnimations.txt health / suit sequences move between.
+const FG_COLOR_HUD: [f32; 4] = [1.0, 220.0 / 255.0, 0.0, 220.0 / 255.0];
+const BRIGHT_FG: [f32; 4] = [1.0, 220.0 / 255.0, 0.0, 1.0];
+const BRIGHT_DAMAGED_FG: [f32; 4] = [1.0, 0.0, 0.0, 1.0];
+const DAMAGED_FG: [f32; 4] = [180.0 / 255.0, 0.0, 0.0, 230.0 / 255.0];
+const DAMAGED_BG: [f32; 4] = [180.0 / 255.0, 0.0, 0.0, 200.0 / 255.0];
+const BG_COLOR_HUD: [f32; 4] = [0.0, 0.0, 0.0, 90.0 / 255.0];
+const PULSE_BG: [f32; 4] = [100.0 / 255.0, 0.0, 0.0, 80.0 / 255.0];
+
+#[derive(Clone, Copy)]
+enum Interp {
+    Linear,
+    Deaccel,
+}
+
+/// One `Animate <property> <value> <interp> <start> <duration>` line of HudAnimations.txt.
+struct Seg<T>(T, Interp, f32, f32);
+
+fn lerp4(a: [f32; 4], b: [f32; 4], f: f32) -> [f32; 4] {
+    std::array::from_fn(|i| a[i] + (b[i] - a[i]) * f)
+}
+
+/// The property's value `t` seconds into a sequence of non-overlapping segments (the vgui
+/// animation controller: Linear is the plain fraction, Deaccel its square root).
+fn run_segments<T: Copy>(initial: T, segs: &[Seg<T>], t: f32, mix: impl Fn(T, T, f32) -> T) -> T {
+    let mut cur = initial;
+    for Seg(to, interp, start, dur) in segs {
+        if t < *start {
+            break;
+        }
+        let f = if *dur <= 0.0 {
+            1.0
+        } else {
+            ((t - start) / dur).min(1.0)
+        };
+        let f = match interp {
+            Interp::Linear => f,
+            Interp::Deaccel => f.sqrt(),
+        };
+        cur = mix(cur, *to, f);
+    }
+    cur
+}
+
+#[derive(Clone, Copy, PartialEq)]
+enum HudEvent {
+    DamageTaken,
+    Low,
+    IncreasedBelow,
+    IncreasedAbove,
+    PowerZero,
+}
+
+/// The colours / glow / alpha a health or suit panel shows right now.
+struct HudPanelLook {
+    fg: [f32; 4],
+    text: [f32; 4],
+    bg: [f32; 4],
+    blur: f32,
+    alpha: f32,
+}
+
+/// `CHudHealth` / `CHudBattery` threshold machine driving HudAnimations.txt (ui.md 3.3-3.4,
+/// 4.2): a drop flashes the digits bright yellow, health under 20 pulses red every 0.9 s,
+/// the suit only flashes (its red loop is commented out in GMod's file) and fades at 0.
+#[derive(Default)]
+struct HudPanelAnim {
+    last: Option<i32>,
+    event: Option<(HudEvent, Instant)>,
+}
+
+impl HudPanelAnim {
+    fn update(&mut self, value: i32, now: Instant, health: bool) {
+        let Some(last) = self.last.replace(value) else {
+            return;
+        };
+        if value == last {
+            return;
+        }
+        let ev = if health {
+            if (1..20).contains(&value) {
+                if value < last {
+                    HudEvent::Low
+                } else {
+                    HudEvent::IncreasedBelow
+                }
+            } else if value < last {
+                HudEvent::DamageTaken
+            } else if last < 20 {
+                HudEvent::IncreasedAbove
+            } else {
+                return;
+            }
+        } else if value == 0 {
+            HudEvent::PowerZero
+        } else if value < last {
+            HudEvent::DamageTaken
+        } else if last < 20 {
+            HudEvent::IncreasedAbove
+        } else {
+            return;
+        };
+        self.event = Some((ev, now));
+    }
+
+    fn look(&self, now: Instant) -> HudPanelLook {
+        use Interp::{Deaccel, Linear};
+        let mut look = HudPanelLook {
+            fg: FG_COLOR_HUD,
+            text: FG_COLOR_HUD,
+            bg: BG_COLOR_HUD,
+            blur: 0.0,
+            alpha: if self.last == Some(0) { 0.0 } else { 1.0 },
+        };
+        let Some((ev, at)) = self.event else {
+            return look;
+        };
+        let t = now.duration_since(at).as_secs_f32();
+        let f1 = |a: f32, b: f32, f: f32| a + (b - a) * f;
+        let pulse = |look: &mut HudPanelLook, tp: f32| {
+            let tp = tp % 0.9;
+            look.blur = run_segments(
+                3.0,
+                &[Seg(5.0, Linear, 0.0, 0.1), Seg(2.0, Deaccel, 0.1, 0.8)],
+                tp,
+                f1,
+            );
+            look.text = run_segments(
+                DAMAGED_FG,
+                &[
+                    Seg(BRIGHT_DAMAGED_FG, Linear, 0.0, 0.1),
+                    Seg(DAMAGED_FG, Deaccel, 0.1, 0.8),
+                ],
+                tp,
+                lerp4,
+            );
+            look.bg = run_segments(
+                BG_COLOR_HUD,
+                &[
+                    Seg(PULSE_BG, Linear, 0.0, 0.1),
+                    Seg(BG_COLOR_HUD, Deaccel, 0.1, 0.8),
+                ],
+                tp,
+                lerp4,
+            );
+            look.fg = DAMAGED_FG;
+        };
+        match ev {
+            HudEvent::DamageTaken => {
+                look.fg = run_segments(
+                    FG_COLOR_HUD,
+                    &[
+                        Seg(BRIGHT_FG, Linear, 0.0, 0.25),
+                        Seg(FG_COLOR_HUD, Linear, 0.3, 0.75),
+                    ],
+                    t,
+                    lerp4,
+                );
+                look.text = run_segments(
+                    FG_COLOR_HUD,
+                    &[
+                        Seg(BRIGHT_FG, Linear, 0.0, 0.1),
+                        Seg(FG_COLOR_HUD, Deaccel, 0.1, 1.2),
+                    ],
+                    t,
+                    lerp4,
+                );
+                look.blur = run_segments(
+                    0.0,
+                    &[Seg(3.0, Linear, 0.0, 0.1), Seg(0.0, Deaccel, 0.1, 2.0)],
+                    t,
+                    f1,
+                );
+            }
+            HudEvent::Low => {
+                if t >= 1.0 {
+                    pulse(&mut look, t - 1.0);
+                } else {
+                    look.bg = run_segments(
+                        BG_COLOR_HUD,
+                        &[
+                            Seg(DAMAGED_BG, Linear, 0.0, 0.1),
+                            Seg(BG_COLOR_HUD, Deaccel, 0.1, 1.75),
+                        ],
+                        t,
+                        lerp4,
+                    );
+                    look.fg = run_segments(
+                        FG_COLOR_HUD,
+                        &[
+                            Seg(BRIGHT_FG, Linear, 0.0, 0.2),
+                            Seg(DAMAGED_FG, Linear, 0.2, 1.2),
+                        ],
+                        t,
+                        lerp4,
+                    );
+                    look.text = run_segments(
+                        FG_COLOR_HUD,
+                        &[
+                            Seg(BRIGHT_FG, Linear, 0.0, 0.1),
+                            Seg(DAMAGED_FG, Deaccel, 0.1, 1.2),
+                        ],
+                        t,
+                        lerp4,
+                    );
+                    look.blur = run_segments(
+                        0.0,
+                        &[Seg(5.0, Linear, 0.0, 0.1), Seg(3.0, Deaccel, 0.1, 0.9)],
+                        t,
+                        f1,
+                    );
+                }
+            }
+            HudEvent::IncreasedBelow => {
+                if t >= 0.4 {
+                    pulse(&mut look, t - 0.4);
+                } else {
+                    look.fg = DAMAGED_FG;
+                    look.text = DAMAGED_FG;
+                    look.blur = run_segments(2.0, &[Seg(5.0, Deaccel, 0.0, 0.4)], t, f1);
+                }
+            }
+            HudEvent::IncreasedAbove => {
+                look.text = run_segments(
+                    DAMAGED_FG,
+                    &[Seg(FG_COLOR_HUD, Linear, 0.0, 0.04)],
+                    t,
+                    lerp4,
+                );
+                look.fg = run_segments(
+                    DAMAGED_FG,
+                    &[Seg(FG_COLOR_HUD, Linear, 0.0, 0.03)],
+                    t,
+                    lerp4,
+                );
+                look.blur = run_segments(
+                    3.0,
+                    &[Seg(3.0, Linear, 0.0, 0.1), Seg(0.0, Deaccel, 0.1, 2.0)],
+                    t,
+                    f1,
+                );
+            }
+            HudEvent::PowerZero => {
+                look.alpha = run_segments(1.0, &[Seg(0.0, Linear, 0.0, 0.4)], t, f1);
+            }
+        }
+        look
+    }
+}
+
 /// The HUD / menu fonts rasterised for a `height`-line screen: GMod sizes its HUD from the
 /// 480-line layout (ScreenScaleH), so every atlas is rebuilt whenever the window height
 /// changes - a 720-line atlas stretched to a 1440-line desktop is the blur it would show.
 fn register_ui_fonts(mount: &gm_content::Mount, ui: &mut UiRenderer, gpu: &Gpu, height: u32) {
-    // the HL2 HUD fonts of resource/ClientScheme.res, scaled from the 480-line layout
-    let fs = height as f32 / 480.0;
-    ui.register_font(gpu, mount, "HudNumbers", "HalfLife2", 32.0 * fs);
-    ui.register_font(gpu, mount, "HudNumbersSmall", "HalfLife2", 16.0 * fs);
-    if !ui.register_font(gpu, mount, "HudDefault", "Verdana", 9.0 * fs) {
-        ui.register_font(gpu, mount, "HudDefault", "Roboto-Bold", 9.0 * fs);
+    // the HL2 HUD fonts of resource/ClientScheme.res: `tall` is absolute pixels (the layout
+    // scales with the screen, the glyphs do not); only the `yres` blocks step at 600 lines
+    let tall = height >= 600;
+    ui.register_font(gpu, mount, "HudNumbers", "HalfLife2", 32.0);
+    ui.register_font(gpu, mount, "HudNumbersSmall", "HalfLife2", 16.0);
+    let hud_default = if tall { 13.0 } else { 9.0 };
+    if !ui.register_font(gpu, mount, "HudDefault", "Verdana", hud_default) {
+        ui.register_font(gpu, mount, "HudDefault", "Roboto-Bold", hud_default);
     }
-    // TargetID / TargetIDSmall: Verdana 12 / 11 bold (the 480-599 line variants)
-    ui.register_font(gpu, mount, "HL2MPTypeDeath", "csd", 64.0 * fs);
+    // ChatFont / TargetID: Verdana 700 with a drop shadow, 12 px below 600 lines, 14 at 600+
+    let chat = if tall { 14.0 } else { 12.0 };
+    for name in ["ChatFont", "TargetID"] {
+        if !ui.register_font(gpu, mount, name, "Verdana", chat) {
+            ui.register_font(gpu, mount, name, "Roboto-Bold", chat);
+        }
+    }
+    // HL2MPTypeDeath: csd.ttf 64 (base gamemode Lua, absolute)
+    ui.register_font(gpu, mount, "HL2MPTypeDeath", "csd", 64.0);
     // gmod_tool/cl_init.lua: the toolgun HUD's fonts (Roboto Bk 80 / 24 / 17)
     for (name, px) in [
         ("GModToolName", 80.0),
@@ -10544,11 +10867,15 @@ fn register_ui_fonts(mount: &gm_content::Mount, ui: &mut UiRenderer, gpu: &Gpu, 
         ui.load_image(gpu, mount, &format!("vgui/notices/{n}"));
     }
     // HL2 weapon selection and crosshair: halflife2.ttf glyph fonts, Verdana labels
-    ui.register_font(gpu, mount, "WeaponIcons", "HalfLife2", 64.0 * fs);
-    ui.register_font(gpu, mount, "Crosshairs", "HalfLife2", 40.0 * fs);
-    for (name, tall) in [("HudSelectionNumbers", 11.0), ("HudSelectionText", 8.0)] {
-        if !ui.register_font(gpu, mount, name, "Verdana", tall * fs) {
-            ui.register_font(gpu, mount, name, "Roboto-Bold", tall * fs);
+    ui.register_font(gpu, mount, "WeaponIcons", "HalfLife2", 64.0);
+    ui.register_font(gpu, mount, "Crosshairs", "HalfLife2", 40.0);
+    let selection_text = if tall { 10.0 } else { 8.0 };
+    for (name, px) in [
+        ("HudSelectionNumbers", 11.0),
+        ("HudSelectionText", selection_text),
+    ] {
+        if !ui.register_font(gpu, mount, name, "Verdana", px) {
+            ui.register_font(gpu, mount, name, "Roboto-Bold", px);
         }
     }
     ui.load_image(gpu, mount, "weapons/swep");
@@ -10626,8 +10953,8 @@ fn register_ui_fonts(mount: &gm_content::Mount, ui: &mut UiRenderer, gpu: &Gpu, 
         ("TargetIDSmall", 11.0),
         ("ChatFont", 12.0),
     ] {
-        if !ui.register_font(gpu, mount, name, "Verdana", tall * fs) {
-            ui.register_font(gpu, mount, name, "Roboto-Bold", tall * fs);
+        if !ui.register_font(gpu, mount, name, "Verdana", tall) {
+            ui.register_font(gpu, mount, name, "Roboto-Bold", tall);
         }
     }
 }
