@@ -5774,6 +5774,9 @@ pub struct Player {
     /// The tick the +USE / gravity-gun carry's error check starts (gravgun.md 5.3: 1 s grace
     /// after the pickup before `ComputeError() > 12 u` drops the object).
     pub carry_check_tick: u64,
+    /// The carried body's mass before the hold (gravgun.md 5.1: the controller holds it at
+    /// 1 kg), restored on drop; 0 = untouched.
+    pub carry_saved_mass: f32,
     /// Ticks +attack has been held (the machine-gun view kick's fire duration).
     pub attack_held: u32,
     pub alive: bool,
@@ -7526,6 +7529,7 @@ impl Player {
             punt_guard: None,
             cannon_pull_tick: 0,
             carry_check_tick: 0,
+            carry_saved_mass: 0.0,
             attack_held: 0,
             alive: true,
             health: PLAYER_HEALTH,
@@ -11519,9 +11523,16 @@ impl<'w> Server<'w> {
             gm_physics::pickup::Carry::new_unaligned(body_rot, yaw)
         };
         let tick = self.tick_count;
+        // the carry controller's authority (gravgun.md 5.1, gap-report #83): the object is
+        // held at 1 kg so it yields to everything; its mass comes back on the drop
+        let mass = self.physics.mass(b);
+        if mass > 1.0 {
+            self.physics.set_mass(b, 1.0);
+        }
         if let Some(p) = self.players.get_mut(&player) {
             p.carry = Some((ent, carry));
             p.carry_check_tick = tick + 67;
+            p.carry_saved_mass = if mass > 1.0 { mass } else { 0.0 };
         }
         self.game_events.push(GameEvent::Pickup { player, ent });
         true
@@ -11914,6 +11925,15 @@ impl<'w> Server<'w> {
         let Some((ent, _)) = self.players.get_mut(&player).and_then(|p| p.carry.take()) else {
             return;
         };
+        let saved = self
+            .players
+            .get_mut(&player)
+            .map_or(0.0, |p| std::mem::take(&mut p.carry_saved_mass));
+        if saved > 0.0 {
+            if let Some(b) = self.bodies.get(&ent).copied() {
+                self.physics.set_mass(b, saved);
+            }
+        }
         self.cannon_hold_loop(player, false);
         if let Some(b) = self.bodies.get(&ent).copied() {
             self.physics.release(b);
