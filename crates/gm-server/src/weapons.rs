@@ -274,7 +274,10 @@ pub const PHYSCANNON_MAXMASS: f32 = 250.0;
 pub const PHYSCANNON_MAXFORCE: f32 = 1500.0;
 pub const PHYSCANNON_MINFORCE: f32 = 700.0;
 pub const PHYSCANNON_PULLFORCE: f32 = 4000.0;
-pub const PHYSCANNON_PULLRANGE: f32 = 4096.0;
+/// `FindObjectTrace`: 4 x `physcannon_tracelength` (gravgun.md 4.1).
+pub const PHYSCANNON_PULLRANGE: f32 = 1000.0;
+/// A pull is applied once per secondary cycle, re-armed 0.1 s after a "not found".
+pub const PHYSCANNON_PULL_TICKS: u64 = 7;
 pub const PHYSCANNON_SECONDARY: f32 = 0.5;
 /// What the physcannon's owner asked of the world this tick, resolved by the server against
 /// its props: `Punt` on the primary (every cycle while held), `Grab` on the secondary's press,

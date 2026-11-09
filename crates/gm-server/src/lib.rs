@@ -5769,6 +5769,8 @@ pub struct Player {
     pub claw_debounce: u64,
     pub claw_suppress: u64,
     pub punt_guard: Option<(u32, u64)>,
+    /// The tick the gravity gun's next pull may be applied (gravgun.md 4.4: one per 0.1 s).
+    pub cannon_pull_tick: u64,
     /// Ticks +attack has been held (the machine-gun view kick's fire duration).
     pub attack_held: u32,
     pub alive: bool,
@@ -7519,6 +7521,7 @@ impl Player {
             claw_debounce: 0,
             claw_suppress: 0,
             punt_guard: None,
+            cannon_pull_tick: 0,
             attack_held: 0,
             alive: true,
             health: PLAYER_HEALTH,
@@ -11729,8 +11732,24 @@ impl<'w> Server<'w> {
                     }
                     return;
                 }
-                let dv =
-                    -d.normalize_or_zero() * (weapons::PHYSCANNON_PULLFORCE * 0.1 / mass.max(1.0));
+                // `ApplyForceCenter(dir * F)` once per 0.1 s secondary cycle (gravgun.md 4.4):
+                // F = physcannon_pullforce, scaled by (mass + 0.5) / 50 under 50 kg
+                let tick = self.tick_count;
+                let due = self
+                    .players
+                    .get(&player)
+                    .is_some_and(|p| tick >= p.cannon_pull_tick);
+                if !due {
+                    return;
+                }
+                if let Some(p) = self.players.get_mut(&player) {
+                    p.cannon_pull_tick = tick + weapons::PHYSCANNON_PULL_TICKS;
+                }
+                let mut force = weapons::PHYSCANNON_PULLFORCE;
+                if mass < 50.0 {
+                    force *= (mass + 0.5) / 50.0;
+                }
+                let dv = -d.normalize_or_zero() * (force / mass.max(1.0));
                 self.physics
                     .set_velocity(b, st.velocity + dv, st.angular_velocity);
             }
