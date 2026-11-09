@@ -5771,6 +5771,9 @@ pub struct Player {
     pub punt_guard: Option<(u32, u64)>,
     /// The tick the gravity gun's next pull may be applied (gravgun.md 4.4: one per 0.1 s).
     pub cannon_pull_tick: u64,
+    /// The tick the +USE / gravity-gun carry's error check starts (gravgun.md 5.3: 1 s grace
+    /// after the pickup before `ComputeError() > 12 u` drops the object).
+    pub carry_check_tick: u64,
     /// Ticks +attack has been held (the machine-gun view kick's fire duration).
     pub attack_held: u32,
     pub alive: bool,
@@ -7522,6 +7525,7 @@ impl Player {
             claw_suppress: 0,
             punt_guard: None,
             cannon_pull_tick: 0,
+            carry_check_tick: 0,
             attack_held: 0,
             alive: true,
             health: PLAYER_HEALTH,
@@ -11506,8 +11510,10 @@ impl<'w> Server<'w> {
         } else {
             gm_physics::pickup::Carry::new_unaligned(body_rot, yaw)
         };
+        let tick = self.tick_count;
         if let Some(p) = self.players.get_mut(&player) {
             p.carry = Some((ent, carry));
+            p.carry_check_tick = tick + 67;
         }
         self.game_events.push(GameEvent::Pickup { player, ent });
         true
@@ -11940,6 +11946,20 @@ impl<'w> Server<'w> {
         let brush = |a: Vec3, b: Vec3| collision.trace_ray(a, b, gm_collision::MASK_SOLID).fraction;
         let st = self.physics.state(b);
         let (tp, tr) = carry.target(eye, view, &info.hulls, st.rotation, origin, hull, &brush);
+        // `UpdateObject` fails (gravgun.md 5.3): the object lags its target by more than
+        // 12 u once the pickup's grace is over, or the player stands on it -> detach
+        let standing_on = self
+            .players
+            .get(&player)
+            .is_some_and(|p| p.state.ground_ent == ent);
+        let checking = self
+            .players
+            .get(&player)
+            .is_some_and(|p| self.tick_count >= p.carry_check_tick);
+        if standing_on || (checking && (st.position - tp).length() > 12.0) {
+            self.drop_carry(player);
+            return;
+        }
         self.physics.hold(
             b,
             tp,
