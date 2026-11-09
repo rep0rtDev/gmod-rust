@@ -198,6 +198,14 @@ impl Carry {
         }
     }
 
+    /// The gravity gun's hold (gravgun.md 5.1): the grab-time orientation is kept as is, no
+    /// axis alignment (only the +USE carry snaps within `ALIGN_COS`).
+    pub fn new_unaligned(body_rot: Quat, yaw: f32) -> Self {
+        let mut c = Self::new(body_rot, yaw);
+        c.rotation = body_rot;
+        c
+    }
+
     /// Where the prop's origin should be this tick. `hulls` are the PHY convexes in the body
     /// frame; the centre of their bounds goes on the hold point (`CGrabController` carries the
     /// entity's `WorldSpaceCenter`, not its mass centre: the chair's origin stays 2.84 u above

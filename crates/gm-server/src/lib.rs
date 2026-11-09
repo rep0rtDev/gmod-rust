@@ -11453,7 +11453,7 @@ impl<'w> Server<'w> {
     /// physguns it and `Request::PlayerPickup` allows.
     fn try_pickup(&mut self, player: u32, ent: u32, yaw: f32) {
         let (mass, size) = (gm_physics::pickup::MAX_MASS, gm_physics::pickup::MAX_SIZE);
-        self.pickup_with(player, ent, yaw, mass, size);
+        self.pickup_with(player, ent, yaw, mass, size, true);
     }
     /// The carry with the caller's mass and size limits (the physcannon's are its own).
     fn pickup_with(
@@ -11463,6 +11463,7 @@ impl<'w> Server<'w> {
         yaw: f32,
         max_mass: f32,
         max_size: f32,
+        align: bool,
     ) -> bool {
         let Some(model) = self
             .sandbox
@@ -11498,7 +11499,13 @@ impl<'w> Server<'w> {
                     * gm_physics::quat_from_angles(pitch, yaw_a, roll);
             }
         }
-        let carry = gm_physics::pickup::Carry::new(body_rot, yaw);
+        // the +USE carry aligns the prop to the player's axes within cos 30 deg, the gravity
+        // gun keeps the grab-time angles (gravgun.md 5.1, gap-report #85)
+        let carry = if align {
+            gm_physics::pickup::Carry::new(body_rot, yaw)
+        } else {
+            gm_physics::pickup::Carry::new_unaligned(body_rot, yaw)
+        };
         if let Some(p) = self.players.get_mut(&player) {
             p.carry = Some((ent, carry));
         }
@@ -11701,7 +11708,7 @@ impl<'w> Server<'w> {
                     snd(self, "TooHeavy");
                     return;
                 }
-                if self.pickup_with(player, ent, ang.y, f32::MAX, f32::MAX) {
+                if self.pickup_with(player, ent, ang.y, f32::MAX, f32::MAX, false) {
                     snd(self, "Pickup");
                     self.set_claws(player, true);
                     self.cannon_hold_loop(player, true);
@@ -11725,7 +11732,7 @@ impl<'w> Server<'w> {
                 let st = self.physics.state(b);
                 let d = st.position - eye;
                 if d.length() <= weapons::PHYSCANNON_TRACELENGTH {
-                    if self.pickup_with(player, ent, ang.y, f32::MAX, f32::MAX) {
+                    if self.pickup_with(player, ent, ang.y, f32::MAX, f32::MAX, false) {
                         snd(self, "Pickup");
                         self.set_claws(player, true);
                         self.cannon_hold_loop(player, true);
