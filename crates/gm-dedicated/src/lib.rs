@@ -5,6 +5,15 @@ use anyhow::{Context, Result};
 use glam::Vec3;
 use gm_physics::{BodyHandle, Surface, World};
 
+/// A prop the map places (`prop_physics` / `prop_dynamic`).
+#[derive(Clone, Debug)]
+pub struct MapProp {
+    pub model: String,
+    pub pos: Vec3,
+    pub angles: Vec3,
+    pub frozen: bool,
+}
+
 pub struct LoadedWorld {
     pub collision: gm_collision::World,
     pub physics: World,
@@ -26,6 +35,9 @@ pub struct LoadedWorld {
     pub static_convexes: Vec<gm_collision::Convex>,
     /// Brush and logic entities for `Server::set_map_entities`, with the world's surface.
     pub map_entities: Vec<gm_server::mapio::MapEntityDef>,
+    /// The map's `prop_physics*` / `prop_dynamic*` entities (props.md #10-14): spawned as
+    /// server props, motion-disabled ones (spawnflag 8) and dynamic ones frozen.
+    pub map_props: Vec<MapProp>,
     pub surface: Surface,
 }
 
@@ -71,6 +83,49 @@ pub fn load_world(mount: &gm_content::Mount, map: &str) -> Result<LoadedWorld> {
             }
         }
     }
+    let map_props: Vec<MapProp> = bsp
+        .entities
+        .iter()
+        .filter_map(|e| {
+            let c = e.classname();
+            let dynamic = matches!(c, "prop_dynamic" | "prop_dynamic_override");
+            if !dynamic
+                && !matches!(
+                    c,
+                    "prop_physics" | "prop_physics_multiplayer" | "prop_physics_override"
+                )
+            {
+                return None;
+            }
+            let model = e.get("model")?;
+            if model.starts_with('*') || !model.ends_with(".mdl") {
+                return None;
+            }
+            let vec3 = |key: &str| -> Vec3 {
+                let v: Vec<f32> = e
+                    .get(key)
+                    .unwrap_or("")
+                    .split_whitespace()
+                    .filter_map(|x| x.parse().ok())
+                    .collect();
+                if v.len() == 3 {
+                    Vec3::new(v[0], v[1], v[2])
+                } else {
+                    Vec3::ZERO
+                }
+            };
+            let flags: u32 = e
+                .get("spawnflags")
+                .and_then(|f| f.parse().ok())
+                .unwrap_or(0);
+            Some(MapProp {
+                model: model.to_string(),
+                pos: vec3("origin"),
+                angles: vec3("angles"),
+                frozen: dynamic || flags & 8 != 0,
+            })
+        })
+        .collect();
     let map_entities: Vec<gm_server::mapio::MapEntityDef> = bsp
         .entities
         .iter()
@@ -170,6 +225,7 @@ pub fn load_world(mount: &gm_content::Mount, map: &str) -> Result<LoadedWorld> {
             }),
         static_convexes,
         map_entities,
+        map_props,
         surface,
     })
 }

@@ -8444,6 +8444,7 @@ fn main() -> Result<()> {
         (Vec3::from(o), e.angles().unwrap_or([0.0; 3])[1])
     };
     let gm_dedicated::LoadedWorld {
+        map_props,
         collision,
         physics,
         world_body,
@@ -8486,6 +8487,10 @@ fn main() -> Result<()> {
             .map_err(|e| eprintln!("model {m}: {e}"))
             .ok()
     }));
+    // the map's prop_physics / prop_dynamic entities as server props (props.md #10-14)
+    for p in &map_props {
+        server.script_spawn_prop(0, &p.model, p.pos, p.angles, p.frozen);
+    }
     let (steps_mount, table) = (
         gm_content::Mount::for_install(&inst)?,
         gm_dedicated::surface_table(&mount)?,

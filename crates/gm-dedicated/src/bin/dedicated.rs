@@ -154,6 +154,17 @@ fn main() -> Result<()> {
             .map_err(|e| eprintln!("model {model}: {e}"))
             .ok()
     }));
+    // the map's prop_physics / prop_dynamic entities as server props (props.md #10-14)
+    let mut map_props = 0;
+    for p in &world.map_props {
+        if server
+            .script_spawn_prop(0, &p.model, p.pos, p.angles, p.frozen)
+            .is_some()
+        {
+            map_props += 1;
+        }
+    }
+    println!("map props: {map_props} of {}", world.map_props.len());
     let (mount_for_steps, table) = (
         gm_content::Mount::for_install(&inst)?,
         gm_dedicated::surface_table(&mount)?,
