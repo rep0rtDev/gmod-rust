@@ -272,6 +272,10 @@ struct Gfx {
     /// `sprites/lgtning`: the combine ball explosion's rings.
     fx_lgtning: Option<wgpu::BindGroup>,
     fx_spark: Option<wgpu::BindGroup>,
+    /// `AR2Tracer` (`effects/gunshiptracer`, width 5) and the `AR2Impact` flash
+    /// (`effects/combinemuzzle2`) of the pulse rifle (hl2weapons.md, gap-report #103).
+    fx_ar2_tracer: Option<wgpu::BindGroup>,
+    fx_ar2_impact: Option<wgpu::BindGroup>,
     fx_decal_mats: std::collections::HashMap<String, Option<gm_render::world::Decal>>,
     /// `sprites/redglow1`: the RPG's laser dot.
     fx_laserdot: Option<wgpu::BindGroup>,
@@ -1216,7 +1220,9 @@ struct App {
     /// `PlayerSnap::vm_serial` of the last server viewmodel event played.
     vm_serial_seen: u8,
     /// Tracers in flight: shooter, end, birth (a 128 u streak at 5000 u/s from the muzzle).
-    fx_tracers: Vec<(u32, Vec3, Instant)>,
+    fx_tracers: Vec<(u32, Vec3, Instant, bool)>,
+    /// `AR2Impact` flashes: position and birth, 0.1 s.
+    fx_ar2_impacts: Vec<(Vec3, Instant)>,
     /// Bullet decals: position, normal, metal, birth (the newest 256).
     fx_decals: std::collections::VecDeque<(Vec3, Vec3, String, Instant)>,
     /// Bullet decals on props: entity, position and normal in its frame, decal material.
@@ -1561,6 +1567,8 @@ impl App {
             .filter_map(|m| world.sprite_material(&gpu, &self.mount, m))
             .collect();
         let fx_spark = world.sprite_material(&gpu, &self.mount, "effects/spark");
+        let fx_ar2_tracer = world.sprite_material(&gpu, &self.mount, "effects/gunshiptracer");
+        let fx_ar2_impact = world.sprite_material(&gpu, &self.mount, "effects/combinemuzzle2");
         let fx_wood_flecks = ["effects/fleck_wood1", "effects/fleck_wood2"]
             .iter()
             .filter_map(|m| world.sprite_material(&gpu, &self.mount, m))
@@ -1643,6 +1651,8 @@ impl App {
             fx_select_ring,
             fx_lgtning,
             fx_spark,
+            fx_ar2_tracer,
+            fx_ar2_impact,
             fx_decal_mats: Default::default(),
             fx_laserdot,
             fx_ball,
@@ -4387,10 +4397,33 @@ impl App {
                         }
                         self.fx_decals
                             .push_back((pos, normal, impact_decal(&surface, pos), now));
+                        // `AR2Impact` at every non-sky hit of a pulse-rifle shot (#103)
+                        if self
+                            .fx_tracers
+                            .iter()
+                            .any(|t| t.3 && t.1.distance(pos) < 8.0)
+                        {
+                            self.fx_ar2_impacts.push((pos + normal * 2.0, now));
+                        }
                         self.spawn_impact(pos, normal, &surface, now);
                     }
                     gm_net::msg::EffectEvent::Tracer { player, end } => {
-                        self.fx_tracers.push((player, end, now));
+                        // the pulse rifle's shots draw `AR2Tracer` (#103)
+                        let ar2 = if Some(player) == self.sim.client.player_id {
+                            viewmodel(self.weapon).is_some_and(|v| v.class == "weapon_ar2")
+                        } else {
+                            let classes =
+                                gm_net::msg::weapon_classes(&self.sim.client.world.weapon_defs);
+                            self.sim
+                                .client
+                                .world
+                                .players
+                                .iter()
+                                .find(|p| p.id == player)
+                                .and_then(|p| classes.get(p.active as usize))
+                                .is_some_and(|c| c == "weapon_ar2")
+                        };
+                        self.fx_tracers.push((player, end, now, ar2));
                         // `FX_MuzzleEffect` for every other shooter (clientfx.md 2.1): the
                         // weapon's world model has no muzzle attachment yet, so from beside
                         // their eye along the shot
@@ -6201,7 +6234,7 @@ impl App {
             }
             let players = &self.sim.client.world.players;
             let mut keep = Vec::new();
-            for &(player, end, born) in &self.fx_tracers {
+            for &(player, end, born, ar2) in &self.fx_tracers {
                 let start = if Some(player) == me {
                     own_muzzle
                 } else {
@@ -6215,14 +6248,23 @@ impl App {
                 if total < 1.0 || head >= total {
                     continue;
                 }
-                keep.push((player, end, born));
-                if let Some(m) = &g.fx_spark {
+                keep.push((player, end, born, ar2));
+                let mat = if ar2 {
+                    g.fx_ar2_tracer.as_ref()
+                } else {
+                    g.fx_spark.as_ref()
+                };
+                if let Some(m) = mat {
                     let dir = (end - start) / total;
                     let tail = (head - 128.0).max(0.0);
                     let (v, i) = g.world.beam_strip(
                         &[start + dir * tail, start + dir * head],
-                        1.5,
-                        [1.0, 0.9, 0.6],
+                        if ar2 { 5.0 } else { 1.5 },
+                        if ar2 {
+                            [1.0, 1.0, 1.0]
+                        } else {
+                            [1.0, 0.9, 0.6]
+                        },
                         camera.position,
                         0.0,
                         1.0 / 128.0,
@@ -6231,6 +6273,19 @@ impl App {
                 }
             }
             self.fx_tracers = keep;
+            // `AR2Impact`: a combinemuzzle2 flash growing 16 -> 32 u and fading over 0.1 s
+            self.fx_ar2_impacts
+                .retain(|(_, born)| now.duration_since(*born).as_secs_f32() < 0.1);
+            if let Some(m) = &g.fx_ar2_impact {
+                for &(pos, born) in &self.fx_ar2_impacts {
+                    let age = now.duration_since(born).as_secs_f32() / 0.1;
+                    let c = 1.0 - age;
+                    let (v, i) = g
+                        .world
+                        .sprite_quad(pos, 16.0 + 16.0 * age, [c, c, c], &camera);
+                    additive.push((m, v, i));
+                }
+            }
             if self.fx_muzzle_until.is_some_and(|t| now < t) {
                 // the sprites are drawn in the viewmodel pass: the gun covers the world pass
                 vm_flash = Some(own_muzzle);
@@ -8929,6 +8984,7 @@ fn main() -> Result<()> {
         vm_prev: None,
         vm_serial_seen: 0,
         fx_tracers: Vec::new(),
+        fx_ar2_impacts: Vec::new(),
         fx_decals: Default::default(),
         fx_prop_decals: Default::default(),
         fx_bursts: Vec::new(),
