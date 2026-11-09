@@ -283,6 +283,7 @@ fn net_messages_round_trip_through_the_host_transport() {
              state.got = { net.ReadString(), net.ReadUInt(8), net.ReadBool(), tostring(net.ReadVector()), net.ReadEntity():EntIndex(), net.ReadTable().k, ply:UserID() }
          end)
          events.on('tick.pre', function()
+             util.AddNetworkString('hello')
              net.Start('hello')
              net.WriteString('hi') net.WriteUInt(200, 8) net.WriteBool(true) net.WriteVector(Vector(1, 2, 3)) net.WriteEntity(NULL) net.WriteTable({ k = 'v' })
              net.Send(Player(1))

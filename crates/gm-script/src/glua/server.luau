@@ -5,93 +5,279 @@
 local stub = __glua_stub
 
 ------------------------------------------------------------------------ net
+-- The game's net message is a bit stream (luabind.md F57-F60): `[16-bit string-table id]
+-- [payload]` inside the 8-bit GMod envelope, bits packed LSB first as `bf_write` does;
+-- `WriteUInt` / `WriteInt` take exactly their bit widths, floats are 32-bit, doubles 64-bit,
+-- strings NUL-terminated, entities `MAX_EDICT_BITS` = 13, vectors / angles the engine's
+-- coord compression (14 integer + 5 fraction bits per axis), normals 11 fraction bits,
+-- `WriteType` an 8-bit type id before each value and `WriteTable` typed key / value pairs ended
+-- by a nil type; 64 KB per message; reading past the end gives zeros. Our transport carries
+-- the bytes as a string.
 local hostnet = net or {}
 net = {}
 for k, v in pairs(hostnet) do net[k] = v end   -- the host's send / receive stay reachable
-local out = nil           -- the message being written: { name = , items = { {t, v}, ... } }
-local inbox = nil         -- the message being read: items + cursor
-local strings = {}
+local NET_MAX_BITS = 65536 * 8
+local out = nil           -- the message being written: { name, bytes = {0..255}, nbits }
+local inbox = nil         -- the message being read: { bytes, nbits, pos }
+local strings = {}        -- name -> id
+local names = {}          -- id -> name
+local next_id = 1
 local receivers = {}
-local function wr(t, v)
-    if not out then error("net.Write" .. t .. ": no net.Start") end
-    out.items[#out.items + 1] = { t, v }
+local function wbits(value, nbits)
+    if not out then error("net.Write*: no net.Start") end
+    if out.nbits + nbits > NET_MAX_BITS then error("net: message exceeds 64 KB") end
+    local v = value
+    for _ = 1, nbits do
+        local idx = out.nbits // 8 + 1
+        local off = out.nbits % 8
+        if v % 2 >= 1 then out.bytes[idx] = bit32.bor(out.bytes[idx] or 0, bit32.lshift(1, off))
+        elseif not out.bytes[idx] then out.bytes[idx] = 0 end
+        v = v // 2
+        out.nbits += 1
+    end
 end
-local function rd(t)
-    if not inbox then return nil end
-    inbox.pos += 1
-    local item = inbox.items[inbox.pos]
-    if not item then return nil end
-    return item[2], item[1]
+local function rbits(nbits)
+    local v, scale = 0, 1
+    for _ = 1, nbits do
+        local bit = 0
+        if inbox and inbox.pos < inbox.nbits then
+            local byte = inbox.bytes[inbox.pos // 8 + 1] or 0
+            bit = bit32.band(bit32.rshift(byte, inbox.pos % 8), 1)
+        end
+        if inbox then inbox.pos += 1 end
+        v += bit * scale
+        scale *= 2
+    end
+    return v
 end
+local function wbytes(str)
+    for i = 1, #str do wbits(string.byte(str, i), 8) end
+end
+local function rbytes(n)
+    local t = {}
+    for i = 1, n do t[i] = string.char(rbits(8)) end
+    return table.concat(t)
+end
+local function width(bits) return math.clamp(math.floor(tonumber(bits) or 32), 1, 32) end
 function net.Start(name, unreliable)
-    if not strings[name] then strings[name] = true end
-    out = { name = name, items = {} }
+    if type(name) ~= "string" then error("net.Start: message name must be a string") end
+    local id = strings[name]
+    if not id then
+        if SERVER then error("net.Start: calling net.Start with unpooled message name! [" .. name .. "]") end
+        id = next_id; next_id += 1; strings[name] = id; names[id] = name
+    end
+    out = { name = name, bytes = {}, nbits = 0 }
+    wbits(id, 16)
     return true
 end
 function net.Abort() out = nil end
-function net.WriteString(s) wr("string", tostring(s)) end
-function net.WriteInt(n, bits) wr("int", math.floor(n)) end
-function net.WriteUInt(n, bits) wr("uint", math.max(0, math.floor(n))) end
-function net.WriteUInt64(n) wr("uint64", tostring(n)) end
-function net.WriteFloat(n) wr("float", n) end
-function net.WriteDouble(n) wr("double", n) end
-function net.WriteBool(b) wr("bool", b == true) end
-net.WriteBit = net.WriteBool
-function net.WriteVector(v) wr("vector", { x = v.x, y = v.y, z = v.z }) end
-function net.WriteNormal(v) wr("normal", { x = v.x, y = v.y, z = v.z }) end
-function net.WriteAngle(a) wr("angle", { p = a.p, y = a.y, r = a.r }) end
-function net.WriteColor(c, alpha) wr("color", { r = c.r, g = c.g, b = c.b, a = alpha == false and 255 or c.a }) end
-function net.WriteEntity(e) wr("entity", IsValid(e) and e:EntIndex() or 0) end
-function net.WritePlayer(p) wr("player", IsValid(p) and p:UserID() or 0) end
-function net.WriteData(s, len) wr("data", len and s:sub(1, len) or s) end
-function net.WriteMatrix(m) wr("matrix", m and m:ToTable() or {}) end
-function net.WriteTable(t, seq) wr("table", util.TableToJSON(t)) end
-function net.WriteType(v)
-    if isvector(v) then net.WriteVector(v) elseif isangle(v) then net.WriteAngle(v) elseif IsColor(v) then net.WriteColor(v)
-    elseif IsEntity(v) then net.WriteEntity(v) elseif type(v) == "table" then net.WriteTable(v)
-    elseif type(v) == "number" then net.WriteDouble(v) elseif type(v) == "boolean" then net.WriteBool(v)
-    elseif v == nil then wr("nil", false) else net.WriteString(tostring(v)) end
+function net.WriteUInt(n, bits)
+    local b = width(bits)
+    wbits(math.floor(tonumber(n) or 0) % (2 ^ b), b)
 end
-function net.ReadString() local v = rd(); return v ~= nil and tostring(v) or "" end
-function net.ReadInt() local v = rd(); return tonumber(v) or 0 end
-net.ReadUInt = net.ReadInt
-function net.ReadUInt64() local v = rd(); return tostring(v or "0") end
-net.ReadFloat = net.ReadInt
-net.ReadDouble = net.ReadInt
-function net.ReadBool() local v = rd(); return v == true end
-net.ReadBit = function() return net.ReadBool() and 1 or 0 end
-function net.ReadVector() local v = rd(); return type(v) == "table" and Vector(v.x, v.y, v.z) or Vector() end
-net.ReadNormal = net.ReadVector
-function net.ReadAngle() local v = rd(); return type(v) == "table" and Angle(v.p, v.y, v.r) or Angle() end
-function net.ReadColor() local v = rd(); return type(v) == "table" and Color(v.r, v.g, v.b, v.a) or Color(255, 255, 255) end
-function net.ReadEntity() local v = rd(); return Entity(tonumber(v) or 0) end
-function net.ReadPlayer() local v = rd(); return Player(tonumber(v) or 0) end
-function net.ReadData() local v = rd(); return v ~= nil and tostring(v) or "" end
-function net.ReadMatrix() local v = rd(); return v end
-function net.ReadTable() local v = rd(); return type(v) == "string" and util.JSONToTable(v) or {} end
-function net.ReadType()
-    local v, t = rd()
-    if t == "vector" or t == "normal" then return Vector(v.x, v.y, v.z) elseif t == "angle" then return Angle(v.p, v.y, v.r)
-    elseif t == "color" then return Color(v.r, v.g, v.b, v.a) elseif t == "entity" then return Entity(v) elseif t == "player" then return Player(v)
-    elseif t == "table" then return util.JSONToTable(v) elseif t == "nil" then return nil end
+function net.WriteInt(n, bits)
+    local b = width(bits)
+    wbits(math.floor(tonumber(n) or 0) % (2 ^ b), b)
+end
+function net.WriteUInt64(n)
+    local v = math.max(0, math.floor(tonumber(n) or 0))
+    wbits(v % 2 ^ 32, 32); wbits(v // 2 ^ 32, 32)
+end
+function net.WriteFloat(n) wbytes(string.pack("<f", tonumber(n) or 0)) end
+function net.WriteDouble(n) wbytes(string.pack("<d", tonumber(n) or 0)) end
+function net.WriteBool(b) wbits(b and 1 or 0, 1) end
+net.WriteBit = function(b) wbits((b == true or b == 1) and 1 or 0, 1) end
+function net.WriteString(s)
+    local str = tostring(s or "")
+    local nul = string.find(str, "\0", 1, true)
+    if nul then str = string.sub(str, 1, nul - 1) end
+    wbytes(str); wbits(0, 8)
+end
+function net.WriteData(s, len)
+    local str = tostring(s or "")
+    wbytes(len and string.sub(str, 1, len) or str)
+end
+-- bf_write::WriteBitCoord: int flag, fraction flag, sign, 14 integer bits (value - 1), 5 fraction bits
+local function wcoord(f)
+    local intval = math.floor(math.abs(f))
+    local fractval = math.floor(math.abs(f) * 32) % 32
+    wbits(intval ~= 0 and 1 or 0, 1); wbits(fractval ~= 0 and 1 or 0, 1)
+    if intval ~= 0 or fractval ~= 0 then
+        wbits(f <= -1 / 32 and 1 or 0, 1)
+        if intval ~= 0 then wbits(math.min(intval, 16384) - 1, 14) end
+        if fractval ~= 0 then wbits(fractval, 5) end
+    end
+end
+local function rcoord()
+    local intflag, fractflag = rbits(1), rbits(1)
+    if intflag == 0 and fractflag == 0 then return 0 end
+    local sign = rbits(1)
+    local v = 0
+    if intflag == 1 then v = rbits(14) + 1 end
+    if fractflag == 1 then v += rbits(5) / 32 end
+    return sign == 1 and -v or v
+end
+local function wvec3coord(x, y, z)
+    local fx, fy, fz = math.abs(x) >= 1 / 32, math.abs(y) >= 1 / 32, math.abs(z) >= 1 / 32
+    wbits(fx and 1 or 0, 1); wbits(fy and 1 or 0, 1); wbits(fz and 1 or 0, 1)
+    if fx then wcoord(x) end
+    if fy then wcoord(y) end
+    if fz then wcoord(z) end
+end
+local function rvec3coord()
+    local fx, fy, fz = rbits(1), rbits(1), rbits(1)
+    local x = fx == 1 and rcoord() or 0
+    local y = fy == 1 and rcoord() or 0
+    local z = fz == 1 and rcoord() or 0
+    return x, y, z
+end
+function net.WriteVector(v) wvec3coord(v.x, v.y, v.z) end
+function net.WriteAngle(a) wvec3coord(a.p, a.y, a.r) end
+-- bf_write::WriteBitVec3Normal: x / y flags, sign + 11 fraction bits each, the sign of z
+local NORMAL_DENOM = 2047
+local function wnormal(f)
+    wbits(f <= -1 / NORMAL_DENOM and 1 or 0, 1)
+    wbits(math.min(math.floor(math.abs(f) * NORMAL_DENOM + 0.5), NORMAL_DENOM), 11)
+end
+local function rnormal()
+    local sign = rbits(1)
+    local v = rbits(11) / NORMAL_DENOM
+    return sign == 1 and -v or v
+end
+function net.WriteNormal(v)
+    local fx, fy = math.abs(v.x) >= 1 / NORMAL_DENOM, math.abs(v.y) >= 1 / NORMAL_DENOM
+    wbits(fx and 1 or 0, 1); wbits(fy and 1 or 0, 1)
+    if fx then wnormal(v.x) end
+    if fy then wnormal(v.y) end
+    wbits(v.z < 0 and 1 or 0, 1)
+end
+function net.ReadNormal()
+    local fx, fy = rbits(1), rbits(1)
+    local x = fx == 1 and rnormal() or 0
+    local y = fy == 1 and rnormal() or 0
+    local zs = rbits(1)
+    local z = math.sqrt(math.max(0, 1 - x * x - y * y))
+    return Vector(x, y, zs == 1 and -z or z)
+end
+function net.WriteColor(c, alpha)
+    wbits(math.clamp(math.floor(c.r or 255), 0, 255), 8)
+    wbits(math.clamp(math.floor(c.g or 255), 0, 255), 8)
+    wbits(math.clamp(math.floor(c.b or 255), 0, 255), 8)
+    if alpha ~= false then wbits(math.clamp(math.floor(c.a or 255), 0, 255), 8) end
+end
+function net.WriteEntity(e) wbits(IsValid(e) and e:EntIndex() or 0, 13) end
+function net.WritePlayer(p) wbits(IsValid(p) and p:UserID() or 0, 8) end
+function net.WriteMatrix(m)
+    local t = m and m:ToTable() or {}
+    for r = 1, 4 do for c = 1, 4 do net.WriteFloat(t[r] and t[r][c] or ((r == c) and 1 or 0)) end end
+end
+local TYPE_NIL_, TYPE_BOOL_, TYPE_NUMBER_, TYPE_STRING_, TYPE_TABLE_ = 0, 1, 3, 4, 5
+local TYPE_ENTITY_, TYPE_VECTOR_, TYPE_ANGLE_, TYPE_MATRIX_, TYPE_COLOR_ = 9, 10, 11, 29, 255
+function net.WriteType(v)
+    if v == nil then wbits(TYPE_NIL_, 8)
+    elseif IsColor(v) then wbits(TYPE_COLOR_, 8); net.WriteColor(v)
+    elseif isvector(v) then wbits(TYPE_VECTOR_, 8); net.WriteVector(v)
+    elseif isangle(v) then wbits(TYPE_ANGLE_, 8); net.WriteAngle(v)
+    elseif IsEntity(v) then wbits(TYPE_ENTITY_, 8); net.WriteEntity(v)
+    elseif type(v) == "table" then wbits(TYPE_TABLE_, 8); net.WriteTable(v)
+    elseif type(v) == "number" then wbits(TYPE_NUMBER_, 8); net.WriteDouble(v)
+    elseif type(v) == "boolean" then wbits(TYPE_BOOL_, 8); net.WriteBool(v)
+    elseif type(v) == "string" then wbits(TYPE_STRING_, 8); net.WriteString(v)
+    else error("net.WriteType: couldn't write type " .. type(v)) end
+end
+function net.WriteTable(t, seq)
+    for k, v in pairs(t) do net.WriteType(k); net.WriteType(v) end
+    net.WriteType(nil)
+end
+function net.ReadUInt(bits) return rbits(width(bits)) end
+function net.ReadInt(bits)
+    local b = width(bits)
+    local v = rbits(b)
+    if v >= 2 ^ (b - 1) then v -= 2 ^ b end
     return v
 end
-function net.ReadHeader() return 0 end
-function net.BytesWritten() if not out then return 0 end return #util.TableToJSON(out.items) end
-function net.BytesLeft() if not inbox then return 0, 0 end local n = #inbox.items - inbox.pos; return n * 8, n * 64 end
-local function flush(target)
+function net.ReadUInt64() local lo = rbits(32); return lo + rbits(32) * 2 ^ 32 end
+function net.ReadFloat() return (string.unpack("<f", rbytes(4))) end
+function net.ReadDouble() return (string.unpack("<d", rbytes(8))) end
+function net.ReadBool() return rbits(1) == 1 end
+net.ReadBit = function() return rbits(1) end
+function net.ReadString()
+    local t = {}
+    while inbox and inbox.pos < inbox.nbits do
+        local c = rbits(8)
+        if c == 0 then break end
+        t[#t + 1] = string.char(c)
+    end
+    return table.concat(t)
+end
+function net.ReadData(len) return rbytes(math.max(0, math.floor(tonumber(len) or 0))) end
+function net.ReadVector() return Vector(rvec3coord()) end
+function net.ReadAngle() return Angle(rvec3coord()) end
+function net.ReadColor(alpha)
+    local r, g, b = rbits(8), rbits(8), rbits(8)
+    local a = 255
+    if alpha ~= false then a = rbits(8) end
+    return Color(r, g, b, a)
+end
+function net.ReadEntity() return Entity(rbits(13)) end
+function net.ReadPlayer() return Player(rbits(8)) end
+function net.ReadMatrix()
+    local t = {}
+    for r = 1, 4 do t[r] = {}; for c = 1, 4 do t[r][c] = net.ReadFloat() end end
+    return Matrix and Matrix(t) or t
+end
+function net.ReadType(id)
+    local t = id or rbits(8)
+    if t == TYPE_NIL_ then return nil
+    elseif t == TYPE_BOOL_ then return net.ReadBool()
+    elseif t == TYPE_NUMBER_ then return net.ReadDouble()
+    elseif t == TYPE_STRING_ then return net.ReadString()
+    elseif t == TYPE_TABLE_ then return net.ReadTable()
+    elseif t == TYPE_ENTITY_ then return net.ReadEntity()
+    elseif t == TYPE_VECTOR_ then return net.ReadVector()
+    elseif t == TYPE_ANGLE_ then return net.ReadAngle()
+    elseif t == TYPE_MATRIX_ then return net.ReadMatrix()
+    elseif t == TYPE_COLOR_ then return net.ReadColor() end
+    error("net.ReadType: couldn't read type " .. tostring(t))
+end
+function net.ReadTable(seq)
+    local t = {}
+    while true do
+        local k = net.ReadType()
+        if k == nil then break end
+        t[k] = net.ReadType()
+    end
+    return t
+end
+function net.ReadHeader() return rbits(16) end
+function net.BytesWritten() if not out then return 0 end return math.ceil(out.nbits / 8) end
+function net.BytesLeft()
+    if not inbox then return 0, 0 end
+    local bits = math.max(0, inbox.nbits - inbox.pos)
+    return math.ceil(bits / 8), bits
+end
+local function payload()
     if not out then error("net.Send: no net.Start") end
-    hostnet.send(out.name, out.items, target)
+    local t = {}
+    local n = math.ceil(out.nbits / 8)
+    for i = 1, n do t[i] = string.char(out.bytes[i] or 0) end
+    return { bits = out.nbits, data = table.concat(t) }
+end
+local function flush(target)
+    local msg = payload()
+    hostnet.send(out.name, msg, target)
     out = nil
 end
 function net.Send(target)
     if type(target) == "table" and target.IsValid == nil then
-        for _, p in ipairs(target) do if IsValid(p) then hostnet.send(out.name, out.items, p:UserID()) end end
+        local msg = payload()
+        for _, p in ipairs(target) do if IsValid(p) then hostnet.send(out.name, msg, p:UserID()) end end
         out = nil
         return
     end
     if type(target) == "table" and target.GetPlayers then
-        for _, p in ipairs(target:GetPlayers()) do hostnet.send(out.name, out.items, p:UserID()) end
+        local msg = payload()
+        for _, p in ipairs(target:GetPlayers()) do hostnet.send(out.name, msg, p:UserID()) end
         out = nil
         return
     end
@@ -103,30 +289,49 @@ function net.SendOmit(omit)
     local skip = {}
     if type(omit) == "table" and omit.IsValid then skip[omit:UserID()] = true
     elseif type(omit) == "table" then for _, p in ipairs(omit) do skip[p:UserID()] = true end end
-    for _, p in ipairs(player.GetAll()) do if not skip[p:UserID()] then hostnet.send(out.name, out.items, p:UserID()) end end
+    local msg = payload()
+    for _, p in ipairs(player.GetAll()) do if not skip[p:UserID()] then hostnet.send(out.name, msg, p:UserID()) end end
     out = nil
 end
 net.SendPVS = function() net.Broadcast() end
 net.SendPAS = function() net.Broadcast() end
-function net.Receive(name, fn) receivers[name] = fn end
+function net.Receive(name, fn) receivers[string.lower(tostring(name))] = fn end
+-- net.Incoming (F58): the 16-bit header names the receiver, which gets the payload length
 function net.Incoming(len, ply)
-    local name = net.ReadString()
-    local fn = receivers[name]
-    if fn then fn(len, ply) end
+    local id = net.ReadHeader()
+    local name = names[id]
+    if not name then return end
+    local fn = receivers[string.lower(name)]
+    if fn then fn(len - 16, ply) end
 end
 if events then
     events.on("net.message", function(p)
-        local fn = receivers[p.name]
-        if fn then
-            inbox = { items = type(p.data) == "table" and p.data or {}, pos = 0 }
-            fn(#inbox.items * 8, p.player and Player(p.player) or NULL)
-            inbox = nil
+        local d = p.data
+        if type(d) ~= "table" or type(d.data) ~= "string" then return end
+        local bytes = { string.byte(d.data, 1, #d.data) }
+        inbox = { bytes = bytes, nbits = d.bits or #d.data * 8, pos = 0 }
+        -- the other realm's table: its id for the name is learned from the header
+        local id = rbits(16)
+        inbox.pos = 0
+        if type(p.name) == "string" and not names[id] then
+            if strings[p.name] then names[strings[p.name]] = nil end
+            strings[p.name] = id; names[id] = p.name
+            if id >= next_id then next_id = id + 1 end
         end
+        net.Incoming(inbox.nbits, p.player and Player(p.player) or NULL)
+        inbox = nil
     end)
 end
-function util.AddNetworkString(name) strings[name] = true; return util.CRC(name) end
-function util.NetworkStringToID(name) return strings[name] and tonumber(util.CRC(name)) or 0 end
-function util.NetworkIDToString(id) for n in pairs(strings) do if tonumber(util.CRC(n)) == id then return n end end return nil end
+-- util.AddNetworkString (F60): server-side pooling, ids are 16-bit string table indices
+function util.AddNetworkString(name)
+    if strings[name] then return strings[name] end
+    if next_id >= 4096 then error("util.AddNetworkString: too many network strings") end
+    local id = next_id; next_id += 1
+    strings[name] = id; names[id] = name
+    return id
+end
+function util.NetworkStringToID(name) return strings[name] or 0 end
+function util.NetworkIDToString(id) return names[id] end
 __glua_classes.CRecipientFilter = nil
 RecipientFilter = function()
     local R = {}
@@ -636,12 +841,14 @@ local prev_move = {}
     events.on("tick.pre", function()
         if not initialized then
             initialized = true
+            -- SetGamemode's start-up order (luabind.md F23); InitPostEntity once the map's
+            -- entities exist (F24), which is the case by the first tick
+            hook.Run("CreateTeams")
             hook.Run("PreGamemodeLoaded")
             hook.Run("OnGamemodeLoaded")
-            hook.Run("CreateTeams")
+            hook.Run("PostGamemodeLoaded")
             hook.Run("Initialize")
             hook.Run("InitPostEntity")
-            hook.Run("PostGamemodeLoaded")
         end
         local hooks = hook.GetTable()
         local function wanted(name) return hooks[name] ~= nil and next(hooks[name]) ~= nil end
