@@ -20,7 +20,7 @@ Harness group: `move_*`: 7 harnesses recorded on a dedicated server bot (version
 | jump impulse | 200 u/s | sandbox `JumpPower` |
 | standing hull | 32 x 32 x 72, eye 64 | engine hull |
 | ducked hull | 32 x 32 x 36, eye 28 | engine hull |
-| duck transition | 0.4 s down, instant up when there is room | engine |
+| duck transition | per-player `DuckSpeed` / `UnDuckSpeed` (sandbox player class 0.1 s / 0.1 s, base gamemode 0.3 s); the eye slides on `SimpleSpline(t)` = 3t^2 - 2t^3 from the press tick; instant in the air | binary study (tools/lab/notes/movement.md §5) |
 | ground normal | z >= 0.7 | engine |
 | trace stop distance | 1/32 u | engine `DIST_EPSILON` |
 
@@ -50,7 +50,7 @@ Harness group: `move_*`: 7 harnesses recorded on a dedicated server bot (version
 
 ## Ducking
 
-- Press: the press tick starts the clock at 0, every following tick adds 0.015; the duck completes when the clock exceeds 0.4 s, which is the 27th tick after the press (0.405 s), or immediately when airborne. In the air the hull shrinks from the top, so the origin rises by half the height difference (18 u), which is what makes crouch jumps clear higher ledges.
+- Press: the press tick starts the clock at 0, every following tick adds 0.015; the duck completes when the clock exceeds the player's duck time (sandbox 0.1 s: the 7th tick after the press; the 0.4 s measured earlier was the HL2 `TIME_TO_DUCK`, GMod replaces it with `Player:SetDuckSpeed`), or immediately when airborne. Until then the eye height is `lerp(64, 28, SimpleSpline(elapsed / DuckSpeed))`; releasing mid-duck remaps the clock onto the unduck curve at the same height. In the air the hull shrinks from the top, so the origin rises by half the height difference (18 u), which is what makes crouch jumps clear higher ledges.
 - Release: if there is room for the standing hull (in the air the origin first drops by 18 u), an unduck clock starts; standing completes when it exceeds 0.1 s (`GetUnDuckSpeed` = 0.1 in sandbox), the 7th tick after release. Without room, stay ducked and retry every tick. Releasing before the duck completed stands immediately.
 
 ## Noclip

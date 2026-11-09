@@ -98,8 +98,9 @@ impl Default for MoveConfig {
             run_speed: 400.0,
             slow_walk_speed: 100.0,
             crouched_walk_speed: 0.3,
-            duck_time: 0.4,
-            unduck_time: 0.2,
+            // sandbox player class: DuckSpeed / UnDuckSpeed 0.1 s (base gamemode 0.3, HL2 0.4/0.2)
+            duck_time: 0.1,
+            unduck_time: 0.1,
             hull_half: 16.0,
             stand_height: 72.0,
             duck_height: 36.0,
@@ -255,8 +256,8 @@ pub fn decay_punch(st: &mut PlayerState, dt: f32) {
     }
 }
 
-/// `SimpleSpline` of the duck transition: 0 standing, 1 ducked. While ducking it rises over
-/// `TIME_TO_DUCK` (0.4 s), while unducking it falls over `TIME_TO_UNDUCK` (0.2 s).
+/// `SimpleSpline` of the duck transition: 0 standing, 1 ducked. While ducking it rises over the
+/// player's duck time (`Player:SetDuckSpeed`), while unducking it falls over the unduck time.
 pub fn duck_fraction(cfg: &MoveConfig, st: &PlayerState) -> f32 {
     let spline = |v: f32| {
         let v = v.clamp(0.0, 1.0);
@@ -2189,9 +2190,9 @@ mod tests {
         };
         m.tick(&mut st, &UserCmd::default());
         assert_eq!(eye_height(&cfg, &st), cfg.stand_eye);
-        // about half of TIME_TO_DUCK (0.4 s); the press tick itself adds no time, as in the
-        // game, so the fraction is SimpleSpline((ticks - 1) * dt / 0.4)
-        let ticks = (0.2 / cfg.tick_interval).round() as usize;
+        // about half of the duck time; the press tick itself adds no time, as in the game, so
+        // the fraction is SimpleSpline((ticks - 1) * dt / duck_time)
+        let ticks = (0.5 * cfg.duck_time / cfg.tick_interval).round() as usize;
         for _ in 0..ticks {
             m.tick(&mut st, &duck);
         }
