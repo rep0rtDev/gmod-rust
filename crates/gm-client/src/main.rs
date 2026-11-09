@@ -3814,8 +3814,9 @@ impl App {
         let buckets = self.buckets();
         let fg = [1.0, 220.0 / 255.0, 0.0, fade];
         let dim = [1.0, 220.0 / 255.0, 0.0, 0.5 * fade];
-        // SelectionBoxBg 0 0 0 90 (ui.md §8.1, gap-report #159)
+        // SelectionBoxBg 0 0 0 90, the selected one 0 0 0 150 (ui.md §8.1, gap-report #159)
         let box_bg = [0.0, 0.0, 0.0, 90.0 / 255.0 * fade];
+        let sel_bg = [0.0, 0.0, 0.0, 150.0 / 255.0 * fade];
         let (small, large_w, large_h, gap) = (32.0 * s, 112.0 * s, 80.0 * s, 8.0 * s);
         let icons = ui.font_metrics(Some("WeaponIcons"));
         let numbers = ui.font_metrics(Some("HudSelectionNumbers"));
@@ -3842,7 +3843,7 @@ impl App {
                     y,
                     w: wide,
                     h: tall,
-                    color: box_bg,
+                    color: if open && i == sel { sel_bg } else { box_bg },
                 });
                 if row == 0 {
                     items.push(UiItem::Text {
