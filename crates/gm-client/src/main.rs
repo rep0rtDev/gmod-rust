@@ -4423,8 +4423,18 @@ impl App {
                         if self.fx_decals.len() >= DECAL_RING {
                             self.fx_decals.pop_front();
                         }
-                        self.fx_decals
-                            .push_back((pos, normal, impact_decal(&surface, pos), now));
+                        self.fx_decals.push_back((
+                            pos,
+                            normal,
+                            impact_decal(
+                                self.gamematerials
+                                    .get(&surface.to_ascii_lowercase())
+                                    .copied(),
+                                &surface,
+                                pos,
+                            ),
+                            now,
+                        ));
                         // `AR2Impact` at every non-sky hit of a pulse-rifle shot (#103)
                         if self
                             .fx_tracers
@@ -4729,7 +4739,13 @@ impl App {
                             ent,
                             lpos,
                             lnormal,
-                            impact_decal(&surface, lpos),
+                            impact_decal(
+                                self.gamematerials
+                                    .get(&surface.to_ascii_lowercase())
+                                    .copied(),
+                                &surface,
+                                lpos,
+                            ),
                             now,
                         ));
                     }
@@ -10190,17 +10206,41 @@ struct ThrusterParticle {
 /// `decals_subrect.txt` `TranslationData`: the impact decal of a surface property's game
 /// material (`scripts/surfaceproperties.txt`); `Impact.Concrete` for the untranslated
 /// letters, nothing for `no_decal`; one of the group's five `shotN` by the hit position.
-fn impact_decal(surfaceprop: &str, pos: Vec3) -> String {
-    let group = match surfaceprop.to_ascii_lowercase().as_str() {
-        "no_decal" => return String::new(),
-        "solidmetal" | "metalpanel" | "metalvehicle" | "armorflesh" | "metalvent" => "metal",
-        "wood" | "watermelon" => "wood",
-        "glass" => "glass",
-        "antlionsand" => "sand",
-        _ => "concrete",
+/// `Impact.Concrete` translated by the surface's game material letter through
+/// `decals_subrect.txt` (clientfx.md §4.1-4.2, gap-report #127): C/T/P/L/D concrete (5
+/// subrects), M/V/G metal (4), W/O wood, Y glass, F/B/H flesh, A/E antlion, N sand, I/S/X/-
+/// nothing; letters outside the table (U grass, J snow) keep the untranslated concrete.
+fn impact_decal(letter: Option<char>, surfaceprop: &str, pos: Vec3) -> String {
+    if surfaceprop.eq_ignore_ascii_case("no_decal") {
+        return String::new();
+    }
+    let (group, count) = match letter.map(|c| c.to_ascii_uppercase()) {
+        Some('M' | 'V' | 'G') => ("metal", 4),
+        Some('W' | 'O') => ("wood", 5),
+        Some('Y') => ("glass", 5),
+        // `Impact.Flesh` has no shot decals in the flesh directory: the blood group
+        Some('F' | 'B' | 'H') => {
+            return format!(
+                "decals/blood{}_subrect",
+                1 + (pos.x.to_bits() ^ pos.z.to_bits()) % 6
+            )
+        }
+        Some('A' | 'E') => ("antlion", 5),
+        Some('N') => ("sand", 5),
+        Some('I' | 'S' | 'X' | '-') => return String::new(),
+        Some(_) => ("concrete", 5),
+        None => match surfaceprop.to_ascii_lowercase().as_str() {
+            "solidmetal" | "metalpanel" | "metalvehicle" | "armorflesh" | "metalvent" => {
+                ("metal", 4)
+            }
+            "wood" | "watermelon" => ("wood", 5),
+            "glass" => ("glass", 5),
+            "antlionsand" => ("sand", 5),
+            _ => ("concrete", 5),
+        },
     };
     let h = pos.x.to_bits() ^ pos.y.to_bits().rotate_left(11) ^ pos.z.to_bits().rotate_left(22);
-    format!("decals/{group}/shot{}", 1 + h % 5)
+    format!("decals/{group}/shot{}_subrect", 1 + h % count)
 }
 
 /// An `env_shake` on the view (`CViewEffects::CalcShake`): a new random offset and roll every
