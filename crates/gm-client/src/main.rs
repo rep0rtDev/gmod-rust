@@ -3829,6 +3829,14 @@ impl App {
         let t = self.epoch.elapsed().as_secs_f32();
         for (slot, list) in buckets.iter().enumerate() {
             if list.is_empty() {
+                // an empty bucket is a 0 0 0 70 box without a number (ui.md §8.3)
+                items.push(UiItem::Rect {
+                    x,
+                    y: y0,
+                    w: small,
+                    h: small,
+                    color: [0.0, 0.0, 0.0, 70.0 / 255.0 * fade],
+                });
                 x += small + gap;
                 continue;
             }
