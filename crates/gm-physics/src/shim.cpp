@@ -17,6 +17,9 @@ void gmp_set_contact_settings(void *system, float speculative_distance, float pe
 	// swept to its time of impact (Jolt's default 0.75 lets a prop falling 9 u per tick pass
 	// the speculative distance and land a tick late, see docs/spec/physics.md)
 	s.mLinearCastThreshold = linear_cast_threshold;
+	// vphysics puts a resting body to sleep about 120 ticks (1.8 s) after it stops moving
+	// (tools/lab/notes/vphysics.md, gap-report #174); Jolt's default is 0.5 s
+	s.mTimeBeforeSleep = 1.8f;
 	if (const char *t = getenv("GMP_LINEARCAST_THRESHOLD")) s.mLinearCastThreshold = (float)atof(t); // experiment knob
 	if (const char *t = getenv("GMP_LINEARCAST_MAXPEN")) s.mLinearCastMaxPenetration = (float)atof(t);
 	sys->SetPhysicsSettings(s);
