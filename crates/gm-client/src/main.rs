@@ -4692,18 +4692,12 @@ impl App {
                         }
                     }
                     gm_net::msg::EffectEvent::Splash { pos } => {
-                        // TE_WaterSplash: a splashwake ring opening on the surface for 1.5 s
-                        // and a handful of droplets thrown up and falling back
+                        // `FX_GunshotSplash` (clientfx.md §6.2, gap-report #130): the game
+                        // has no water_splash .pcf (client.dll carries none), it is the
+                        // legacy emitter set: 8 splash2 droplets, 8 splash1 mist puffs and a
+                        // splashwake1 ripple for 1.5 s. scale 8 -> flScale 1.
                         if let Some(g) = self.gfx.as_mut() {
-                            // `FX_GunshotSplash`: the `water_splash_01` system on the surface
-                            g.particles.ensure_loaded(&self.mount);
-                            g.particles.spawn(&particles::Spawn {
-                                name: "water_splash_01".to_string(),
-                                pos,
-                                angles: Vec3::new(-90.0, 0.0, 0.0),
-                                parent: 0,
-                            });
-                            for name in [SPLASH_RIPPLE, SPLASH_DROP] {
+                            for name in [SPLASH_RIPPLE, SPLASH_DROP, SPLASH_MIST] {
                                 if !g.rope_mats.contains_key(name) {
                                     let m = g.world.sprite_material(&g.gpu, &self.mount, name);
                                     g.rope_mats.insert(name.to_string(), m);
@@ -4724,24 +4718,50 @@ impl App {
                                 axis: Some(Vec3::Z),
                             });
                             let r = &mut g.fx_rng;
-                            let mut drops = Vec::with_capacity(10);
-                            for _ in 0..10 {
-                                let d = fx_vec_rand(r);
-                                let vel = Vec3::new(d.x, d.y, 0.0).normalize_or_zero()
-                                    * fx_range(r, 20.0, 80.0)
-                                    + Vec3::Z * fx_range(r, 120.0, 220.0);
+                            let mut drops = Vec::with_capacity(16);
+                            // droplets: dir = normal + rand(±0.8)^3, 150..300 u/s + z 32..64,
+                            // gravity 800, 0.25..0.5 s, width 1..3 u, water colour ×0.75..1.25
+                            for _ in 0..8 {
+                                let d = (Vec3::Z + fx_vec_rand(r) * 0.8).normalize_or_zero();
+                                let vel = d * fx_range(r, 150.0, 300.0)
+                                    + Vec3::Z * fx_range(r, 32.0, 64.0);
+                                let w = fx_range(r, 1.0, 3.0);
+                                let c = fx_range(r, 0.75, 1.25).min(1.0);
+                                let jitter = fx_vec_rand(r) * 8.0;
                                 drops.push(ThrusterParticle {
                                     mat: SPLASH_DROP,
                                     additive: false,
-                                    pos: pos + Vec3::Z * 2.0,
+                                    pos: pos + Vec3::new(jitter.x, jitter.y, 0.0),
                                     vel,
-                                    grav: Vec3::new(0.0, 0.0, -600.0),
+                                    grav: Vec3::new(0.0, 0.0, -800.0),
                                     born: now,
-                                    life: fx_range(r, 0.8, 1.2),
-                                    size: (fx_range(r, 4.0, 8.0), fx_range(r, 8.0, 14.0)),
-                                    alpha: (0.8, 0.0),
-                                    color: [1.0; 3],
-                                    roll: fx_range(r, -1.0, 1.0),
+                                    life: fx_range(r, 0.25, 0.5),
+                                    size: (w * 2.0, w * 2.0),
+                                    alpha: (1.0, 0.0),
+                                    color: [c; 3],
+                                    roll: 0.0,
+                                    axis: None,
+                                });
+                            }
+                            // mist: 8 splash1 puffs, 2 s, speed 50·(8−i) along the normal
+                            // with ±0.2 spread, size 24·remap(i, 7..0 -> 1..0.5) doubling
+                            for i in 0..8 {
+                                let d = (fx_vec_rand(r) * 0.2 + Vec3::Z * fx_range(r, 4.0, 6.0))
+                                    .normalize_or_zero();
+                                let start = 24.0 * (0.5 + 0.5 * i as f32 / 7.0);
+                                let c = fx_range(r, 0.75, 1.25).min(1.0);
+                                drops.push(ThrusterParticle {
+                                    mat: SPLASH_MIST,
+                                    additive: false,
+                                    pos,
+                                    vel: d * 50.0 * (8 - i) as f32,
+                                    grav: Vec3::ZERO,
+                                    born: now,
+                                    life: 2.0,
+                                    size: (start, start * 2.0),
+                                    alpha: (1.0, 0.0),
+                                    color: [c; 3],
+                                    roll: fx_range(r, -4.0, 4.0),
                                     axis: None,
                                 });
                             }
@@ -10280,6 +10300,7 @@ const HEATWAVE: &str = "sprites/heatwave";
 /// TE_WaterSplash: the ring opening on the surface and the droplets thrown up.
 const SPLASH_RIPPLE: &str = "effects/splashwake1";
 const SPLASH_DROP: &str = "effects/splash2";
+const SPLASH_MIST: &str = "effects/splash1";
 
 /// `ThrusterEffects` (`gmod_thruster.lua`): the beam material of an effect; empty for none.
 fn thruster_fx_material(effect: &str) -> &'static str {
