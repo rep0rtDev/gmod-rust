@@ -1133,6 +1133,9 @@ struct App {
     noclip: bool,
     /// `impulse N` fired by a bind, sent with the next command.
     impulse: u8,
+    /// Mouse counts since the last command while rotating a held prop (physgun + E): the view
+    /// stays locked (`DIROVERRIDE`) and the counts go to the server as `mouse_x` / `mouse_y`.
+    rotate_delta: (f32, f32),
     /// One-shot viewmodel sequence playing (draw, fire) and when it started.
     vm_anim: Option<(&'static str, Instant)>,
     /// Last frame's viewmodel (sequence, seconds into it) and the sequence left before it with
@@ -3991,6 +3994,9 @@ impl App {
         while self.acc >= dt {
             let mut cmd = self.cmd();
             cmd.impulse = std::mem::take(&mut self.impulse);
+            let (mx, my) = std::mem::take(&mut self.rotate_delta);
+            cmd.mouse_x = mx;
+            cmd.mouse_y = my;
             self.sim.tick(cmd);
             let keys = std::mem::take(&mut self.pending_input);
             self.sim.script.client_input(&self.sim.client.world, &keys);
@@ -7805,7 +7811,20 @@ impl ApplicationHandler for App {
             return;
         }
         if let DeviceEvent::MouseMotion { delta } = event {
-            if self.grabbed {
+            let me = self.sim.client.player_id;
+            let rotating = self.weapon == 0
+                && self.down("+use")
+                && self
+                    .sim
+                    .client
+                    .world
+                    .players
+                    .iter()
+                    .any(|p| Some(p.id) == me && p.held.is_some());
+            if self.grabbed && rotating {
+                self.rotate_delta.0 += delta.0 as f32;
+                self.rotate_delta.1 += delta.1 as f32;
+            } else if self.grabbed {
                 // m_yaw / m_pitch 0.022 * sensitivity (3 by default)
                 let k = 0.022 * self.settings.sensitivity;
                 let pitch = if self.settings.m_pitch_invert { -k } else { k };
@@ -8073,6 +8092,7 @@ fn main() -> Result<()> {
         tool_settings: BTreeMap::new(),
         noclip: false,
         impulse: 0,
+        rotate_delta: (0.0, 0.0),
         vm_anim: None,
         vm_last: None,
         vm_event_t: None,
