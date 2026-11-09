@@ -411,6 +411,15 @@ struct RawImpact {
     py: f32,
     pz: f32,
     speed: f32,
+    nx: f32,
+    ny: f32,
+    nz: f32,
+    v1x: f32,
+    v1y: f32,
+    v1z: f32,
+    v2x: f32,
+    v2y: f32,
+    v2z: f32,
 }
 
 /// A resolved first contact of a body pair in one step.
@@ -446,6 +455,11 @@ pub struct Impact {
     pub point: Vec3,
     /// Approach speed along the contact normal before the impact, units/s.
     pub speed: f32,
+    /// Contact normal pushing `bodies[0]` away from `bodies[1]`.
+    pub normal: Vec3,
+    /// Linear velocities of the two bodies before the impact was resolved, units/s
+    /// (the collision callback's `OurOldVelocity` / `TheirOldVelocity`).
+    pub velocities: [Vec3; 2],
 }
 
 struct Drag {
@@ -1802,6 +1816,11 @@ impl World {
                 bodies: [BodyHandle(r.id1), BodyHandle(r.id2)],
                 point: from_jolt(Vec3::new(r.px, r.py, r.pz)),
                 speed: r.speed * METERS_TO_UNITS,
+                normal: from_jolt(Vec3::new(r.nx, r.ny, r.nz)).normalize_or_zero(),
+                velocities: [
+                    from_jolt(Vec3::new(r.v1x, r.v1y, r.v1z)),
+                    from_jolt(Vec3::new(r.v2x, r.v2y, r.v2z)),
+                ],
             })
             .collect()
     }

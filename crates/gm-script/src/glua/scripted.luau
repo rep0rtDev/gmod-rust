@@ -211,13 +211,16 @@ events.on("entity.collide", function(p)
     local e = Entity(p.entity)
     local other = p.other ~= 0 and Entity(p.other) or game.GetWorld()
     local hit = Vector(p.pos.x, p.pos.y, p.pos.z)
-    local n = e:GetPos() - hit
+    -- the contact normal and the pre-impact velocities come from the physics step
+    -- (CollisionEventData: HitNormal, OurOldVelocity / TheirOldVelocity)
+    local n = p.normal and Vector(p.normal.x, p.normal.y, p.normal.z) or (e:GetPos() - hit)
     if n:Length() > 0.001 then n:Normalize() else n = Vector(0, 0, 1) end
-    local ov, tv = e:GetVelocity(), other:GetVelocity()
+    local ov = p.our_vel and Vector(p.our_vel.x, p.our_vel.y, p.our_vel.z) or e:GetVelocity()
+    local tv = p.their_vel and Vector(p.their_vel.x, p.their_vel.y, p.their_vel.z) or other:GetVelocity()
     i:PhysicsCollide({
         HitPos = hit, HitNormal = n, HitEntity = other, HitObject = other:GetPhysicsObject(),
-        PhysObject = e:GetPhysicsObject(), Speed = p.speed, HitSpeed = p.speed, DeltaTime = FrameTime(),
-        OurOldVelocity = ov, OurNewVelocity = ov, TheirOldVelocity = tv, TheirNewVelocity = tv,
+        PhysObject = e:GetPhysicsObject(), Speed = p.speed, HitSpeed = p.speed, DeltaTime = engine.TickInterval(),
+        OurOldVelocity = ov, OurNewVelocity = e:GetVelocity(), TheirOldVelocity = tv, TheirNewVelocity = other:GetVelocity(),
     }, e:GetPhysicsObject())
 end)
 

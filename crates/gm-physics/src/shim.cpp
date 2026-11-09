@@ -485,7 +485,7 @@ namespace {
 struct GmpSurface { float friction; float elasticity; };
 // one record per resolved first contact of a pair in a step: the bodies, the contact point
 // (Jolt metres) and the approach speed along the normal (m/s) before the impact
-struct GmpImpactRec { unsigned id1, id2; float px, py, pz, speed; };
+struct GmpImpactRec { unsigned id1, id2; float px, py, pz, speed; float nx, ny, nz; float v1x, v1y, v1z, v2x, v2y, v2z; };
 // a contact pair event of the step: kind 0 added, 1 persisted, 2 removed
 struct GmpContactRec { unsigned id1, id2, kind; };
 
@@ -1108,8 +1108,11 @@ public:
 			pt.vn0 = vn;
 			if (!logged) {
 				logged = true;
+				JPH::Vec3 lv1 = b1.GetLinearVelocity(), lv2 = b2.GetLinearVelocity();
 				impacts.push_back(GmpImpactRec{b1.GetID().GetIndexAndSequenceNumber(), b2.GetID().GetIndexAndSequenceNumber(),
-				                               float(pt.p.GetX()), float(pt.p.GetY()), float(pt.p.GetZ()), -vn});
+				                               float(pt.p.GetX()), float(pt.p.GetY()), float(pt.p.GetZ()), -vn,
+				                               n.GetX(), n.GetY(), n.GetZ(),
+				                               lv1.GetX(), lv1.GetY(), lv1.GetZ(), lv2.GetX(), lv2.GetY(), lv2.GetZ()});
 			}
 			{ float tk = second_step ? tilt * 0.6f : tilt; c = std::cos(tk); sn = std::sin(tk); }
 			pt.dir = direction(v, n);

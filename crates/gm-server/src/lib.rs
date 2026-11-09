@@ -1012,6 +1012,11 @@ pub enum GameEvent {
         other: u32,
         point: Vec3,
         speed: f32,
+        /// Contact normal pointing from `other` towards `ent` (`HitNormal`).
+        normal: Vec3,
+        /// Pre-impact linear velocities (`OurOldVelocity` / `TheirOldVelocity`).
+        our_vel: Vec3,
+        their_vel: Vec3,
     },
 }
 
@@ -8583,6 +8588,9 @@ pub struct Server<'w> {
     pub players: BTreeMap<u32, Player>,
     mover: gm_move::Mover<'w>,
     bodies: BTreeMap<u32, BodyHandle>,
+    /// Props whose bottom was under water last tick (`ObjectEnterTrigger` / `ObjectLeaveTrigger`
+    /// splashes, gap-report #184).
+    wet_props: std::collections::HashSet<u32>,
     /// First id of each class family's private schedules, handed out in spawn order like the
     /// game's schedule namespace.
     class_sched_bases: BTreeMap<String, u16>,
@@ -8854,6 +8862,7 @@ impl<'w> Server<'w> {
             players: BTreeMap::new(),
             mover: gm_move::Mover::new(gm_move::MoveConfig::default(), collision),
             bodies: BTreeMap::new(),
+            wet_props: std::collections::HashSet::new(),
             ragdoll_bodies: BTreeMap::new(),
             ragdoll_spawn_pose: BTreeMap::new(),
             bone_scales: BTreeMap::new(),
@@ -11861,13 +11870,11 @@ impl<'w> Server<'w> {
         const GRAVITY: f32 = 600.0;
         let dt = self.physics.tick_interval;
         let mut pushes: Vec<(BodyHandle, Vec3, bool)> = Vec::new();
+        let mut splashes: Vec<Vec3> = Vec::new();
         for p in self.sandbox.props() {
             let Some(&body) = self.bodies.get(&p.id) else {
                 continue;
             };
-            if self.physics.is_frozen(body) || self.physics.is_held(body) {
-                continue;
-            }
             let Some(info) = self.models.get(&p.model) else {
                 continue;
             };
@@ -11884,7 +11891,21 @@ impl<'w> Server<'w> {
                     != 0
             };
             let mut z = bottom + 0.5;
-            if !wet(z) {
+            let in_water = wet(z);
+            // entering / leaving the water splashes at the surface, as the water trigger's
+            // ObjectEnterTrigger / ObjectLeaveTrigger do for any moving object
+            let was_wet = self.wet_props.contains(&p.id);
+            if in_water != was_wet {
+                if in_water {
+                    self.wet_props.insert(p.id);
+                } else {
+                    self.wet_props.remove(&p.id);
+                }
+                if st.velocity.length() > 50.0 {
+                    splashes.push(Vec3::new(st.position.x, st.position.y, st.position.z));
+                }
+            }
+            if !in_water || self.physics.is_frozen(body) || self.physics.is_held(body) {
                 continue;
             }
             // the water surface: step up until dry (or the body's top)
@@ -11915,6 +11936,15 @@ impl<'w> Server<'w> {
                 self.physics.activate(body);
             }
             self.physics.add_impulse(body, impulse);
+        }
+        for pos in splashes {
+            self.effects.push(WorldEffect::Splash { pos });
+            self.sounds.push(WorldSound {
+                name: "Physics.WaterSplash".to_owned(),
+                pos,
+                volume: 1.0,
+                ..Default::default()
+            });
         }
     }
 
@@ -26167,7 +26197,7 @@ impl<'w> Server<'w> {
                     }
                 }
             }
-            for (me, other) in [(ids[0], ids[1]), (ids[1], ids[0])] {
+            for (i, (me, other)) in [(ids[0], ids[1]), (ids[1], ids[0])].into_iter().enumerate() {
                 if let (Some(ent), Some(other)) = (me, other) {
                     if ent != 0 {
                         self.game_events.push(GameEvent::Collide {
@@ -26175,6 +26205,9 @@ impl<'w> Server<'w> {
                             other,
                             point: imp.point,
                             speed: imp.speed,
+                            normal: if i == 0 { imp.normal } else { -imp.normal },
+                            our_vel: imp.velocities[i],
+                            their_vel: imp.velocities[1 - i],
                         });
                     }
                 }

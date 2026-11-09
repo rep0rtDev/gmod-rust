@@ -2020,10 +2020,16 @@ impl Runtime {
                     other,
                     point,
                     speed,
+                    normal,
+                    our_vel,
+                    their_vel,
                 } => {
                     p.ints.push(("entity", ent as i64));
                     p.ints.push(("other", other as i64));
                     p.vecs.push(("pos", point));
+                    p.vecs.push(("normal", normal));
+                    p.vecs.push(("our_vel", our_vel));
+                    p.vecs.push(("their_vel", their_vel));
                     p.floats.push(("speed", speed as f64));
                     "entity.collide"
                 }
