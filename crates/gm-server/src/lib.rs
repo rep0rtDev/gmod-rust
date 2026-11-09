@@ -8778,6 +8778,9 @@ pub struct Server<'w> {
     pub fall_damage_progressive: bool,
     /// Console variables: the sandbox `sbox_*` set plus what addons create.
     pub cvars: BTreeMap<String, Cvar>,
+    /// `FCVAR_ARCHIVE` values read from `cfg/server.vdf` at start (gap-report #216): an
+    /// archived cvar created later takes its saved value instead of the default.
+    pub archived_cvars: BTreeMap<String, String>,
     /// (name, old, new) since the last `take_cvar_changes` (the net layer takes them after the
     /// script hooks read them).
     pub cvar_changes: Vec<(String, String, String)>,
@@ -8983,6 +8986,7 @@ impl<'w> Server<'w> {
                 .chain(PHYS_CVARS.iter())
                 .map(|(n, d)| (n.to_string(), Cvar::replicated(d)))
                 .collect(),
+            archived_cvars: BTreeMap::new(),
             cvar_changes: Vec::new(),
             spawn_lists: Vec::new(),
             spawn_lists_version: 0,
@@ -9214,6 +9218,11 @@ impl<'w> Server<'w> {
         let mut c = cvar;
         if c.value.is_empty() {
             c.value = c.default.clone();
+        }
+        if c.archive {
+            if let Some(v) = self.archived_cvars.get(name) {
+                c.value = v.clone();
+            }
         }
         self.cvars.insert(name.to_string(), c);
         self.cvar_new.push(name.to_string());

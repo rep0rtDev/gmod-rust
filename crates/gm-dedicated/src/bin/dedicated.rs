@@ -233,6 +233,19 @@ fn main() -> Result<()> {
         net.admin_keys
             .insert(parse_key(a).with_context(|| format!("--admin {a}"))?);
     }
+    // FCVAR_ARCHIVE Lua cvars persist in cfg/server.vdf (the game's FCVAR_LUA_SERVER file,
+    // gap-report #216): read at start, written at shutdown
+    let server_vdf = args.data.join("cfg").join("server.vdf");
+    if let Ok(text) = std::fs::read_to_string(&server_vdf) {
+        for line in text.lines() {
+            let mut q = line.split('"').skip(1).step_by(2);
+            if let (Some(k), Some(v)) = (q.next(), q.next()) {
+                if !k.is_empty() {
+                    server.archived_cvars.insert(k.to_string(), v.to_string());
+                }
+            }
+        }
+    }
     let bans_path = args.data.join("cfg").join("banned_user.cfg");
     for b in &args.ban {
         net.bans
@@ -367,6 +380,21 @@ fn main() -> Result<()> {
         if !RUNNING.load(std::sync::atomic::Ordering::Relaxed) {
             if let Some(h) = net.hooks.as_mut() {
                 h.shutdown(&mut server);
+            }
+            let archived: Vec<(&String, &gm_server::Cvar)> =
+                server.cvars.iter().filter(|(_, c)| c.archive).collect();
+            if !archived.is_empty() {
+                let mut text = String::from("\"ConVars\"\n{\n");
+                for (k, c) in archived {
+                    text.push_str(&format!("\t\"{}\"\t\"{}\"\n", k, c.value.replace('"', "")));
+                }
+                text.push_str("}\n");
+                if let Some(dir) = server_vdf.parent() {
+                    let _ = std::fs::create_dir_all(dir);
+                }
+                if let Err(e) = std::fs::write(&server_vdf, text) {
+                    eprintln!("{}: {e}", server_vdf.display());
+                }
             }
             drop(event_log);
             return Ok(());

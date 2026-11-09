@@ -647,8 +647,11 @@ local function fkey(path) return "file:" .. string.lower(string.gsub(path, "\\",
 local function sget(k) if not storage then return nil end local ok, v = pcall(storage.get, k); if ok then return v end return nil end
 local function sset(k, v) if not storage then return false end local ok = pcall(storage.set, k, v); return ok end
 local function skeys() if not storage then return {} end local ok, v = pcall(storage.keys); if ok and type(v) == "table" then return v end return {} end
-function file.Write(path, content) sset(fkey(path) .. "#t", tostring(math.floor(__glua_unixtime()))); return sset(fkey(path), tostring(content)) end
-function file.Append(path, content) local cur = sget(fkey(path)) or ""; return sset(fkey(path), cur .. tostring(content)) end
+-- DATA writes take only the game's extension whitelist (gap-report #218)
+local file_ext_ok = { txt = true, dat = true, json = true, xml = true, csv = true, jpg = true, jpeg = true, png = true, vtf = true, vmt = true, mp3 = true, wav = true, ogg = true }
+local function fext_ok(path) local ext = string.match(string.lower(tostring(path)), "%.([%w]+)$"); return ext ~= nil and file_ext_ok[ext] == true end
+function file.Write(path, content) if not fext_ok(path) then return false end sset(fkey(path) .. "#t", tostring(math.floor(__glua_unixtime()))); return sset(fkey(path), tostring(content)) end
+function file.Append(path, content) if not fext_ok(path) then return false end local cur = sget(fkey(path)) or ""; return sset(fkey(path), cur .. tostring(content)) end
 function file.Read(path, gamePath) local v = sget(fkey(path)); if v == nil then return nil end return tostring(v) end
 function file.Exists(path, gamePath)
     if sget(fkey(path)) ~= nil then return true end
