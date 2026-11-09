@@ -9606,13 +9606,21 @@ impl<'w> Server<'w> {
         if !p.alive || !p.weapons.iter().any(|w| w == class) || p.active_weapon == class {
             return false;
         }
+        // holstering the physgun drops what it holds (physgun.md 2)
+        let drop_held = p.active_weapon == "weapon_physgun" && p.held.is_some();
         if p.swep.contains_key(class) || p.swep.contains_key(&p.active_weapon) {
             let prev = std::mem::replace(&mut p.active_weapon, class.to_string());
             self.swep_switch(id, &prev, class);
+            if drop_held {
+                self.release_held(id);
+            }
             return true;
         }
         p.active_weapon = class.to_string();
         p.inventory.select(class);
+        if drop_held {
+            self.release_held(id);
+        }
         true
     }
 
@@ -13152,13 +13160,24 @@ impl<'w> Server<'w> {
 
     /// Script `Player:DropObject`: lets go of whatever the physgun / gravity gun holds.
     pub fn drop_object(&mut self, player: u32) -> bool {
-        match self.players.get_mut(&player) {
-            Some(p) if p.held.is_some() => {
-                p.held = None;
-                true
+        self.release_held(player)
+    }
+
+    /// The physgun lets go (holster, weapon switch, `DropObject`, physgun.md 2): the body is
+    /// released, its mass restored and `PhysgunDrop` fired.
+    fn release_held(&mut self, player: u32) -> bool {
+        let Some((ent, g)) = self.players.get_mut(&player).and_then(|p| p.held.take()) else {
+            return false;
+        };
+        if let Some(b) = self.part_body(ent, g.bone) {
+            self.physics.release(b);
+            if g.saved_mass > 0.0 {
+                self.physics.set_mass(b, g.saved_mass);
             }
-            _ => false,
         }
+        self.game_events
+            .push(GameEvent::PhysgunDrop { player, ent });
+        true
     }
 
     pub fn set_no_target(&mut self, player: u32, on: bool) -> bool {
@@ -22878,6 +22897,8 @@ impl<'w> Server<'w> {
                 let mut params = self.physgun_params;
                 if self.ragdoll_bodies.contains_key(&ent) {
                     params.max_dv = Self::RAGDOLL_HOLD_DV / self.physics.mass(b).max(0.1);
+                    // physgun_timeToArriveRagdoll (physgun.md 5.1): 0.1 s against 0.05
+                    params.time_to_arrive = 0.1;
                 }
                 self.physics.hold(b, tp, tr, &params);
             }
