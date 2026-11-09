@@ -332,6 +332,184 @@ function util.AddNetworkString(name)
 end
 function util.NetworkStringToID(name) return strings[name] or 0 end
 function util.NetworkIDToString(id) return names[id] end
+
+------------------------------------------------------------------------ legacy NWVars
+-- The game's `NetworkedVar` user message (luabind.md F41-F48): a per-entity record per name
+-- (value, proxy, last-sent time, string index; entity index 0 is the world's global slot),
+-- strings cut to 200 bytes, an equal value changes nothing, a new value is sent at the next
+-- cycle (every K4 = 0.1 s): (a) the world's vars, (b) each entity's, a var going out when
+-- `now - base >= lastSent` with `base` = random(0.5, 1.0) * K1 per entity and cycle (K2 for
+-- the world, 0.5 s for a player's active weapon, K3 for players; K1..K3 are data constants
+-- the pseudo-C leaves unresolved, taken as 1 s here), `lastSent = now + random(-0.05, 0.05)`
+-- after; the cycle's bytes are capped by `lua_networkvar_bytespertick` (bool 1, number 4,
+-- string length, entity 4, vector / angle 12) except for the forced catch-up of a player who
+-- just joined (first the world's and its own vars at once, then the entity list from a
+-- cursor, at most 512 bytes a cycle). Wire: entity, 8-bit type, name, then bool 1 bit,
+-- number float32, string, entity, coord vector / angle.
+local NW_CYCLE = 0.1
+local NW_K1, NW_K2, NW_K3 = 1.0, 1.0, 1.0
+local NW_CATCHUP_BYTES = 512
+local nw_records = {}        -- entIndex -> name -> { value, last_sent }
+local nw_next_cycle = 0
+local nw_caught_up = {}      -- userid -> true once the catch-up cursor ran out
+local nw_cursor = {}         -- userid -> next entIndex of the catch-up walk
+local NW_TYPES = { boolean = 1, number = 3, string = 4 }
+local function nw_type(v)
+    if isvector(v) then return 10 elseif isangle(v) then return 11 elseif IsEntity(v) then return 9 end
+    return NW_TYPES[type(v)]
+end
+local function nw_bytes(v, t)
+    if t == 1 then return 1 elseif t == 3 or t == 9 then return 4 elseif t == 4 then return #v end
+    return 12
+end
+local function nw_send(idx, name, v, t, target)
+    out = { name = "NetworkedVar", bytes = {}, nbits = 0 }
+    wbits(strings.NetworkedVar, 16)
+    wbits(idx, 13)
+    wbits(t, 8)
+    net.WriteString(name)
+    if t == 1 then net.WriteBool(v)
+    elseif t == 3 then net.WriteFloat(v)
+    elseif t == 4 then net.WriteString(v)
+    elseif t == 9 then net.WriteEntity(v)
+    elseif t == 10 then net.WriteVector(v)
+    else net.WriteAngle(v) end
+    hostnet.send("NetworkedVar", payload(), target)
+    out = nil
+end
+local function nw_touch(ent, name, v)
+    local idx = ent:EntIndex()
+    if idx < 0 then return end
+    local recs = nw_records[idx]
+    if not recs then recs = {}; nw_records[idx] = recs end
+    local r = recs[name]
+    if not r then r = { last_sent = -1 }; recs[name] = r end
+    r.value = v
+    r.last_sent = 0
+end
+local function nw_cycle_base(idx, ent)
+    if idx == 0 then return NW_K2 end
+    if ent:IsPlayer() then return NW_K3 end
+    if ent:IsWeapon() then
+        local owner = ent:GetOwner()
+        if IsValid(owner) and owner.GetActiveWeapon and owner:GetActiveWeapon() == ent then return 0.5 end
+    end
+    return (0.5 + math.random() * 0.5) * NW_K1
+end
+local function nw_budget()
+    local cv = GetConVar and GetConVar("lua_networkvar_bytespertick")
+    local n = cv and cv:GetInt() or 0
+    return n > 0 and n or 256
+end
+local function nw_cycle(now)
+    local budget = nw_budget()
+    local used = 0
+    local function broadcast(idx, recs)
+        local ent = Entity(idx)
+        if idx ~= 0 and not IsValid(ent) then nw_records[idx] = nil return end
+        local base = nw_cycle_base(idx, ent)
+        for name, r in pairs(recs) do
+            if r.value == nil then
+                r.last_sent = now
+            elseif now - base >= r.last_sent then
+                local t = nw_type(r.value)
+                if t then
+                    if used >= 0 then
+                        used += nw_bytes(r.value, t)
+                        if used > budget then used = -1 end
+                    end
+                    if used >= 0 then
+                        nw_send(idx, name, r.value, t, 0)
+                        r.last_sent = now + (math.random() - 0.5) * 0.1
+                    end
+                end
+            end
+        end
+    end
+    if nw_records[0] then broadcast(0, nw_records[0]) end
+    local order = {}
+    for idx in pairs(nw_records) do if idx ~= 0 then order[#order + 1] = idx end end
+    table.sort(order)
+    for _, idx in ipairs(order) do broadcast(idx, nw_records[idx]) end
+    -- joiners: the world's and their own vars at once, then the entity list from a cursor
+    for _, ply in ipairs(player.GetAll()) do
+        local uid = ply:UserID()
+        if not nw_caught_up[uid] and nw_cursor[uid] == nil then
+            for _, idx in ipairs({ 0, ply:EntIndex() }) do
+                for name, r in pairs(nw_records[idx] or {}) do
+                    local t = r.value ~= nil and nw_type(r.value)
+                    if t then nw_send(idx, name, r.value, t, uid) end
+                end
+            end
+            nw_cursor[uid] = 1
+        end
+        local cursor = nw_cursor[uid]
+        if cursor then
+            local sent = 0
+            local i = 1
+            while i <= #order and sent <= NW_CATCHUP_BYTES do
+                local idx = order[i]
+                if idx >= cursor then
+                    for name, r in pairs(nw_records[idx]) do
+                        local t = r.value ~= nil and nw_type(r.value)
+                        if t then nw_send(idx, name, r.value, t, uid); sent += nw_bytes(r.value, t) end
+                    end
+                    cursor = idx + 1
+                end
+                i += 1
+            end
+            if i > #order then nw_caught_up[uid] = true; nw_cursor[uid] = nil else nw_cursor[uid] = cursor end
+        end
+    end
+end
+if SERVER then
+    util.AddNetworkString("NetworkedVar")
+    local ENT = __glua_classes.Entity
+    local set_nw = ENT.SetNWVar
+    function ENT:SetNWVar(key, v)
+        if type(v) == "string" and #v > 200 then v = string.sub(v, 1, 200) end
+        if self:GetNWVar(key) == v then return end
+        set_nw(self, key, v)
+        nw_touch(self, key, v)
+    end
+    ENT.SetNetworkedVar, ENT.SetNW2Var, ENT.SetNetworked2Var = ENT.SetNWVar, ENT.SetNWVar, ENT.SetNWVar
+    for _, t in ipairs({ "Angle", "Bool", "Entity", "Float", "Int", "String", "Vector" }) do
+        ENT["SetNW" .. t] = function(self, k, v) self:SetNWVar(k, v) end
+        ENT["SetNW2" .. t], ENT["SetNetworked" .. t], ENT["SetNetworked2" .. t] = ENT["SetNW" .. t], ENT["SetNW" .. t], ENT["SetNW" .. t]
+    end
+    ENT.SetNetworkedNumber = ENT.SetNWFloat
+    local PLY = __glua_classes.Player
+    if PLY then
+        for k, fn in pairs(ENT) do
+            if type(fn) == "function" and (k:match("^SetNW") or k:match("^SetNetworked")) then PLY[k] = fn end
+        end
+    end
+    if events then
+        events.on("tick.pre", function()
+            local now = CurTime()
+            if now < nw_next_cycle then return end
+            nw_next_cycle = now + NW_CYCLE
+            nw_cycle(now)
+        end, -1)
+    end
+else
+    -- the client stores what the server sends; proxies and the changed hook run there too
+    net.Receive("NetworkedVar", function()
+        local idx = net.ReadUInt(13)
+        local t = net.ReadUInt(8)
+        local name = net.ReadString()
+        local v
+        if t == 1 then v = net.ReadBool()
+        elseif t == 3 then v = net.ReadFloat()
+        elseif t == 4 then v = net.ReadString()
+        elseif t == 9 then v = net.ReadEntity()
+        elseif t == 10 then v = net.ReadVector()
+        elseif t == 11 then v = net.ReadAngle()
+        else return end
+        local ent = Entity(idx)
+        if ent and ent.SetNWVar then ent:SetNWVar(name, v) end
+    end)
+end
 __glua_classes.CRecipientFilter = nil
 RecipientFilter = function()
     local R = {}

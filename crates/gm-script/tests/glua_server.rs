@@ -314,6 +314,65 @@ fn net_messages_round_trip_through_the_host_transport() {
 }
 
 #[test]
+fn legacy_nwvars_reach_the_client_as_networkedvar_messages() {
+    let mut rt = runtime(
+        "events.on('tick.pre', function()
+             if state.set then return end
+             state.set = true
+             Entity(5):SetNWInt('hp', 7)
+             Entity(5):SetNWString('long', string.rep('x', 300))
+             Entity(5):SetNWVector('at', Vector(1, -2.5, 3))
+         end)",
+    );
+    let snap = snapshot();
+    // the cycle sends a changed var once CurTime has passed its entity's base (0.5..1 s)
+    for tick in [1u64, 200] {
+        let mut later = (*snap).clone();
+        later.tick = tick;
+        rt.actors_mut()[0]
+            .dispatch(&Arc::new(later), "tick.pre", &Payload::default(), tick)
+            .unwrap();
+    }
+    let out = rt.drain_net();
+    let nw: Vec<_> = out
+        .iter()
+        .filter(|m| m.0 == 0 && m.1 == "NetworkedVar")
+        .collect();
+    assert!(nw.len() >= 3, "{out:?}");
+    // the client realm stores them under the entity
+    let mut client = Runtime::client();
+    client
+        .load(ActorSpec {
+            addon: "glua".into(),
+            name: "cl".into(),
+            priority: 0,
+            source: "".into(),
+            config: ActorConfig {
+                cpu_budget: std::time::Duration::from_millis(50),
+                ..Default::default()
+            },
+        })
+        .unwrap();
+    for m in &nw {
+        let mut p = Payload::default();
+        p.ints.push(("player", 0));
+        p.net = Some((m.1.clone(), m.2.clone()));
+        client.actors_mut()[0]
+            .dispatch(&snap, "net.message", &p, 41)
+            .unwrap();
+    }
+    let (hp, len, at): (i64, i64, String) = client.actors()[0]
+        .eval(
+            "return Entity(5):GetNWInt('hp'), #Entity(5):GetNWString('long'), tostring(Entity(5):GetNWVector('at'))",
+        )
+        .unwrap();
+    assert_eq!(
+        (hp, len, at.as_str()),
+        (7, 200, "1.000000 -2.500000 3.000000")
+    );
+}
+
+#[test]
 fn convars_read_the_snapshot_and_hooks_bridge_events() {
     let mut rt = runtime(
         "state.log = {}
