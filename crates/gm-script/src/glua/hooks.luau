@@ -271,11 +271,22 @@ if SERVER then
             local t = ply:GetTable()
             local tool = ply.GetTool and ply:GetTool()
             if tool ~= t.__last_tool then
-                if t.__last_tool and t.__last_tool.Holster then t.__last_tool:Holster() end -- @hook TOOL:Holster
-                if tool and tool.Deploy then tool:Deploy() end -- @hook TOOL:Deploy
+                -- gmod_tool Think (toolgun.md F17-F18, gap-report #92): a mode change on the
+                -- toolgun is Holster(true) / Deploy(true) (the flag marks a tool switch);
+                -- putting the toolgun itself away is a plain Holster()
+                local switch = tool ~= nil and t.__last_tool ~= nil
+                local was = t.__last_tool
+                if was then
+                    if was.ReleaseGhostEntity then was:ReleaseGhostEntity() end
+                    if was.Holster then was:Holster(switch or nil) end -- @hook TOOL:Holster
+                end
+                if tool and tool.Deploy then tool:Deploy(switch or nil) end -- @hook TOOL:Deploy
                 t.__last_tool = tool
             end
-            if tool and tool.Think then tool:Think() end -- @hook TOOL:Think
+            if tool then
+                if tool.CheckObjects then tool:CheckObjects() end
+                if tool.Think then tool:Think() end -- @hook TOOL:Think
+            end
         end
     end))
     events.on("player.spawned", safe(function(p)
