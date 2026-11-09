@@ -12115,10 +12115,28 @@ impl<'w> Server<'w> {
 
     /// Drive the carried prop to its hold point this tick; the carry ends when the player dies,
     /// the prop is gone or a physgun took it.
-    fn carry_tick(&mut self, player: u32, eye: Vec3, view: Vec3) {
+    /// The +use carry each tick (`CPlayerPickupController::Use`, props.md #86, gap-report
+    /// #199): +attack2 drops; +attack throws with `player_throwforce` (1000) x clamp(mass,
+    /// 0.5, 15) along the eye direction at the centre, after the mass comes back.
+    fn carry_tick(&mut self, player: u32, eye: Vec3, view: Vec3, throw: bool, drop: bool) {
         let Some((ent, carry)) = self.players.get(&player).and_then(|p| p.carry) else {
             return;
         };
+        if drop {
+            self.drop_carry(player);
+            return;
+        }
+        if throw {
+            let body = self.bodies.get(&ent).copied();
+            self.drop_carry(player);
+            if let Some(b) = body {
+                let mass = self.physics.mass(b);
+                let forward = gm_sandbox::forward(view.x, view.y);
+                self.physics
+                    .add_impulse(b, forward * (1000.0 * mass.clamp(0.5, 15.0)));
+            }
+            return;
+        }
         let alive = self.players.get(&player).is_some_and(|p| p.alive);
         let physgunned = self
             .players
@@ -23106,7 +23124,12 @@ impl<'w> Server<'w> {
         if let Some(p) = self.players.get_mut(&player) {
             p.held = held;
         }
-        self.carry_tick(player, eye, view);
+        let attack_pressed = attack
+            && self
+                .players
+                .get(&player)
+                .is_some_and(|p| p.prev_buttons & IN_ATTACK == 0);
+        self.carry_tick(player, eye, view, attack_pressed, attack2);
     }
 
     /// Physgun hold targets read the eye after this tick's move, like the weapon's post-frame
