@@ -3814,7 +3814,8 @@ impl App {
         let buckets = self.buckets();
         let fg = [1.0, 220.0 / 255.0, 0.0, fade];
         let dim = [1.0, 220.0 / 255.0, 0.0, 0.5 * fade];
-        let box_bg = [0.0, 0.0, 0.0, 80.0 / 255.0 * fade];
+        // SelectionBoxBg 0 0 0 90 (ui.md §8.1, gap-report #159)
+        let box_bg = [0.0, 0.0, 0.0, 90.0 / 255.0 * fade];
         let (small, large_w, large_h, gap) = (32.0 * s, 112.0 * s, 80.0 * s, 8.0 * s);
         let icons = ui.font_metrics(Some("WeaponIcons"));
         let numbers = ui.font_metrics(Some("HudSelectionNumbers"));
@@ -7722,7 +7723,8 @@ impl App {
                 // the game's HL2 HUD: scripts/hudlayout.res positions on a 640x480 layout
                 // scaled by the screen height, ClientScheme.res fonts and colours
                 let s = h / 480.0;
-                let fg = [1.0, 235.0 / 255.0, 20.0 / 255.0, 1.0];
+                // ClientScheme FgColorHud 255 220 0 220 (ui.md §2.1, gap-report #153)
+                let fg = [1.0, 220.0 / 255.0, 0.0, 220.0 / 255.0];
                 let numbers = Some("HudNumbers".to_string());
                 let small = Some("HudNumbersSmall".to_string());
                 let label_font = Some("HudDefault".to_string());
@@ -9293,8 +9295,11 @@ fn main() -> Result<()> {
         collision,
         pred: None,
         cmd_tick: 0,
-        interp: gm_net::Interpolator::new(4.0),
-        player_interp: gm_net::Interpolator::new(4.0),
+        // cl_interp_amount = max(cl_interp 0, cl_interp_ratio 2 / cl_updaterate 20) = 0.1 s;
+        // the entity window is TICKS_TO_TIME(TIME_TO_TICKS(0.1) + 1) = 7 ticks at 66 Hz
+        // (render.md §12, gap-report #151)
+        interp: gm_net::Interpolator::new(7.0),
+        player_interp: gm_net::Interpolator::new(7.0),
         prev_origin: spawn,
         origin: spawn,
         ducked: false,
