@@ -170,6 +170,24 @@ pub enum Kind {
         refire: f32,
         next_at: u64,
     },
+    /// `logic_branch`: a stored boolean tested into `OnTrue` / `OnFalse`.
+    Branch {
+        value: bool,
+    },
+    /// `logic_compare`: `value` against `compare` into `OnLessThan` / `OnEqualTo` /
+    /// `OnNotEqualTo` / `OnGreaterThan`, the value as the output parameter.
+    Compare {
+        value: f32,
+        compare: f32,
+    },
+    /// `math_counter`: Add / Subtract / Multiply / Divide / SetValue clamped to `min`..`max`
+    /// (no clamp when both are 0), `OutValue` with the value, `OnHitMin` / `OnHitMax` once
+    /// per arrival and `OnChangedFromMin` / `OnChangedFromMax` on leaving.
+    Counter {
+        value: f32,
+        at_min: bool,
+        at_max: bool,
+    },
     /// `logic_auto` and anything else: outputs only.
     /// `ambient_generic`: `message` at `health` / 10 volume and `pitch`, looped unless
     /// spawnflag 32, silent at start with spawnflag 16.
@@ -416,7 +434,7 @@ fn build(def: MapEntityDef, id: u32) -> MapEntity {
     let outputs: Vec<Output> = def
         .kv
         .iter()
-        .filter(|(k, _)| k.starts_with("On") && k.len() > 2)
+        .filter(|(k, _)| (k.starts_with("On") && k.len() > 2) || k.eq_ignore_ascii_case("OutValue"))
         .filter_map(|(k, v)| parse_output(k, v))
         .collect();
     let size = def.maxs - def.mins;
@@ -564,6 +582,18 @@ fn build(def: MapEntityDef, id: u32) -> MapEntity {
             refire: def.num("RefireTime", 1.0).max(TICK),
             next_at: 0,
         },
+        "logic_branch" => Kind::Branch {
+            value: def.num("InitialValue", 0.0) != 0.0,
+        },
+        "logic_compare" => Kind::Compare {
+            value: def.num("InitialValue", 0.0),
+            compare: def.num("CompareValue", 0.0),
+        },
+        "math_counter" => Kind::Counter {
+            value: def.num("startvalue", 0.0),
+            at_min: false,
+            at_max: false,
+        },
         "ambient_generic" => Kind::Ambient {
             playing: false,
             volume: (def.num("health", 10.0) / 10.0).clamp(0.0, 1.0),
@@ -653,6 +683,12 @@ impl MapIo {
 
     /// Fires `name` of entity `idx`: queues its stored outputs (counting `times` down).
     fn fire_output(&mut self, now: u64, idx: usize, name: &str, activator: u32) {
+        self.fire_output_value(now, idx, name, activator, "");
+    }
+
+    /// `fire_output` with the output's value: an output whose own parameter is empty passes
+    /// `value` on (`OutValue`, `OnCaseNN`, `OnTrue`...).
+    fn fire_output_value(&mut self, now: u64, idx: usize, name: &str, activator: u32, value: &str) {
         let caller = self.entities[idx].id;
         let mut fired = Vec::new();
         for o in self.entities[idx].outputs.iter_mut() {
@@ -662,7 +698,12 @@ impl MapIo {
             if o.times > 0 {
                 o.times -= 1;
             }
-            fired.push((o.target.clone(), o.input.clone(), o.param.clone(), o.delay));
+            let param = if o.param.is_empty() {
+                value.to_string()
+            } else {
+                o.param.clone()
+            };
+            fired.push((o.target.clone(), o.input.clone(), param, o.delay));
         }
         self.entities[idx].outputs.retain(|o| o.times != 0);
         for (target, input, param, delay) in fired {
@@ -1169,6 +1210,24 @@ impl Server<'_> {
             _ => {}
         }
         let mut events: Vec<&'static str> = Vec::new();
+        // outputs that carry a value (logic / math entities, props.md §12, gap-report #205)
+        let mut valued: Vec<(String, String)> = Vec::new();
+        let p_num: f32 = param.trim().parse().unwrap_or(0.0);
+        let num_str = |v: f32| -> String {
+            if v.fract() == 0.0 && v.abs() < 1.0e9 {
+                format!("{}", v as i64)
+            } else {
+                format!("{v}")
+            }
+        };
+        // deterministic per (tick, entity, salt) draw in 0..1 for the random pickers
+        let rnd = |salt: u64| -> f32 {
+            let x = now
+                .wrapping_mul(0x9E37_79B9_7F4A_7C15)
+                .wrapping_add(((id as u64) << 16) ^ salt)
+                .wrapping_mul(0xBF58_476D_1CE4_E5B9);
+            ((x >> 40) as f32) / 16_777_216.0
+        };
         let e = &mut self.map_io.entities[idx];
         let was_moving = e.moving();
         let mut ambient: Option<(bool, f32)> = None;
@@ -1186,7 +1245,7 @@ impl Server<'_> {
                     if *state == Toggle::AtBottom || *state == Toggle::GoingDown =>
                 {
                     if *locked && input_lc != "setposition" {
-                        events.push("OnUseLocked");
+                        events.push("OnLockedUse");
                     } else {
                         *state = Toggle::GoingUp;
                         *return_at = None;
@@ -1217,7 +1276,7 @@ impl Server<'_> {
                     if *state == Toggle::AtBottom || *state == Toggle::GoingDown =>
                 {
                     if *locked {
-                        events.push("OnUseLocked");
+                        events.push("OnLockedUse");
                     } else {
                         *state = Toggle::GoingUp;
                         *return_at = None;
@@ -1253,6 +1312,166 @@ impl Server<'_> {
                 "enable" => *enabled = true,
                 "disable" => *enabled = false,
                 "toggle" => *enabled = !*enabled,
+                _ => {}
+            },
+            Kind::Branch { value } => {
+                let test = |v: bool, valued: &mut Vec<(String, String)>| {
+                    valued.push((
+                        if v { "OnTrue" } else { "OnFalse" }.to_string(),
+                        if v { "1" } else { "0" }.to_string(),
+                    ))
+                };
+                match input_lc.as_str() {
+                    "setvalue" => *value = p_num != 0.0,
+                    "setvaluetest" => {
+                        *value = p_num != 0.0;
+                        test(*value, &mut valued);
+                    }
+                    "toggle" => *value = !*value,
+                    "toggletest" => {
+                        *value = !*value;
+                        test(*value, &mut valued);
+                    }
+                    "test" => test(*value, &mut valued),
+                    _ => {}
+                }
+            }
+            Kind::Compare { value, compare } => {
+                let cmp = |v: f32, c: f32, valued: &mut Vec<(String, String)>| {
+                    let out = num_str(v);
+                    if v < c {
+                        valued.push(("OnLessThan".to_string(), out.clone()));
+                    } else if v > c {
+                        valued.push(("OnGreaterThan".to_string(), out.clone()));
+                    } else {
+                        valued.push(("OnEqualTo".to_string(), out.clone()));
+                    }
+                    if v != c {
+                        valued.push(("OnNotEqualTo".to_string(), out));
+                    }
+                };
+                match input_lc.as_str() {
+                    "setvalue" => *value = p_num,
+                    "setvaluecompare" => {
+                        *value = p_num;
+                        cmp(*value, *compare, &mut valued);
+                    }
+                    "setcomparevalue" => *compare = p_num,
+                    "compare" => cmp(*value, *compare, &mut valued),
+                    _ => {}
+                }
+            }
+            Kind::Counter {
+                value,
+                at_min,
+                at_max,
+            } => {
+                let (min, max) = (e.def.num("min", 0.0), e.def.num("max", 0.0));
+                let before = *value;
+                let mut fire = true;
+                match input_lc.as_str() {
+                    "add" => *value += p_num,
+                    "subtract" => *value -= p_num,
+                    "multiply" => *value *= p_num,
+                    "divide" => {
+                        if p_num != 0.0 {
+                            *value /= p_num;
+                        }
+                    }
+                    "setvalue" => *value = p_num,
+                    "setvaluenofire" => {
+                        *value = p_num;
+                        fire = false;
+                    }
+                    "getvalue" => {
+                        valued.push(("OnGetValue".to_string(), num_str(*value)));
+                        fire = false;
+                    }
+                    _ => fire = false,
+                }
+                if !(min == 0.0 && max == 0.0) {
+                    *value = value.clamp(min.min(max), max.max(min));
+                }
+                if fire {
+                    valued.push(("OutValue".to_string(), num_str(*value)));
+                    if !(min == 0.0 && max == 0.0) {
+                        if *value <= min && !*at_min {
+                            *at_min = true;
+                            valued.push(("OnHitMin".to_string(), num_str(*value)));
+                        } else if *value > min && *at_min {
+                            *at_min = false;
+                            valued.push(("OnChangedFromMin".to_string(), num_str(*value)));
+                        }
+                        if *value >= max && !*at_max {
+                            *at_max = true;
+                            valued.push(("OnHitMax".to_string(), num_str(*value)));
+                        } else if *value < max && *at_max {
+                            *at_max = false;
+                            valued.push(("OnChangedFromMax".to_string(), num_str(*value)));
+                        }
+                    }
+                }
+                let _ = before;
+            }
+            Kind::Logic => match (e.classname.as_str(), input_lc.as_str()) {
+                (c, _) if c.starts_with("env_") => env = true,
+                ("logic_case", "invalue") => {
+                    let wanted = param.trim();
+                    let hit = (1..=16).find(|i| {
+                        e.def
+                            .get(&format!("Case{i:02}"))
+                            .is_some_and(|c| c.trim().eq_ignore_ascii_case(wanted))
+                    });
+                    match hit {
+                        Some(i) => valued.push((format!("OnCase{i:02}"), wanted.to_string())),
+                        None => valued.push(("OnDefault".to_string(), wanted.to_string())),
+                    }
+                }
+                ("logic_case", "pickrandom" | "pickrandomshuffle") => {
+                    let cases: Vec<usize> = (1..=16)
+                        .filter(|i| e.def.get(&format!("Case{i:02}")).is_some())
+                        .collect();
+                    if !cases.is_empty() {
+                        let i =
+                            cases[((rnd(1) * cases.len() as f32) as usize).min(cases.len() - 1)];
+                        let v = e
+                            .def
+                            .get(&format!("Case{i:02}"))
+                            .unwrap_or("")
+                            .trim()
+                            .to_string();
+                        valued.push((format!("OnCase{i:02}"), v));
+                    }
+                }
+                ("math_remap", "invalue") => {
+                    let (in1, in2) = (e.def.num("in1", 0.0), e.def.num("in2", 1.0));
+                    let (out1, out2) = (e.def.num("out1", 0.0), e.def.num("out2", 1.0));
+                    let (lo, hi) = (in1.min(in2), in1.max(in2));
+                    let mut v = p_num;
+                    let out_of_range = v < lo || v > hi;
+                    if !(out_of_range && e.flags & 1 != 0) {
+                        if e.flags & 2 != 0 {
+                            v = v.clamp(lo, hi);
+                        }
+                        let t = if in2 != in1 {
+                            (v - in1) / (in2 - in1)
+                        } else {
+                            0.0
+                        };
+                        valued.push(("OutValue".to_string(), num_str(out1 + t * (out2 - out1))));
+                    }
+                }
+                ("logic_random_outputs", "trigger") => {
+                    for i in 1..=8u64 {
+                        let chance = e.def.num(&format!("OnTriggerChance{i}"), 1.0);
+                        if rnd(i) < chance {
+                            valued.push((format!("OnRandomOutput{i}"), String::new()));
+                            if e.flags & 1 != 0 {
+                                break;
+                            }
+                        }
+                    }
+                }
                 _ => {}
             },
             Kind::Relay {
@@ -1371,17 +1590,17 @@ impl Server<'_> {
                     _ => {}
                 }
             }
-            Kind::Logic => env = true,
         }
         // the SDK's door / button sounds: the move sound as the travel starts, the locked
         // sound on a locked use
         let e = &self.map_io.entities[idx];
         let center = e.center();
         let mut sounds: Vec<String> = Vec::new();
-        if !was_moving && e.moving() {
+        let silent = e.classname.starts_with("func_door") && e.flags & 4096 != 0;
+        if !was_moving && e.moving() && !silent {
             sounds.extend(e.sound(EntSound::Move));
         }
-        if events.contains(&"OnUseLocked") {
+        if events.contains(&"OnLockedUse") {
             sounds.extend(e.sound(EntSound::Locked));
         }
         for name in sounds {
@@ -1392,6 +1611,10 @@ impl Server<'_> {
         }
         if env {
             self.env_input(idx, &input_lc, activator);
+        }
+        for (name, value) in valued {
+            self.map_io
+                .fire_output_value(now, idx, &name, activator, &value);
         }
         for name in events {
             self.map_io.fire_output(now, idx, name, activator);
@@ -1555,7 +1778,8 @@ impl Server<'_> {
             }
             let e = &self.map_io.entities[idx];
             let center = e.center();
-            let start = if !was_moving && e.moving() {
+            let silent = e.classname.starts_with("func_door") && e.flags & 4096 != 0;
+            let start = if !was_moving && e.moving() && !silent {
                 e.sound(EntSound::Move)
             } else {
                 None
@@ -1686,8 +1910,23 @@ impl Server<'_> {
                     }
                 }
             }
+            // `OnBlockedOpening` / `OnBlockedClosing` with the blocker; a `forceclosed` door
+            // keeps pushing (the SDK also keeps pushing with `wait` -1; the recorded door test
+            // turns back, so that rule is not applied)
+            let opening = match &self.map_io.entities[idx].kind {
+                Kind::Mover { state, .. } | Kind::Rotator { state, .. } => {
+                    *state == Toggle::GoingUp
+                }
+                _ => true,
+            };
+            let name = if opening {
+                "OnBlockedOpening"
+            } else {
+                "OnBlockedClosing"
+            };
+            let blocker = hit.first().map(|h| h.1).unwrap_or(0);
             if force {
-                self.map_io.fire_output(now, idx, "OnBlocked", 0);
+                self.map_io.fire_output(now, idx, name, blocker);
                 continue;
             }
             let e = &mut self.map_io.entities[idx];
@@ -1707,7 +1946,7 @@ impl Server<'_> {
                 }
                 _ => {}
             }
-            self.map_io.fire_output(now, idx, "OnBlocked", 0);
+            self.map_io.fire_output(now, idx, name, blocker);
         }
         // triggers: players (flag 1), NPCs (flag 2), props (flag 8)
         let players: Vec<(u32, Vec3, Vec3)> = self

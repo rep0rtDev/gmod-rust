@@ -706,3 +706,90 @@ fn a_door_crushes_a_player_blocking_it_and_turns_back() {
         "dmg 10 per blocked tick, {lost} lost"
     );
 }
+
+#[test]
+fn logic_and_math_entities_pass_values_through_their_outputs() {
+    let Some((world, _mount)) = load() else {
+        return;
+    };
+    let mut server = gm_server::Server::new(&world.collision, world.physics, world.world_body);
+    let def = |class: &str, kv: &[(&str, &str)]| gm_server::mapio::MapEntityDef {
+        classname: class.into(),
+        kv: kv
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect(),
+        origin: Vec3::ZERO,
+        angles: Vec3::ZERO,
+        hulls: Vec::new(),
+        mins: Vec3::ZERO,
+        maxs: Vec3::ZERO,
+    };
+    let defs = vec![
+        def(
+            "math_counter",
+            &[
+                ("targetname", "c"),
+                ("min", "0"),
+                ("max", "3"),
+                ("OutValue", "b,SetValueTest,,0,-1"),
+                ("OnHitMax", "cmp,SetValueCompare,,0,-1"),
+            ],
+        ),
+        def(
+            "logic_branch",
+            &[("targetname", "b"), ("OnTrue", "case,InValue,,0,-1")],
+        ),
+        def(
+            "logic_compare",
+            &[("targetname", "cmp"), ("CompareValue", "3")],
+        ),
+        def(
+            "logic_case",
+            &[("targetname", "case"), ("Case01", "1"), ("Case02", "2")],
+        ),
+    ];
+    server.set_map_entities(defs, world.surface);
+    let idle = std::collections::BTreeMap::new();
+    server.tick(&idle);
+    let kind = |server: &gm_server::Server, name: &str| {
+        server
+            .map_io
+            .entities
+            .iter()
+            .find(|e| e.targetname == name)
+            .map(|e| e.kind.clone())
+            .unwrap()
+    };
+    server.fire_input("c", "Add", "2", 0);
+    for _ in 0..3 {
+        server.tick(&idle);
+    }
+    assert!(
+        matches!(kind(&server, "c"), gm_server::mapio::Kind::Counter { value, .. } if value == 2.0),
+        "{:?}",
+        kind(&server, "c")
+    );
+    assert!(
+        matches!(
+            kind(&server, "b"),
+            gm_server::mapio::Kind::Branch { value: true }
+        ),
+        "OutValue 2 -> SetValueTest -> true: {:?}",
+        kind(&server, "b")
+    );
+    server.fire_input("c", "Add", "5", 0);
+    for _ in 0..3 {
+        server.tick(&idle);
+    }
+    assert!(
+        matches!(kind(&server, "c"), gm_server::mapio::Kind::Counter { value, at_max: true, .. } if value == 3.0),
+        "clamped to max and OnHitMax: {:?}",
+        kind(&server, "c")
+    );
+    assert!(
+        matches!(kind(&server, "cmp"), gm_server::mapio::Kind::Compare { value, compare } if value == 3.0 && compare == 3.0),
+        "OnHitMax passes the value on: {:?}",
+        kind(&server, "cmp")
+    );
+}

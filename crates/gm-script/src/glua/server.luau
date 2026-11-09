@@ -1060,9 +1060,12 @@ local prev_move = {}
                 seen_players[ply:UserID()] = true
                 local sv_pass = GetConVar and GetConVar("sv_password") and GetConVar("sv_password"):GetString() or ""
                 hook.Run("CheckPassword", ply:SteamID64() or "", ply:IPAddress(), sv_pass, "", ply:Nick())
-                hook.Run("PlayerConnect", ply:Nick(), "")
+                hook.Run("PlayerConnect", ply:Nick(), ply:IPAddress())
                 hook.Run("PlayerAuthed", ply, ply:SteamID(), ply:UniqueID())
-                hook.Run("NetworkIDValidated", ply:Nick(), ply:SteamID())
+                hook.Run("NetworkIDValidated", ply:Nick(), ply:SteamID(), ply:SteamID64())
+                -- the engine reports SIGNONSTATE_SPAWN (5) -> SIGNONSTATE_FULL (6) when the
+                -- client is in; the earlier states are not modelled (M)
+                hook.Run("ClientSignOnStateChanged", ply:UserID(), 5, 6)
                 hook.Run("PlayerInitialSpawn", ply, false)
                 hook.Run("PlayerSetModel", ply)
             end
