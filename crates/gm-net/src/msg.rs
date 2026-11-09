@@ -562,6 +562,13 @@ pub enum EffectEvent {
         player: u32,
         pos: Vec3,
     },
+    /// The tool gun's shot effect: tracer from `player`'s muzzle to `pos`, selection
+    /// indicator in the plane of `normal`.
+    ToolTracer {
+        player: u32,
+        pos: Vec3,
+        normal: Vec3,
+    },
     /// Bullet hit on a prop: a decal in the entity's frame, `surface` its surface property.
     PropImpact {
         ent: u32,
@@ -1526,6 +1533,16 @@ impl ServerMsg {
                             w.varint(*player as u64);
                             w.vec3(*pos);
                         }
+                        EffectEvent::ToolTracer {
+                            player,
+                            pos,
+                            normal,
+                        } => {
+                            w.u8(8);
+                            w.varint(*player as u64);
+                            w.vec3(*pos);
+                            w.vec3(*normal);
+                        }
                         EffectEvent::PropImpact {
                             ent,
                             lpos,
@@ -1908,6 +1925,11 @@ impl ServerMsg {
                         7 => EffectEvent::PhyscannonImpact {
                             player: r.varint()? as u32,
                             pos: r.vec3()?,
+                        },
+                        8 => EffectEvent::ToolTracer {
+                            player: r.varint()? as u32,
+                            pos: r.vec3()?,
+                            normal: r.vec3()?,
                         },
                         4 => EffectEvent::PropImpact {
                             ent: r.u32()?,

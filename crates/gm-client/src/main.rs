@@ -41,6 +41,8 @@ const PHYSGUN_SLOT: u8 = 0;
 /// Slots in `WEAPONS` of the weapons with their own effects.
 const RPG_SLOT: u8 = 9;
 const GRAVGUN_SLOT: u8 = 10;
+/// `gmod_camera` in `WEAPONS`.
+const CAMERA_SLOT: u8 = 12;
 
 const SPAWN_MODEL: &str = "models/props_c17/oildrum001.mdl";
 
@@ -262,6 +264,11 @@ struct Gfx {
     fx_noise: Option<wgpu::BindGroup>,
     fx_flare: Option<wgpu::BindGroup>,
     fx_muzzles: Vec<wgpu::BindGroup>,
+    /// Tool gun click effects (toolgun.md F30-F32): `effects/tool_tracer`, `select_dot`,
+    /// `select_ring`.
+    fx_tool_tracer: Option<wgpu::BindGroup>,
+    fx_select_dot: Option<wgpu::BindGroup>,
+    fx_select_ring: Option<wgpu::BindGroup>,
     fx_spark: Option<wgpu::BindGroup>,
     fx_decal_mats: std::collections::HashMap<String, Option<gm_render::world::Decal>>,
     /// `sprites/redglow1`: the RPG's laser dot.
@@ -1176,6 +1183,12 @@ struct App {
     fx_bursts: Vec<(Vec3, f32, Instant, bool)>,
     /// `PhyscannonImpact` effects: the punting player, the punt point and when.
     fx_cannon: Vec<(u32, Vec3, Instant)>,
+    /// Tool gun click effects: player, hit, normal, when, the six rings' speeds (0.5..1.5).
+    fx_tool: Vec<(u32, Vec3, Vec3, Instant, [f32; 6])>,
+    /// `gmod_camera`: its `Zoom` (fov, degrees) and `Roll`, and the last mouse step time.
+    cam_zoom: f32,
+    cam_roll: f32,
+    cam_at: Instant,
     /// Gravity gun claw pose parameter (`active`: 0 closed .. 1 open), when it was last stepped,
     /// and the core sprite's current opacity (gravgun.md 7.3 interpolations).
     claw_pose: f32,
@@ -1503,6 +1516,9 @@ impl App {
                 world.sprite_material(&gpu, &self.mount, &format!("effects/muzzleflash{i}"))
             })
             .collect();
+        let fx_tool_tracer = world.sprite_material(&gpu, &self.mount, "effects/tool_tracer");
+        let fx_select_dot = world.sprite_material(&gpu, &self.mount, "effects/select_dot");
+        let fx_select_ring = world.sprite_material(&gpu, &self.mount, "effects/select_ring");
         let fx_laserdot = world.sprite_material(&gpu, &self.mount, "sprites/redglow1");
         let fx_ball = world.sprite_material(&gpu, &self.mount, "sprites/sent_ball");
         let fx_sun = world
@@ -1565,6 +1581,9 @@ impl App {
             fx_noise,
             fx_flare,
             fx_muzzles,
+            fx_tool_tracer,
+            fx_select_dot,
+            fx_select_ring,
             fx_spark,
             fx_decal_mats: Default::default(),
             fx_laserdot,
@@ -3925,6 +3944,13 @@ impl App {
                     self.noclip = !self.noclip;
                     self.sim.client.command(Command::Noclip { on: self.noclip });
                 }
+                // gmod_camera `Reload`: zoom back to fov_desired, roll 0 (toolgun.md F38)
+                "+reload" if self.weapon == CAMERA_SLOT => {
+                    if !self.down("+attack2") {
+                        self.cam_zoom = self.settings.fov_desired;
+                    }
+                    self.cam_roll = 0.0;
+                }
                 "+reload" if self.weapon == 1 => self.sim.client.command(Command::ToolClick {
                     tool: self.tool.clone(),
                     right: false,
@@ -4244,6 +4270,15 @@ impl App {
                     gm_net::msg::EffectEvent::PhyscannonImpact { player, pos } => {
                         self.fx_cannon.push((player, pos, now));
                         self.fx_bursts.push((pos, 5.0, now, false));
+                    }
+                    gm_net::msg::EffectEvent::ToolTracer {
+                        player,
+                        pos,
+                        normal,
+                    } => {
+                        let seed = &mut self.fx_seed;
+                        let speeds = std::array::from_fn(|_| particles::range(seed, 0.5, 1.5));
+                        self.fx_tool.push((player, pos, normal, now, speeds));
                     }
                     gm_net::msg::EffectEvent::Explosion { pos } => {
                         self.spawn_explosion(pos, now);
@@ -4637,7 +4672,15 @@ impl App {
                     .copied()
             })
         };
-        let fov_x = self.camera_fov();
+        let fov_x = if self.weapon == CAMERA_SLOT {
+            // gmod_camera `TranslateFOV`: its Zoom replaces the fov (toolgun.md F41)
+            if self.cam_zoom <= 0.0 {
+                self.cam_zoom = self.settings.fov_desired;
+            }
+            self.cam_zoom
+        } else {
+            self.camera_fov()
+        };
         let Some(g) = &mut self.gfx else { return };
         g.world
             .set_lightstyles(&g.gpu, &self.sim.client.world.lightstyles);
@@ -4722,6 +4765,9 @@ impl App {
         let (shake_offset, shake_roll) = calc_shake(&mut self.shakes, &mut self.shake_seed);
         camera.position += shake_offset;
         camera.angles.z += shake_roll;
+        if self.weapon == CAMERA_SLOT {
+            camera.angles.z += self.cam_roll;
+        }
         // driving a prop: a chase camera on it (the game's observer mode on the entity; the
         // distance is not measured)
         let me = self.sim.client.player_id;
@@ -5790,6 +5836,88 @@ impl App {
                         1.0 / 32.0,
                     );
                     additive.push((m, v, i));
+                }
+            }
+        }
+        // tool gun click effects (toolgun.md F30-F32): `ToolTracer` - three beams of
+        // `effects/tool_tracer` width 8 whose start slides from the muzzle to the hit over
+        // 0.25 s while the alpha fades; `selection_indicator` - a 4 u `select_dot` in the
+        // surface plane for 1 s; six `selection_ring`s growing 256 * speed u/s, alpha gone in
+        // 0.2 / speed s, a new random blue each frame
+        self.fx_tool
+            .retain(|(_, _, _, at, _)| at.elapsed().as_secs_f32() < 1.0);
+        if !self.fx_tool.is_empty() {
+            let now = Instant::now();
+            let fwd = camera.forward();
+            let right = fwd.cross(Vec3::Z).normalize_or_zero();
+            let own_muzzle = vm_attach("muzzle")
+                .unwrap_or(camera.position + fwd * 16.0 + right * 6.0 - Vec3::Z * 4.0);
+            let seed = &mut self.fx_seed;
+            for &(player, hit, normal, at, speeds) in &self.fx_tool {
+                let age = now.duration_since(at).as_secs_f32();
+                let start = if Some(player) == me {
+                    Some(own_muzzle)
+                } else {
+                    self.sim
+                        .client
+                        .world
+                        .players
+                        .iter()
+                        .find(|p| p.id == player)
+                        .map(|p| p.origin + Vec3::Z * 60.0)
+                };
+                let life = age * 4.0;
+                if let (Some(m), Some(start), true) = (&g.fx_tool_tracer, start, life < 1.0) {
+                    let a = 1.0 - life;
+                    let s = start - (start - hit) * life;
+                    for _ in 0..3 {
+                        let u0 = particles::rng(seed);
+                        let (v, i) = g.world.beam_strip(
+                            &[s, hit],
+                            8.0,
+                            [a, a, a],
+                            camera.position,
+                            u0,
+                            1.0 / 32.0,
+                        );
+                        additive.push((m, v, i));
+                    }
+                }
+                if let Some(m) = &g.fx_select_dot {
+                    let a = 1.0 - age;
+                    let (v, i) = g.world.sprite_quad_var(
+                        hit,
+                        4.0,
+                        [a, a, a, 0.0],
+                        0.0,
+                        Some(normal),
+                        &camera,
+                    );
+                    additive.push((m, v, i));
+                }
+                if let Some(m) = &g.fx_select_ring {
+                    for speed in speeds {
+                        let a = 1.0 - age * 5.0 * speed;
+                        if a <= 0.0 {
+                            continue;
+                        }
+                        let size = 4.0 + age * 256.0 * speed;
+                        let c = [
+                            particles::range(seed, 10.0, 150.0) / 255.0 * a,
+                            particles::range(seed, 170.0, 220.0) / 255.0 * a,
+                            particles::range(seed, 240.0, 255.0) / 255.0 * a,
+                            0.0,
+                        ];
+                        let (v, i) = g.world.sprite_quad_var(
+                            hit + normal * 2.0,
+                            size,
+                            c,
+                            0.0,
+                            Some(normal),
+                            &camera,
+                        );
+                        additive.push((m, v, i));
+                    }
                 }
             }
         }
@@ -8141,9 +8269,21 @@ impl ApplicationHandler for App {
                     .players
                     .iter()
                     .any(|p| Some(p.id) == me && p.held.is_some());
+            let cam_turn = self.weapon == CAMERA_SLOT && self.down("+attack2");
             if self.grabbed && rotating {
                 self.rotate_delta.0 += delta.0 as f32;
                 self.rotate_delta.1 += delta.1 as f32;
+            } else if self.grabbed && cam_turn {
+                // gmod_camera `Tick` (toolgun.md F40): with +attack2 the mouse zooms
+                // (y * dt * 6.6, 0.1..175) and rolls (x * dt * 1.65) instead of turning
+                let now = Instant::now();
+                let dt = now.duration_since(self.cam_at).as_secs_f32().min(0.1);
+                self.cam_at = now;
+                if self.cam_zoom <= 0.0 {
+                    self.cam_zoom = self.settings.fov_desired;
+                }
+                self.cam_zoom = (self.cam_zoom + delta.1 as f32 * dt * 6.6).clamp(0.1, 175.0);
+                self.cam_roll += delta.0 as f32 * dt * 1.65;
             } else if self.grabbed {
                 // m_yaw / m_pitch 0.022 * sensitivity (3 by default)
                 let k = 0.022 * self.settings.sensitivity;
@@ -8429,6 +8569,10 @@ fn main() -> Result<()> {
         fx_prop_decals: Default::default(),
         fx_bursts: Vec::new(),
         fx_cannon: Vec::new(),
+        fx_tool: Vec::new(),
+        cam_zoom: 0.0,
+        cam_roll: 0.0,
+        cam_at: Instant::now(),
         claw_pose: 0.0,
         claw_at: Instant::now(),
         gg_core_alpha: 0.0,

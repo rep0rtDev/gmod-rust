@@ -651,6 +651,13 @@ pub enum WorldEffect {
     Explosion { pos: Vec3 },
     /// `PhyscannonImpact`: `player`'s gravity gun punted at `pos`.
     PhyscannonImpact { player: u32, pos: Vec3 },
+    /// The tool gun's `DoShootEffect`: `ToolTracer` from `player`'s muzzle to `pos` and the
+    /// `selection_indicator` / `selection_ring` effects in the plane of `normal`.
+    ToolTracer {
+        player: u32,
+        pos: Vec3,
+        normal: Vec3,
+    },
     /// `WaterSplash` at `pos`: a player entering or leaving the water.
     Splash { pos: Vec3 },
     /// A bullet hit on a prop: a decal in the entity's frame (`lpos` / `lnormal`), `surface`
@@ -21134,6 +21141,13 @@ impl<'w> Server<'w> {
     pub fn tool_fired(&mut self, player: u32) {
         if let Some(p) = self.players.get_mut(&player) {
             p.inventory.tool_fired();
+        }
+        if let Some(hit) = self.tool_hit(player) {
+            self.effects.push(WorldEffect::ToolTracer {
+                player,
+                pos: hit.pos,
+                normal: hit.normal,
+            });
         }
     }
 

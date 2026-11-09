@@ -1042,6 +1042,15 @@ impl ServerNet {
                 gm_server::WorldEffect::PhyscannonImpact { player, pos } => {
                     EffectEvent::PhyscannonImpact { player, pos }
                 }
+                gm_server::WorldEffect::ToolTracer {
+                    player,
+                    pos,
+                    normal,
+                } => EffectEvent::ToolTracer {
+                    player,
+                    pos,
+                    normal,
+                },
                 gm_server::WorldEffect::PropImpact {
                     ent,
                     lpos,
