@@ -676,7 +676,14 @@ __glua_classes.Stack = STACK
 local SP = {}
 SP.__index = SP
 function CreateSound(ent, name, filter) return setmetatable({ ent = ent, name = name, filter = filter, pitch = 100, volume = 1, level = 75, dsp = 0, playing = false }, SP) end
-function SP:Play() self.playing = true; local pos = IsValid(self.ent) and self.ent:GetPos() or Vector(); sound.Play(self.name, pos, self.level, self.pitch, self.volume) end
+function SP:Play()
+	self.playing = true
+	if sound.__patch_play then sound.__patch_play(self.name, self.ent, self.level, self.pitch, self.volume); return end
+	local pos = IsValid(self.ent) and self.ent:GetPos() or Vector()
+	sound.Play(self.name, pos, self.level, self.pitch, self.volume)
+end
+function SP:Stop() self.playing = false; if sound.__patch_change then sound.__patch_change(self.ent, 0, 0, 0) end end
+function SP:FadeOut(dt) self.playing = false; if sound.__patch_change then sound.__patch_change(self.ent, 0, 0, dt or 0) end end
 function SP:PlayEx(vol, pitch) self.volume, self.pitch = vol or self.volume, pitch or self.pitch; self:Play() end
 function SP:IsPlaying() return self.playing end
 function SP:GetSoundName() return self.name end
@@ -684,8 +691,8 @@ function SP:GetPitch() return self.pitch end
 function SP:GetVolume() return self.volume end
 function SP:GetSoundLevel() return self.level end
 function SP:GetDSP() return self.dsp end
-function SP:ChangePitch(p, dt) self.pitch = p end
-function SP:ChangeVolume(v, dt) self.volume = v end
+function SP:ChangePitch(p, dt) self.pitch = p; if self.playing and sound.__patch_change then sound.__patch_change(self.ent, -1, p, dt or 0) end end
+function SP:ChangeVolume(v, dt) self.volume = v; if self.playing and sound.__patch_change then sound.__patch_change(self.ent, v, 0, dt or 0) end end
 function SP:SetDSP(d) self.dsp = d end
 function SP:SetSoundLevel(l) self.level = l end
 __glua_classes.CSoundPatch = SP

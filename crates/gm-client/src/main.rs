@@ -4920,6 +4920,14 @@ impl App {
             for s in std::mem::take(&mut self.sim.client.sounds) {
                 if s.stop {
                     self.sounds.stop_entity(s.ent, s.fade);
+                } else if s.change {
+                    self.sounds.change_entity(
+                        s.ent,
+                        (s.channel != 0).then_some(s.channel),
+                        s.volume,
+                        s.pitch,
+                        s.fade,
+                    );
                 } else {
                     self.sounds.play_at(
                         &self.mount,

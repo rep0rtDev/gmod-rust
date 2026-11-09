@@ -201,6 +201,7 @@ mod tests {
                 level: 0.0,
                 channel: 0,
                 max_dist: 0.0,
+                change: false,
             }],
         };
         let mut w = Writer::default();

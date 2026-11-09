@@ -754,6 +754,10 @@ pub struct WorldSound {
     /// Recipients farther than this from `pos` do not get the sound (0: everyone); the
     /// Lua `EmitSound` cut of 2500 u (sound.md §1.6, gap-report #167).
     pub max_dist: f32,
+    /// `SND_CHANGE_VOL` / `SND_CHANGE_PITCH`: mutate what `ent` plays on `channel` (0: all)
+    /// instead of starting `name` - `volume` < 0 keeps it, 0 stops it over `fade`, `pitch`
+    /// 0 keeps it (sound patches, scrape loops; gap-report #165, #168, #170).
+    pub change: bool,
 }
 
 /// Game events of this tick for the addon runtime (`ServerHooks::game_events`), drained by the
@@ -25637,6 +25641,20 @@ impl<'w> Server<'w> {
         true
     }
 
+    /// `CSoundPatch::ChangeVolume` / `ChangePitch` / `FadeOut` / `Entity:StopSound`: a
+    /// `SND_CHANGE_*` update of what `ent` plays on `channel` (0: all its sounds).
+    pub fn change_sound_lua(&mut self, ent: u32, channel: u8, volume: f32, pitch: f32, fade: f32) {
+        self.sounds.push(WorldSound {
+            ent,
+            channel,
+            volume: volume.min(1.0),
+            pitch,
+            fade: fade.max(0.0),
+            change: true,
+            ..Default::default()
+        });
+    }
+
     /// `emit_sound` at a pitch (percent; `EmitSound( name, level, pitch )`).
     /// `Entity:EmitSound(name, level, pitch, volume, channel)` from Lua: the full argument set,
     /// recipients cut at 2500 u like the game's `EmitSound` without a filter.
@@ -26002,7 +26020,20 @@ impl<'w> Server<'w> {
             });
         }
         for (id, vol, pos) in sliding {
-            if self.scrapes.contains_key(&id) {
+            // a running loop follows the slip: the game's patch gets ChangeVolume every
+            // friction callback (its pitch law lo + vol * (hi - lo) runs on the client)
+            if let Some(old) = self.scrapes.get_mut(&id) {
+                if (*old - vol).abs() > 0.03 {
+                    *old = vol;
+                    self.sounds.push(WorldSound {
+                        pos,
+                        ent: id,
+                        channel: 4,
+                        volume: vol,
+                        change: true,
+                        ..Default::default()
+                    });
+                }
                 continue;
             }
             let Some(name) = self
@@ -26022,6 +26053,7 @@ impl<'w> Server<'w> {
                 volume: vol,
                 ent: id,
                 looping: true,
+                channel: 4,
                 ..Default::default()
             });
         }

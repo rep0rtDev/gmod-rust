@@ -72,6 +72,8 @@ pub struct Sounds {
     rng: Rng,
     /// Voice ids of entity sounds by (entity, channel), for stops and following.
     tracked: HashMap<(u32, u8), u32>,
+    /// The script entry each tracked sound came from (the scrape pitch law needs its range).
+    tracked_scripts: HashMap<(u32, u8), String>,
 }
 
 /// The game's soundscripts, without a device: the manifest's files (GMod's lists its own
@@ -110,6 +112,7 @@ impl Sounds {
             cache: HashMap::new(),
             rng: Rng::new(),
             tracked: HashMap::new(),
+            tracked_scripts: HashMap::new(),
         }
     }
 
@@ -121,6 +124,7 @@ impl Sounds {
             cache: HashMap::new(),
             rng: Rng::new(),
             tracked: HashMap::new(),
+            tracked_scripts: HashMap::new(),
         })
     }
 
@@ -196,11 +200,13 @@ impl Sounds {
         level: f32,
     ) -> bool {
         let Some(e) = self.scripts.get(name).cloned() else {
-            // a wave path (`sound.Play( "garrysmod/balloon_pop_cute.wav", ... )`) plays as is
-            if !(name.ends_with(".wav") || name.ends_with(".mp3")) {
+            // a raw file (`.wav` / `.mp3` / `.ogg` anywhere in the name, sound.md §1.1; the
+            // engine's prefix characters stripped) plays as is
+            let lower = name.to_ascii_lowercase();
+            if !(lower.contains(".wav") || lower.contains(".mp3") || lower.contains(".ogg")) {
                 return false;
             }
-            let Some(pcm) = self.wave(mount, name) else {
+            let Some(pcm) = self.wave(mount, script::wave_path(name)) else {
                 return false;
             };
             self.mixer.play(Play {
@@ -244,8 +250,59 @@ impl Sounds {
         });
         if ent != 0 && (looping || channel != 0) {
             self.tracked.insert((ent, channel), id);
+            self.tracked_scripts
+                .insert((ent, channel), name.to_string());
         }
         true
+    }
+
+    /// `SND_CHANGE_VOL` / `SND_CHANGE_PITCH` on what `ent` plays on `channel` (`None`: all
+    /// its tracked sounds): `volume` < 0 keeps it, 0 stops it over `fade` seconds; `pitch`
+    /// 0 keeps it - except a scrape loop, whose pitch follows its volume over the script's
+    /// range (`lo + vol * (hi - lo)`, sound.md §5). Ramps are applied at once (open).
+    pub fn change_entity(
+        &mut self,
+        ent: u32,
+        channel: Option<u8>,
+        volume: f32,
+        pitch: f32,
+        fade: f32,
+    ) {
+        let hit = |e: u32, c: u8| e == ent && channel.is_none_or(|ch| ch == c);
+        if volume == 0.0 {
+            self.mixer.stop_channel(ent, channel, fade);
+            self.tracked.retain(|(e, c), _| !hit(*e, *c));
+            self.tracked_scripts.retain(|(e, c), _| !hit(*e, *c));
+            return;
+        }
+        let ids: Vec<((u32, u8), u32)> = self
+            .tracked
+            .iter()
+            .filter(|((e, c), _)| hit(*e, *c))
+            .map(|(k, v)| (*k, *v))
+            .collect();
+        for (key, id) in ids {
+            if volume > 0.0 {
+                self.mixer.set_volume(id, volume);
+            }
+            let mut p = pitch;
+            if p <= 0.0 && volume > 0.0 {
+                if let Some(e) = self
+                    .tracked_scripts
+                    .get(&key)
+                    .filter(|n| n.to_ascii_lowercase().contains(".scrape"))
+                    .and_then(|n| self.scripts.get(n))
+                {
+                    let (lo, hi) = e.pitch;
+                    if hi > lo {
+                        p = lo + volume * (hi - lo);
+                    }
+                }
+            }
+            if p > 0.0 {
+                self.mixer.set_pitch(id, p);
+            }
+        }
     }
 
     /// A streaming voice (voice chat) on `ent`'s CHAN_VOICE at `position` (`None`: in the
@@ -302,6 +359,7 @@ impl Sounds {
     pub fn stop_entity(&mut self, ent: u32, fade: f32) {
         self.mixer.stop_channel(ent, None, fade);
         self.tracked.retain(|(e, _), _| *e != ent);
+        self.tracked_scripts.retain(|(e, _), _| *e != ent);
     }
 
     /// Entities with tracked (looping or channelled) sounds, for [`Sounds::follow`].

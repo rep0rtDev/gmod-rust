@@ -620,6 +620,10 @@ pub struct SoundEvent {
     pub channel: u8,
     /// Server-side recipient cut (not sent): 0 for everyone.
     pub max_dist: f32,
+    /// `SND_CHANGE_VOL` / `SND_CHANGE_PITCH` (sound.md §1.3, gap-report #165, #170): mutate
+    /// what `ent` plays on `channel` (0: all) instead of starting a sound - `volume` < 0
+    /// keeps it, 0 stops it over `fade`, `pitch` 0 keeps it.
+    pub change: bool,
 }
 
 /// A published addon package: identity is the sha256 of the `.gmr` bytes.
@@ -1512,7 +1516,7 @@ impl ServerMsg {
                     w.vec3(s.pos);
                     w.f32(s.volume);
                     w.varint(s.ent as u64);
-                    w.u8(u8::from(s.looping) | (u8::from(s.stop) << 1));
+                    w.u8(u8::from(s.looping) | (u8::from(s.stop) << 1) | (u8::from(s.change) << 2));
                     w.f32(s.fade);
                     w.f32(s.pitch);
                     w.f32(s.level);
@@ -1915,6 +1919,7 @@ impl ServerMsg {
                         ent,
                         looping: flags & 1 != 0,
                         stop: flags & 2 != 0,
+                        change: flags & 4 != 0,
                         fade,
                         pitch,
                         level,

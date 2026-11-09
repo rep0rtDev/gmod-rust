@@ -1023,6 +1023,7 @@ impl ServerNet {
                 level: s.level,
                 channel: s.channel,
                 max_dist: s.max_dist,
+                change: s.change,
             }));
         self.pending_effects
             .extend(server.take_effects().into_iter().map(|e| match e {

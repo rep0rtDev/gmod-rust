@@ -806,6 +806,18 @@ local function sound_emit(name, pos, level, pitch, volume, ent, channel, max_dis
         channel = tonumber(channel) or 0, max_dist = max_dist or 0, at_pos = at_pos ~= false })
 end
 function sound.Play(name, pos, level, pitch, volume, ent) sound_emit(name, pos, level, pitch, volume, ent, 0, 0, true) end
+-- CSoundPatch (sound.md §1.7): the patch plays on its entity's CHAN_STATIC (the game takes the
+-- script's channel; CHAN_STATIC when it is CHAN_AUTO - M) and its ChangeVolume / ChangePitch /
+-- FadeOut / Stop go out as SND_CHANGE_* updates of that (entity, channel)
+function sound.__patch_play(name, ent, level, pitch, volume)
+	local ok = IsValid(ent) and ent.EntIndex ~= nil
+	local pos = ok and ent:GetPos() or Vector()
+	sound_emit(name, pos, level, pitch, volume, ok and ent:EntIndex() or 0, 6, 0, not ok)
+end
+function sound.__patch_change(ent, volume, pitch, fade)
+	local idx = IsValid(ent) and ent.EntIndex and ent:EntIndex() or 0
+	world.queue("sound.change", 0, { ent = idx, channel = 6, volume = volume or -1, pitch = pitch or 0, fade = fade or 0 })
+end
 function sound.PlayFile(path, flags, cb) if cb then cb(nil, 20, "BASS_ERROR_NOTAVAIL") end end
 function sound.PlayURL(url, flags, cb) if cb then cb(nil, 20, "BASS_ERROR_NOTAVAIL") end end
 function EmitSound(name, pos, ent, channel, volume, level, flags, pitch)
@@ -814,7 +826,7 @@ function EmitSound(name, pos, ent, channel, volume, level, flags, pitch)
 end
 local ENTm = __glua_classes.Entity
 function ENTm:EmitSound(name, level, pitch, volume, channel) sound_emit(name, self:GetPos(), level, pitch, volume, self:EntIndex(), channel, 2500, false) end
-function ENTm:StopSound(name) end
+function ENTm:StopSound(name) world.queue("sound.change", 0, { ent = self:EntIndex(), channel = 0, volume = 0, pitch = 0, fade = 0 }) end
 __glua_classes.Player.EmitSound = ENTm.EmitSound
 __glua_classes.Player.StopSound = ENTm.StopSound
 SNDLVL_NONE, SNDLVL_20dB, SNDLVL_25dB, SNDLVL_30dB, SNDLVL_35dB, SNDLVL_40dB, SNDLVL_45dB, SNDLVL_50dB, SNDLVL_55dB, SNDLVL_IDLE, SNDLVL_60dB, SNDLVL_65dB, SNDLVL_STATIC, SNDLVL_70dB, SNDLVL_NORM, SNDLVL_75dB, SNDLVL_80dB, SNDLVL_TALKING, SNDLVL_85dB, SNDLVL_90dB, SNDLVL_95dB, SNDLVL_100dB, SNDLVL_105dB, SNDLVL_110dB, SNDLVL_120dB, SNDLVL_130dB, SNDLVL_GUNFIRE, SNDLVL_140dB, SNDLVL_150dB, SNDLVL_180dB = 0, 20, 25, 30, 35, 40, 45, 50, 55, 60, 60, 65, 66, 70, 75, 75, 80, 80, 85, 90, 95, 100, 105, 110, 120, 130, 140, 140, 150, 180

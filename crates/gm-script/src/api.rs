@@ -102,6 +102,16 @@ pub enum QueuedWrite {
         /// The position came from Lua (`sound.Play`) rather than the entity.
         at_pos: bool,
     },
+    /// `CSoundPatch::ChangeVolume` / `ChangePitch` / `FadeOut`, `Entity:StopSound`: a
+    /// `SND_CHANGE_*` update of what `ent` plays on `channel` (0: all); `volume` < 0 keeps
+    /// it, 0 stops it over `fade` seconds; `pitch` 0 keeps it.
+    SoundChange {
+        ent: u32,
+        channel: u8,
+        volume: f32,
+        pitch: f32,
+        fade: f32,
+    },
     /// `spawnmenu.add`: models under a spawn menu category for every client.
     SpawnList {
         category: String,
@@ -2409,6 +2419,16 @@ pub fn install(lua: &Lua, shared: Arc<Shared>) -> Result<()> {
                         at_pos: t.get::<Option<bool>>("at_pos")?.unwrap_or(true),
                     }
                 }
+                "sound.change" => {
+                    let t = table_arg(&arg)?;
+                    QueuedWrite::SoundChange {
+                        ent: t.get::<Option<u32>>("ent")?.unwrap_or(ent),
+                        channel: t.get::<Option<u8>>("channel")?.unwrap_or(0),
+                        volume: t.get::<Option<f32>>("volume")?.unwrap_or(-1.0),
+                        pitch: t.get::<Option<f32>>("pitch")?.unwrap_or(0.0),
+                        fade: t.get::<Option<f32>>("fade")?.unwrap_or(0.0),
+                    }
+                }
                 "set_velocity" => {
                     let t = table_arg(&arg)?;
                     QueuedWrite::SetVelocity {
@@ -4604,6 +4624,16 @@ pub fn apply(server: &mut Server<'_>, w: &QueuedWrite) -> bool {
                 return false;
             }
             server.npc_stop(*ent);
+            true
+        }
+        QueuedWrite::SoundChange {
+            ent,
+            channel,
+            volume,
+            pitch,
+            fade,
+        } => {
+            server.change_sound_lua(*ent, *channel, *volume, *pitch, *fade);
             true
         }
         QueuedWrite::Sound {

@@ -8,8 +8,8 @@
 //! over `fadetime` (3 s unless the soundscape says otherwise).
 //!
 //! `dsp` is parsed and ignored: our room sound is Steam Audio's reflections off the real
-//! geometry, not a preset. `position "random"` is approximated as a point 100..500 u
-//! from the listener at a random bearing.
+//! geometry, not a preset. `position "random"` is a point 36 u from the listener at a
+//! random bearing (sound.md §6.2); a random sound first fires at half its interval.
 
 use std::collections::HashMap;
 use std::time::Instant;
@@ -487,7 +487,7 @@ impl Soundscapes {
             Position::Index(i) => env.positions[i as usize].or(Some(env.origin)),
             Position::Random => {
                 let a = self.unit() * std::f32::consts::TAU;
-                let r = 100.0 + 400.0 * self.unit();
+                let r = 36.0;
                 Some(eye + Vec3::new(a.cos() * r, a.sin() * r, 0.0))
             }
         }
@@ -552,7 +552,7 @@ impl Soundscapes {
             .randoms
             .iter()
             .map(|r| RandomTimer {
-                next: self.time + self.range(r.time),
+                next: self.time + 0.5 * self.range(r.time),
             })
             .collect::<Vec<_>>();
         self.active = Some(Active {
