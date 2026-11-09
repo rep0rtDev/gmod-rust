@@ -1231,6 +1231,9 @@ struct App {
     /// When the crossbow's loaded bolt started charging (clip went to 1 with the crossbow out):
     /// START_CHARGE 0.5 s then READY over 1 s (hl2weapons.md charger states, #105).
     xbow_charge_since: Option<Instant>,
+    /// Explosion dynamic lights (GMod's, clientfx.md §1 / gap-report #117): radius 350 u,
+    /// colour (255, 145, 30), gone after 0.3 s with the radius shrinking at 1166.67 u/s.
+    fx_explosion_lights: Vec<(Vec3, Instant)>,
     /// Bullet decals: position, normal, metal, birth (the newest 256).
     fx_decals: std::collections::VecDeque<(Vec3, Vec3, String, Instant)>,
     /// Bullet decals on props: entity, position and normal in its frame, decal material.
@@ -4516,6 +4519,7 @@ impl App {
                     }
                     gm_net::msg::EffectEvent::Explosion { pos } => {
                         self.spawn_explosion(pos, now);
+                        self.fx_explosion_lights.push((pos, now));
                         // `CBaseGrenade::Explode`: a `Scorch` decal where the line from 8 u
                         // above the blast to 32 u below meets the world
                         let tr = self.sim.collision.trace_ray(
@@ -6327,6 +6331,18 @@ impl App {
                     let (v, i) = g.world.sprite_quad(at, scale * 64.0, [c, c, c], &camera);
                     additive.push((m, v, i));
                 }
+            }
+            // the explosion's dynamic light (#117): 350 u shrinking at 1166.67 u/s, 0.3 s
+            self.fx_explosion_lights
+                .retain(|(_, born)| now.duration_since(*born).as_secs_f32() < 0.3);
+            for &(pos, born) in &self.fx_explosion_lights {
+                let t = now.duration_since(born).as_secs_f32();
+                dlights.push(gm_render::world::DLight {
+                    pos,
+                    radius: (350.0 - 1166.67 * t).max(0.0),
+                    color: Vec3::new(1.0, 145.0 / 255.0, 30.0 / 255.0),
+                    ..Default::default()
+                });
             }
             // `AR2Impact`: a combinemuzzle2 flash growing 16 -> 32 u and fading over 0.1 s
             self.fx_ar2_impacts
@@ -9077,6 +9093,7 @@ fn main() -> Result<()> {
         fx_tracers: Vec::new(),
         fx_ar2_impacts: Vec::new(),
         xbow_charge_since: None,
+        fx_explosion_lights: Vec::new(),
         fx_decals: Default::default(),
         fx_prop_decals: Default::default(),
         fx_bursts: Vec::new(),
