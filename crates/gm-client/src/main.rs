@@ -1206,6 +1206,7 @@ struct App {
     /// HudAnimations.txt state of the health and suit panels
     hud_health_anim: std::cell::RefCell<HudPanelAnim>,
     hud_suit_anim: std::cell::RefCell<HudPanelAnim>,
+    hud_ammo_anim: std::cell::RefCell<HudAmmoAnim>,
     mount: gm_content::Mount,
     bsp_data: Vec<u8>,
     sim: Sim,
@@ -7872,6 +7873,11 @@ impl App {
                     sa.update(i32::from(p.armor).max(0), hud_now, false);
                     (hh.look(hud_now), sa.look(hud_now))
                 };
+                let ammo_look = {
+                    let mut aa = self.hud_ammo_anim.borrow_mut();
+                    aa.update(self.weapon, i32::from(p.clip), hud_now);
+                    aa.look(hud_now)
+                };
                 // HudCrosshair: the weapon script's Crosshairs glyph (Q for every weapon the
                 // loadout has) centred, ClientScheme Normal 255 208 64
                 if p.alive
@@ -8399,16 +8405,10 @@ impl App {
                         136.0 * s,
                         "AMMO",
                         FG_COLOR_HUD,
-                        BG_COLOR_HUD,
+                        ammo_look.bg,
                     );
                     let clip = if p.clip >= 0 { p.clip } else { p.reserve };
-                    items.push(UiItem::Text {
-                        font: numbers.clone(),
-                        x: ax + 40.0 * s,
-                        y: y + 2.0 * s,
-                        text: clip.to_string(),
-                        color: fg,
-                    });
+                    digits(&mut items, ax + 40.0 * s, clip.to_string(), &ammo_look);
                     if p.clip >= 0 {
                         items.push(UiItem::Text {
                             font: small.clone(),
@@ -9484,6 +9484,7 @@ fn main() -> Result<()> {
         deaths: Vec::new(),
         hud_health_anim: Default::default(),
         hud_suit_anim: Default::default(),
+        hud_ammo_anim: Default::default(),
         mount,
         bsp_data,
         sim,
@@ -11479,6 +11480,97 @@ struct HudPanelLook {
     bg: [f32; 4],
     blur: f32,
     alpha: f32,
+}
+
+/// `CHudAmmo` HudAnimations (ui.md §5.3, gap-report #154): `WeaponChanged` flashes the panel
+/// background 250 220 0 80 (0.1 s in, Deaccel back over 1.0 s); `AmmoDecreased` blurs 7 ->
+/// 0 (Deaccel 1.5 s) with the digits BrightFg for 0.1 s then Deaccel back over 0.75 s;
+/// `AmmoIncreased` digits BrightFg over 0.15 s then Deaccel 1.5 s, blur 5 -> 0 over 1.5 s.
+#[derive(Default)]
+struct HudAmmoAnim {
+    weapon: Option<u8>,
+    clip: Option<i32>,
+    changed: Option<Instant>,
+    decreased: Option<Instant>,
+    increased: Option<Instant>,
+}
+
+impl HudAmmoAnim {
+    fn update(&mut self, weapon: u8, clip: i32, now: Instant) {
+        if self.weapon != Some(weapon) {
+            if self.weapon.is_some() {
+                self.changed = Some(now);
+            }
+            self.weapon = Some(weapon);
+            self.clip = Some(clip);
+            return;
+        }
+        if let Some(last) = self.clip {
+            if clip < last {
+                self.decreased = Some(now);
+            } else if clip > last {
+                self.increased = Some(now);
+            }
+        }
+        self.clip = Some(clip);
+    }
+
+    fn look(&self, now: Instant) -> HudPanelLook {
+        use Interp::{Deaccel, Linear};
+        let mut look = HudPanelLook {
+            fg: FG_COLOR_HUD,
+            text: FG_COLOR_HUD,
+            bg: BG_COLOR_HUD,
+            blur: 0.0,
+            alpha: 1.0,
+        };
+        let f1 = |a: f32, b: f32, f: f32| a + (b - a) * f;
+        let t = |at: Option<Instant>| at.map(|a| now.duration_since(a).as_secs_f32());
+        if let Some(t) = t(self.changed) {
+            look.bg = run_segments(
+                BG_COLOR_HUD,
+                &[
+                    Seg(
+                        [250.0 / 255.0, 220.0 / 255.0, 0.0, 80.0 / 255.0],
+                        Linear,
+                        0.0,
+                        0.1,
+                    ),
+                    Seg(BG_COLOR_HUD, Deaccel, 0.1, 1.0),
+                ],
+                t,
+                lerp4,
+            );
+        }
+        match (t(self.decreased), t(self.increased)) {
+            (Some(td), ti) if ti.is_none_or(|ti| td <= ti) => {
+                look.blur = run_segments(7.0, &[Seg(0.0, Deaccel, 0.1, 1.5)], td, f1);
+                look.text = run_segments(
+                    FG_COLOR_HUD,
+                    &[
+                        Seg(BRIGHT_FG, Linear, 0.0, 0.1),
+                        Seg(FG_COLOR_HUD, Deaccel, 0.1, 0.75),
+                    ],
+                    td,
+                    lerp4,
+                );
+            }
+            (_, Some(ti)) => {
+                look.blur = run_segments(5.0, &[Seg(0.0, Linear, 0.01, 1.5)], ti, f1);
+                look.text = run_segments(
+                    FG_COLOR_HUD,
+                    &[
+                        Seg(BRIGHT_FG, Linear, 0.0, 0.15),
+                        Seg(FG_COLOR_HUD, Deaccel, 0.15, 1.5),
+                    ],
+                    ti,
+                    lerp4,
+                );
+            }
+            _ => {}
+        }
+        look
+    }
 }
 
 /// `CHudHealth` / `CHudBattery` threshold machine driving HudAnimations.txt (ui.md 3.3-3.4,
