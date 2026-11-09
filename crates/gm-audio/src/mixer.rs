@@ -52,21 +52,29 @@ impl Listener {
     }
 }
 
-/// Distance gain of a sound with level `level` dB heard `dist` units away. The SDK's
-/// `SNDLVL_TO_ATTN` (`20 / (level - 50)`, 4 under 50 dB) gives the attenuation; the gain
-/// then falls linearly to silence at `1000 / attenuation` units (GoldSrc's law, which the
-/// game's scripts were tuned against: gunfire at 140 dB carries 4500 units, 75 dB 1250).
-/// Not measured against the game; the client cannot record its mix.
+/// Distance gain of a sound with level `level` dB heard `dist` units away: Source's law
+/// (binary study sound.md 2.1): `dist_mult = 10^((60 - level) / 20) / 36` per unit; full gain
+/// within `d0 = 1 / dist_mult` (75 dB: 202 u, 90 dB: 1138 u, 140 dB: 360 000 u), then
+/// `1 / (dist * dist_mult)` (-6 dB per doubling) floored at `snd_gain_min` 0.01 with a linear
+/// fade to silence below it. Level 0 is unattenuated.
 pub fn distance_gain(level: f32, dist: f32) -> f32 {
     if level <= 0.0 {
         return 1.0;
     }
-    let attn = if level > 50.0 {
-        20.0 / (level - 50.0)
+    let dist_mult = 10f32.powf((60.0 - level) / 20.0) / 36.0;
+    let gain = if dist * dist_mult <= 1.0 {
+        1.0
     } else {
-        4.0
+        1.0 / (dist * dist_mult)
     };
-    (1.0 - dist * attn / 1000.0).clamp(0.0, 1.0)
+    const GAIN_MIN: f32 = 0.01;
+    if gain >= GAIN_MIN {
+        gain
+    } else {
+        // below the floor the engine fades linearly so sounds do end
+        let d_min = 1.0 / (GAIN_MIN * dist_mult);
+        (GAIN_MIN * (1.0 - (dist - d_min) / d_min)).max(0.0)
+    }
 }
 
 pub enum Cmd {
@@ -473,15 +481,16 @@ mod tests {
     #[test]
     fn gain_falls_linearly_to_the_level_range() {
         assert_eq!(distance_gain(140.0, 0.0), 1.0);
-        assert!((distance_gain(140.0, 2250.0) - 0.5).abs() < 1e-4);
-        assert_eq!(distance_gain(140.0, 5000.0), 0.0);
-        assert!((distance_gain(75.0, 625.0) - 0.5).abs() < 1e-4);
+        // 140 dB: full gain to 360 000 u
+        assert_eq!(distance_gain(140.0, 5000.0), 1.0);
+        // 75 dB: full to 202 u, then 1/r: half at twice that
+        assert_eq!(distance_gain(75.0, 100.0), 1.0);
+        assert!((distance_gain(75.0, 404.0) - 0.5).abs() < 1e-2);
+        assert!((distance_gain(75.0, 2020.0) - 0.1).abs() < 1e-2);
         assert_eq!(distance_gain(0.0, 1e6), 1.0);
-        assert_eq!(
-            distance_gain(40.0, 250.0),
-            0.0,
-            "under 50 dB: attenuation 4"
-        );
+        // 60 dB: d0 = 36 u, the 0.01 floor at 3600 u, silence by 7200 u
+        assert!((distance_gain(60.0, 72.0) - 0.5).abs() < 1e-3);
+        assert_eq!(distance_gain(60.0, 7200.0), 0.0);
     }
 
     #[test]

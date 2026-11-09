@@ -8603,6 +8603,9 @@ pub struct Server<'w> {
     /// Host hook: the `$surfaceprop` of a brush material (impact decals); cached below.
     pub surfaceprop_loader: Option<SurfacepropLoader>,
     brush_surfaceprops: BTreeMap<String, String>,
+    /// Tick of the last impact sound per entity pair (the game's 0.05 s `deltaCollisionTime`
+    /// gate, sound.md 5).
+    impact_last: BTreeMap<(u32, u32), u64>,
     /// Step sounds by material, `""` for no material; filled through `step_loader`.
     step_sounds: BTreeMap<String, Option<StepSounds>>,
     /// `sbox_playershurtplayers`: with it off hits are still resolved and recorded but neither
@@ -8817,6 +8820,7 @@ impl<'w> Server<'w> {
             step_loader: None,
             surfaceprop_loader: None,
             brush_surfaceprops: BTreeMap::new(),
+            impact_last: BTreeMap::new(),
             step_sounds: BTreeMap::new(),
             players_hurt_players: true,
             physics_paused: false,
@@ -24937,6 +24941,29 @@ impl<'w> Server<'w> {
         let material = override_material
             .map(str::to_owned)
             .or_else(|| self.collision.ground_material(feet).map(str::to_owned));
+        // volume by the surface's game material (sound.md 4.1): dirt 0.25 / 0.55, vents
+        // 0.4 / 0.7, ladder 0.5, everything else 0.2 / 0.5; ducked x0.65
+        let ducked = self.players.get(&player).is_some_and(|p| p.state.ducked);
+        let duck = if ducked { 0.65 } else { 1.0 };
+        let walking = step.volume < 0.5 * duck - 1e-3;
+        let letter = material
+            .as_deref()
+            .and_then(|m| self.surface_table.as_ref()?.sound(m, "gamematerial"))
+            .and_then(|g| g.chars().next())
+            .map(|c| c.to_ascii_uppercase());
+        let (walk, run) = if material.as_deref() == Some(gm_move::LADDER_MATERIAL) {
+            (0.5, 0.5)
+        } else {
+            match letter {
+                Some('D') => (0.25, 0.55),
+                Some('V') => (0.4, 0.7),
+                _ => (0.2, 0.5),
+            }
+        };
+        let step = gm_move::Step {
+            volume: if walking { walk } else { run } * duck,
+            ..step
+        };
         let key = material.clone().unwrap_or_default();
         if !self.step_sounds.contains_key(&key) {
             let loaded = self
@@ -25425,7 +25452,46 @@ impl<'w> Server<'w> {
             let Some(volume) = impact_volume(imp.speed) else {
                 continue;
             };
-            for body in imp.bodies {
+            // the pair's 0.05 s gate (`deltaCollisionTime`)
+            let pair = match (ids[0].unwrap_or(0), ids[1].unwrap_or(0)) {
+                (a, b) if a <= b => (a, b),
+                (a, b) => (b, a),
+            };
+            let tick = self.tick_count;
+            if self
+                .impact_last
+                .get(&pair)
+                .is_some_and(|t| tick.saturating_sub(*t) < 4)
+            {
+                continue;
+            }
+            self.impact_last.insert(pair, tick);
+            // the other side's surface property: a prop's model, the world's brush under the point
+            let surfaceprop_of = |s: &Self, ent: u32| -> Option<String> {
+                if ent == 0 {
+                    return Some(
+                        s.collision
+                            .ground_material(imp.point + Vec3::Z * 2.0)
+                            .unwrap_or("concrete")
+                            .to_string(),
+                    );
+                }
+                let model = s
+                    .sandbox
+                    .props()
+                    .iter()
+                    .find(|p| p.id == ent)?
+                    .model
+                    .clone();
+                Some(s.models.get(&model)?.surfaceprop.clone())
+            };
+            let prop_f32 = |s: &Self, name: &str, key: &str| -> Option<f32> {
+                s.surface_table
+                    .as_ref()?
+                    .sound(name, key)
+                    .and_then(|v| v.trim().parse::<f32>().ok())
+            };
+            for (k, body) in imp.bodies.into_iter().enumerate() {
                 let Some((&id, _)) = self.bodies.iter().find(|(_, b)| **b == body) else {
                     continue;
                 };
@@ -25441,8 +25507,21 @@ impl<'w> Server<'w> {
                 else {
                     continue;
                 };
+                // `impactHard` unless the other side is softer than our `hardthreshold` or we
+                // hit slower than our `hardvelocitythreshold` (sound.md 5, surfaceproperties)
+                let other = ids[1 - k].and_then(|e| surfaceprop_of(self, e));
+                let ours = self.models.get(&model).map(|m| m.surfaceprop.clone());
+                let soft = match (&ours, &other) {
+                    (Some(ours), Some(other)) if self.surface_table.is_some() => {
+                        let hardness = prop_f32(self, other, "hardnessfactor").unwrap_or(1.0);
+                        let threshold = prop_f32(self, ours, "hardthreshold").unwrap_or(0.0);
+                        let vel = prop_f32(self, ours, "hardvelocitythreshold").unwrap_or(0.0);
+                        hardness < threshold || (vel > 0.0 && imp.speed < vel)
+                    }
+                    _ => imp.speed < IMPACT_SOUND_FULL_SPEED,
+                };
                 let Some(name) = self.models.get(&model).and_then(|m| {
-                    if imp.speed < IMPACT_SOUND_FULL_SPEED {
+                    if soft {
                         m.impact_soft.clone().or_else(|| m.impact_hard.clone())
                     } else {
                         m.impact_hard.clone()
