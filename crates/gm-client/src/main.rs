@@ -962,6 +962,8 @@ fn weapon_sound(act: u8, active: u8) -> Option<String> {
         // the 357 / AR2 / RPG scripts borrow their empty click (hl2weapons.md, #99)
         // secondary fires: SMG1 grenade `Double`, AR2 ball `Weapon_IRifle.Single` (#102, #104)
         (8, "Weapon_SMG1") => "Double",
+        (9, "Weapon_AR2") => return Some("Weapon_CombineGuard.Special1".into()),
+        (9, _) => return None,
         (8, "Weapon_AR2") => return Some("Weapon_IRifle.Single".into()),
         (3, "Weapon_357") => return Some("Weapon_Pistol.Empty".into()),
         (3, "Weapon_AR2") => return Some("Weapon_IRifle.Empty".into()),
@@ -3944,6 +3946,13 @@ impl App {
                             .and_then(|m| m.sequence_for_activity("ACT_VM_SECONDARYATTACK"))?;
                         Some(static_seq_name(name))
                     }),
+                    9 => self
+                        .gfx
+                        .as_ref()
+                        .and_then(|g| g.models.get(vm.path))
+                        .and_then(|m| m.as_ref())
+                        .and_then(|m| m.sequence_for_activity("ACT_VM_FIDGET"))
+                        .map(static_seq_name),
                     _ => None,
                 };
                 let predicted = act == 6

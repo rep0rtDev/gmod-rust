@@ -614,6 +614,8 @@ pub enum VmAct {
     /// The secondary attack's viewmodel activity (the gravity gun's punt / launch,
     /// gravgun.md 2).
     AltFire = 8,
+    /// `ACT_VM_FIDGET`: the AR2's 0.5 s combine-ball charge.
+    Fidget = 9,
 }
 
 fn vm_event(slot: &mut VmAct, serial: &mut u8, act: VmAct) {
@@ -800,7 +802,15 @@ impl Inventory {
                 return None;
             }
             if pressed2 && self.next_primary <= 0.0 && self.next_secondary <= 0.0 && *ammo2 > 0 {
+                // under water the AR2's alt fire is an empty click (hl2weapons.md, #104)
+                if self.underwater {
+                    vm_event(&mut self.vm_act, &mut self.vm_serial, VmAct::Dry);
+                    self.next_secondary = 0.5;
+                    return None;
+                }
                 self.ball_pending = true;
+                // the charge: ACT_VM_FIDGET with Weapon_CombineGuard.Special1 for 0.5 s
+                vm_event(&mut self.vm_act, &mut self.vm_serial, VmAct::Fidget);
                 self.next_primary = delay;
                 self.next_secondary = delay;
                 return None;

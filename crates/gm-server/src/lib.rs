@@ -11070,6 +11070,11 @@ impl<'w> Server<'w> {
             rng: &mut self.spawn_rng,
         };
         let mut spawned = Vec::new();
+        let throwers: HashMap<u32, (Vec3, bool)> = self
+            .players
+            .iter()
+            .map(|(&id, p)| (id, (p.state.velocity, p.state.ducked)))
+            .collect();
         for (owner, kind, eye, angles, lob) in launches {
             // the launcher's sound the client cannot take from the viewmodel act: the AR2's
             // ball (`WPN_DOUBLE` = Weapon_IRifle.Single), the SMG1's grenade (Weapon_SMG1.Double)
@@ -11106,6 +11111,7 @@ impl<'w> Server<'w> {
                 world,
                 Some(&mut phys),
                 lob,
+                throwers.get(&owner).copied(),
             ) {
                 spawned.push((eye, pr));
             }
@@ -20644,6 +20650,7 @@ impl<'w> Server<'w> {
                 self.collision,
                 Some(&mut phys),
                 false,
+                None,
             ) else {
                 continue;
             };

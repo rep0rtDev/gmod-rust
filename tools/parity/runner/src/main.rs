@@ -3703,6 +3703,7 @@ fn run_fire(scn: &Scenario) -> Result<Value> {
                         world,
                         phys.as_mut(),
                         false,
+                        None,
                     ) {
                         projs.push(pr);
                     }
@@ -8176,6 +8177,7 @@ fn rocket_residual(golden: &std::path::Path) -> Result<()> {
         &collision,
         None,
         false,
+        None,
     )
     .context("spawn")?;
     let ticks = res["ticks"].as_array().context("ticks")?;

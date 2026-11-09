@@ -67,12 +67,12 @@ const BALL_LIFE_TICKS: u32 = 300;
 /// rolling 600 deg/s about it plus a random pitch spin (three throws: 487, -633, 200 deg/s),
 /// so its path after the first bounce is random; it explodes 175 ticks after the throw.
 pub const GRENADE_MODEL: &str = "models/weapons/w_npcnade.mdl";
-const GRENADE_SPEED: f32 = 1189.0;
-const GRENADE_KICK: f32 = 110.0;
+const GRENADE_SPEED: f32 = 1200.0;
 const GRENADE_OFFSET: Vec3 = Vec3::new(8.0, 33.69, 13.91);
 const GRENADE_ROLL: f32 = 600.0;
-const GRENADE_SPIN: f32 = 700.0;
-pub const GRENADE_FUSE_TICKS: u32 = 175;
+const GRENADE_SPIN: f32 = 1200.0;
+/// 2.5 s fuse (weapon_frag `GRENADE_TIMER`).
+pub const GRENADE_FUSE_TICKS: u32 = 167;
 
 /// The rigid-body world grenades live in, with their model and the server's random stream.
 pub struct Physics<'a> {
@@ -185,6 +185,7 @@ pub fn spawn(
     world: &World,
     phys: Option<&mut Physics<'_>>,
     lob: bool,
+    thrower: Option<(Vec3, bool)>,
 ) -> Option<Projectile> {
     let (forward, right, up) = basis(pitch, yaw);
     let aim_trace = world.trace_ray(eye, eye + forward * 56755.84, MASK_SOLID);
@@ -280,18 +281,33 @@ pub fn spawn(
             let info = phys.grenade?;
             let (forward, right, _) = basis(pitch, yaw);
             let ahead = gm_sandbox::forward(0.0, yaw);
-            // `LobGrenade` (secondary): 8 u lower, 350 u/s forward + 50 up, a third of the spin
-            let origin = eye
-                + right * GRENADE_OFFSET.x
-                + ahead * GRENADE_OFFSET.y
-                + Vec3::Z * (GRENADE_OFFSET.z - if lob { 8.0 } else { 0.0 });
-            let velocity = if lob {
+            // weapon_frag (hl2weapons.md, gap-report #107-#108): ThrowGrenade from
+            // eye + fwd*18 + right*8 at playerVel + (fwd + 0.1 up)*1200, angular impulse
+            // (600, rand +-1200, 0); the secondary ducked is RollGrenade from the feet
+            // (+4 u, 18 fwd) at facing*700 + playerVel spinning 720 about the up axis,
+            // otherwise LobGrenade (8 u lower, 350 forward + 50 up, a third of the spin)
+            let (player_vel, ducked) = thrower.unwrap_or((Vec3::ZERO, false));
+            let roll_it = lob && ducked;
+            let origin = if roll_it {
+                eye + ahead * 18.0 + Vec3::Z * (4.0 - if ducked { 28.0 } else { 64.0 })
+            } else if lob {
+                eye + right * GRENADE_OFFSET.x
+                    + ahead * GRENADE_OFFSET.y
+                    + Vec3::Z * (GRENADE_OFFSET.z - 8.0)
+            } else {
+                eye + forward * 18.0 + right * 8.0
+            };
+            let velocity = if roll_it {
+                ahead * 700.0 + player_vel
+            } else if lob {
                 forward * 350.0 + Vec3::Z * 50.0
             } else {
-                forward * GRENADE_SPEED + Vec3::Z * GRENADE_KICK
+                player_vel + (forward + Vec3::Z * 0.1) * GRENADE_SPEED
             };
-            let (roll, spin_max) = if lob {
-                (200.0, 600.0)
+            let (roll, spin_max) = if roll_it {
+                (0.0, 0.0)
+            } else if lob {
+                (200.0, 400.0)
             } else {
                 (GRENADE_ROLL, GRENADE_SPIN)
             };
@@ -305,7 +321,11 @@ pub fn spawn(
                     position: origin,
                     angles: (0.0, yaw - 90.0, 0.0),
                     velocity,
-                    angular_velocity: right * roll + ahead * spin,
+                    angular_velocity: if roll_it {
+                        Vec3::Z * 720.0
+                    } else {
+                        right * roll + Vec3::Z * spin
+                    },
                     surface: info.surface,
                     linear_damping: info.linear_damping,
                     angular_damping: info.angular_damping,

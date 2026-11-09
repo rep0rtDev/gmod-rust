@@ -1282,6 +1282,7 @@ fn soldier_takes_cover_from_a_live_grenade() {
         &world.collision,
         None,
         false,
+        None,
     )
     .expect("no grenade");
     pr.velocity = Vec3::ZERO;
