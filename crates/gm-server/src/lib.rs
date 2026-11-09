@@ -22678,7 +22678,7 @@ impl<'w> Server<'w> {
         let held = match held {
             None if attack && pc.physgun => {
                 let bodies = self.trace_bodies();
-                let hit = gm_sandbox::tool_trace(self.collision, &bodies, eye, forward);
+                let hit = gm_sandbox::physgun_trace(self.collision, &bodies, eye, forward);
                 match hit.and_then(|h| h.ent.map(|e| (e, h))) {
                     Some((ent, h)) => {
                         let allowed = !matches!(
@@ -22762,6 +22762,24 @@ impl<'w> Server<'w> {
                 if let Some(b) = self.part_body(ent, g.bone) {
                     if use_key {
                         g.rotate(pc.mouse_x, pc.mouse_y, right);
+                        // rotate mode keys (physgun.md 5.4, 6): A / D spin the yaw, W / S
+                        // walk the hold distance, Shift snaps the angles to 45 deg
+                        let dt = self.physics.tick_interval;
+                        let b = pc.cmd.buttons;
+                        if b & gm_move::buttons::MOVELEFT != 0 {
+                            g.spin(-1.0, dt);
+                        }
+                        if b & gm_move::buttons::MOVERIGHT != 0 {
+                            g.spin(1.0, dt);
+                        }
+                        if b & gm_move::buttons::FORWARD != 0 {
+                            g.approach_distance(true, dt);
+                        } else if b & gm_move::buttons::BACK != 0 {
+                            g.approach_distance(false, dt);
+                        }
+                        if b & gm_move::buttons::WALK != 0 {
+                            g.snap();
+                        }
                     }
                     // wheel: distance += lines * physgun_wheelspeed (10), clamped to
                     // physgun_minrange..maxrange only when the wheel moved (physgun.md 5.4)

@@ -51,6 +51,16 @@ pub struct Grab {
 /// Degrees of prop rotation per mouse unit in rotate mode (E held): 20 units per tick turned
 /// the crate 1 degree per tick.
 pub const ROTATE_DEG_PER_UNIT: f32 = 0.05;
+/// `phys_spinspeed`: degrees per second A / D turn the held prop in rotate mode.
+pub const PHYS_SPINSPEED: f32 = 200.0;
+/// W / S in rotate mode move the hold distance at this speed (SDK value; the game's constant
+/// did not resolve from the binary).
+pub const ROTATE_DISTANCE_SPEED: f32 = 100.0;
+/// `physgun_minrange` / `physgun_maxrange`.
+pub const MIN_RANGE: f32 = 40.0;
+pub const MAX_RANGE: f32 = 4096.0;
+/// `gm_snapangles`.
+pub const SNAP_ANGLES: f32 = 45.0;
 
 impl Grab {
     /// Rotate mode: mouse x turns the wanted orientation about world up, mouse y about the
@@ -59,6 +69,37 @@ impl Grab {
         let yaw = Quat::from_rotation_z((mouse_x * ROTATE_DEG_PER_UNIT).to_radians());
         let pitch = Quat::from_axis_angle(right, (mouse_y * ROTATE_DEG_PER_UNIT).to_radians());
         self.rotation = (pitch * yaw * self.rotation).normalize();
+    }
+
+    /// Rotate mode with A / D (physgun.md 6): the wanted yaw turns about world up at
+    /// `phys_spinspeed` (200 deg/s); `dir` is -1 for left, +1 for right.
+    pub fn spin(&mut self, dir: f32, dt: f32) {
+        let yaw = Quat::from_rotation_z((dir * PHYS_SPINSPEED * dt).to_radians());
+        self.rotation = (yaw * self.rotation).normalize();
+    }
+
+    /// Rotate mode with W / S (physgun.md 5.4): the hold distance approaches
+    /// `physgun_maxrange` / `physgun_minrange` at `ROTATE_DISTANCE_SPEED`.
+    pub fn approach_distance(&mut self, toward_max: bool, dt: f32) {
+        let goal = if toward_max { MAX_RANGE } else { MIN_RANGE };
+        let step = ROTATE_DISTANCE_SPEED * dt;
+        self.distance = if (goal - self.distance).abs() <= step {
+            goal
+        } else {
+            self.distance + step * (goal - self.distance).signum()
+        };
+    }
+
+    /// Rotate mode with Shift (physgun.md 6.3): the wanted angles snapped to `gm_snapangles`
+    /// (45 deg) per component.
+    pub fn snap(&mut self) {
+        let (yaw, pitch, roll) = self.rotation.to_euler(glam::EulerRot::ZYX);
+        let snap = |a: f32| {
+            let s = SNAP_ANGLES.to_radians();
+            (a / s).round() * s
+        };
+        self.rotation =
+            Quat::from_euler(glam::EulerRot::ZYX, snap(yaw), snap(pitch), snap(roll)).normalize();
     }
 
     pub fn new(

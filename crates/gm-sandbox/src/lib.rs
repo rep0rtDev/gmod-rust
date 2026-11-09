@@ -1257,6 +1257,11 @@ pub fn tool_trace(world: &World, props: &[PropBody], eye: Vec3, dir: Vec3) -> Op
     trace_line(world, props, eye, eye + dir * MAX_TRACE_LENGTH)
 }
 
+/// The physgun's pickup trace (physgun.md 4): a line for twice `physgun_maxrange` (8192 u).
+pub fn physgun_trace(world: &World, props: &[PropBody], eye: Vec3, dir: Vec3) -> Option<ToolHit> {
+    trace_line(world, props, eye, eye + dir * 8192.0)
+}
+
 #[derive(Default)]
 pub struct Sandbox {
     pub limits: Limits,
