@@ -659,7 +659,17 @@ pub fn prop_data_full(
     out.explosive_damage = first("explosive_damage").unwrap_or(0.0);
     out.explosive_radius = first("explosive_radius").unwrap_or(0.0);
     out.breakable_count = first("breakable_count").unwrap_or(0.0).clamp(0.0, 255.0) as u8;
+    out.min_health_dmg = first("minhealthdmg").unwrap_or(0.0);
     let first_str = |key: &str| chain.iter().find_map(|n| n.get_str(key)).map(|v| v.trim());
+    match first_str("fire_interactions")
+        .map(str::to_ascii_lowercase)
+        .as_deref()
+    {
+        Some("none") => out.fire_immune = true,
+        Some("ignite_halfhealth") => out.ignite_half_health = true,
+        Some("explosive_resist") => out.explosive_resist = true,
+        _ => {}
+    }
     out.server_gibs = !matches!(
         first_str("multiplayer_break"),
         Some("client") | Some("none")

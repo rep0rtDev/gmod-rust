@@ -569,6 +569,12 @@ pub struct PropData {
     pub breakable_count: u8,
     /// `multiplayer_break` lets the server spawn the gibs (`both` / `server`; not `client` / `none`).
     pub server_gibs: bool,
+    /// `minhealthdmg`: damage below this (before and after the modifiers) is ignored.
+    pub min_health_dmg: f32,
+    /// `fire_interactions`: `none` (fire-immune), `ignite_halfhealth`, `explosive_resist`.
+    pub fire_immune: bool,
+    pub ignite_half_health: bool,
+    pub explosive_resist: bool,
 }
 
 impl Default for PropData {
@@ -582,22 +588,33 @@ impl Default for PropData {
             explosive_radius: 0.0,
             breakable_count: 0,
             server_gibs: true,
+            min_health_dmg: 0.0,
+            fire_immune: false,
+            ignite_half_health: false,
+            explosive_resist: false,
         }
     }
 }
 
 impl PropData {
-    /// The modifier a damage type gets (`CBreakableProp::OnTakeDamage`).
+    /// The modifier a damage type gets (`CBreakableProp::OnTakeDamage`, props.md #22): the
+    /// bullet, club and blast modifiers multiply when several type bits are set, buckshot
+    /// takes the bullet modifier twice.
     pub fn modifier(&self, dmg_type: u32) -> f32 {
-        if dmg_type & weapons::DMG_CLUB != 0 {
-            self.dmg_club
-        } else if dmg_type & weapons::DMG_BLAST != 0 {
-            self.dmg_explosive
-        } else if dmg_type & weapons::DMG_BULLET != 0 {
-            self.dmg_bullets
-        } else {
-            1.0
+        let mut m = 1.0;
+        if dmg_type & weapons::DMG_BULLET != 0 {
+            m *= self.dmg_bullets;
+            if dmg_type & weapons::DMG_BUCKSHOT != 0 {
+                m *= self.dmg_bullets;
+            }
         }
+        if dmg_type & weapons::DMG_CLUB != 0 {
+            m *= self.dmg_club;
+        }
+        if dmg_type & weapons::DMG_BLAST != 0 {
+            m *= self.dmg_explosive;
+        }
+        m
     }
 }
 
@@ -8591,6 +8608,8 @@ pub struct Server<'w> {
     /// Props whose bottom was under water last tick (`ObjectEnterTrigger` / `ObjectLeaveTrigger`
     /// splashes, gap-report #184).
     wet_props: std::collections::HashSet<u32>,
+    /// Fractional prop damage carried between hits (the game's health is a float).
+    prop_damage_frac: HashMap<u32, f32>,
     /// First id of each class family's private schedules, handed out in spawn order like the
     /// game's schedule namespace.
     class_sched_bases: BTreeMap<String, u16>,
@@ -8863,6 +8882,7 @@ impl<'w> Server<'w> {
             mover: gm_move::Mover::new(gm_move::MoveConfig::default(), collision),
             bodies: BTreeMap::new(),
             wet_props: std::collections::HashSet::new(),
+            prop_damage_frac: HashMap::new(),
             ragdoll_bodies: BTreeMap::new(),
             ragdoll_spawn_pose: BTreeMap::new(),
             bone_scales: BTreeMap::new(),
@@ -9334,6 +9354,22 @@ impl<'w> Server<'w> {
 
     /// `Entity:Ignite(seconds)`: a flame on the prop; false when there is no such prop or it
     /// already burns. The fire sound (`General.BurningObject`) plays at the prop.
+    /// The next uniform number in [0, 1) of the server's spawn stream (`spawn_rng`, splitmix64).
+    fn rng_unit(&mut self) -> f32 {
+        self.spawn_rng = self.spawn_rng.wrapping_add(0x9E37_79B9_7F4A_7C15);
+        let mut z = self.spawn_rng;
+        z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+        z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+        z ^= z >> 31;
+        (z >> 40) as f32 / (1u64 << 24) as f32
+    }
+
+    /// Fire caught from damage (props.md #24): `random(10, 15)` seconds.
+    fn ignite_random(&mut self, ent: u32) {
+        let seconds = 10.0 + 5.0 * self.rng_unit();
+        self.ignite(ent, seconds);
+    }
+
     pub fn ignite(&mut self, ent: u32, seconds: f32) -> bool {
         let Some(prop) = self.sandbox.props().iter().find(|p| p.id == ent).cloned() else {
             return false;
@@ -9385,18 +9421,44 @@ impl<'w> Server<'w> {
         if prop.health <= 0 {
             return false;
         }
-        self.sent_event(ent, "damage", 0, 0, amount);
-        let now = self.cur_time();
-        self.sandbox.thruster_damaged(ent, now);
         let data = self
             .models
             .get(&prop.model)
             .map_or(PropData::default(), |m| m.prop_data);
-        let left = prop.health - (amount * data.modifier(dmg_type)) as i32;
-        if left > 0 {
-            self.sandbox.set_health(ent, left);
+        // props.md #22 (a)/(e): below `minhealthdmg` before or after the modifiers is ignored;
+        // #24: plain DMG_BURN does nothing to a fire-immune prop
+        if amount < data.min_health_dmg
+            || (dmg_type & DMG_BURN != 0 && dmg_type & DMG_DIRECT == 0 && data.fire_immune)
+        {
             return false;
         }
+        let scaled = amount * data.modifier(dmg_type);
+        if scaled < data.min_health_dmg {
+            return false;
+        }
+        self.sent_event(ent, "damage", 0, 0, amount);
+        let now = self.cur_time();
+        self.sandbox.thruster_damaged(ent, now);
+        // the game's health is a float: carry the fraction instead of truncating per hit
+        let carried = self.prop_damage_frac.remove(&ent).unwrap_or(0.0) + scaled;
+        let whole = carried.floor();
+        if carried - whole > 1e-4 {
+            self.prop_damage_frac.insert(ent, carried - whole);
+        }
+        let left = prop.health - whole as i32;
+        if left > 0 {
+            self.sandbox.set_health(ent, left);
+            // props.md #24: `ignite_halfhealth` catches fire from a bullet once under half health
+            let half_health_bullet = data.ignite_half_health
+                && dmg_type & weapons::DMG_BULLET != 0
+                && (left as f32) < data.health as f32 / 2.0;
+            let plain_burn = dmg_type & DMG_BURN != 0 && dmg_type & DMG_DIRECT == 0;
+            if half_health_bullet || plain_burn {
+                self.ignite_random(ent);
+            }
+            return false;
+        }
+        self.prop_damage_frac.remove(&ent);
         self.sandbox.set_health(ent, 0);
         let pos = self.prop_state(ent).map_or(prop.pos, |s| s.position);
         if let Some(name) = self

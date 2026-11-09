@@ -1128,6 +1128,13 @@ impl World {
         pa: Vec3,
         pb: Vec3,
     ) -> Option<ConstraintHandle> {
+        // a degenerate axis (the two points within 1 u) slides along +Z, as the game's
+        // phys_slideconstraint does (props.md #70, gap-report #192)
+        let pb = if pb.distance(pa) < 1.0 {
+            pa + Vec3::Z
+        } else {
+            pb
+        };
         let (ja, jb) = (to_jolt(pa), to_jolt(pb));
         let c = unsafe {
             gmp_add_slider_constraint(
