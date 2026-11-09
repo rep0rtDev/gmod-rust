@@ -36,9 +36,6 @@ use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::keyboard::{KeyCode, PhysicalKey};
 use winit::window::{CursorGrabMode, Window, WindowId};
 
-/// `cl_weaponcolor` default "0.30 1.80 2.10" clamped to the display range: the beam and
-/// glow tint of the physgun.
-const PHYSGUN_BEAM_COLOR: [f32; 3] = [0.3, 1.0, 1.0];
 /// `weapon_physgun` in `WEAPONS`: the weapon a sandbox spawn leaves out (`gm_server::SPAWN_WEAPON`).
 const PHYSGUN_SLOT: u8 = 0;
 /// Slots in `WEAPONS` of the weapons with their own effects.
@@ -5119,90 +5116,90 @@ impl App {
         if self.weapon == 0 && self.mouse.contains(&0) {
             let fwd = camera.forward();
             let right = fwd.cross(Vec3::Z).normalize_or_zero();
-            let (start, start_dir) = vm_attach_dir("muzzle").unwrap_or((
+            let (start, _start_dir) = vm_attach_dir("muzzle").unwrap_or((
                 camera.position + right * 6.0 - Vec3::Z * 6.0 + fwd * 12.0,
                 fwd,
             ));
-            let held = held_pos;
-            let end = held.unwrap_or_else(|| {
-                self.sim
-                    .collision
-                    .trace_ray(
-                        camera.position,
-                        camera.position + fwd * 4096.0,
-                        gm_collision::MASK_SOLID,
-                    )
-                    .end
+            // `cl_weaponcolor` run through the game's clamping helper
+            let wc = gm_render::world::DEFAULT_WEAPON_COLOR.clamp(Vec3::ZERO, Vec3::ONE);
+            let color = wc.to_array();
+            // muzzle glow in both states (physg_glow1 / physg_glow2; the game's helper is not
+            // in the dump, sizes are ours)
+            let muzzle_glow = if held_pos.is_some() {
+                &g.glow1
+            } else {
+                &g.glow2
+            };
+            if let Some(gl) = muzzle_glow {
+                let (v, i) = g.world.sprite_quad(start, 6.0, color, &camera);
+                additive.push((gl, v, i));
+            }
+            dlights.push(gm_render::world::DLight {
+                pos: start,
+                radius: 48.0,
+                color: wc * 0.5,
+                ..Default::default()
             });
-            let d = end - start;
-            let len = d.length();
-            if len > 1.0 {
-                let color = PHYSGUN_BEAM_COLOR;
-                // the beam lights its end and the muzzle (the game's physgun dlights)
-                dlights.push(gm_render::world::DLight {
-                    pos: end,
-                    radius: 160.0,
-                    color: Vec3::from(color),
-                    ..Default::default()
-                });
-                dlights.push(gm_render::world::DLight {
-                    pos: start,
-                    radius: 48.0,
-                    color: Vec3::from(color) * 0.5,
-                    ..Default::default()
-                });
-                // cubic bezier: out along the claw for half the distance (it points up and
-                // right of the aim, which bends the beam like the game's), into the end point
-                let (p0, p1, p2, p3) = (start, start + start_dir * (len * 0.5), end, end);
-                let n = 24;
-                let points: Vec<Vec3> = (0..=n)
-                    .map(|i| {
-                        let t = i as f32 / n as f32;
-                        let u = 1.0 - t;
-                        p0 * (u * u * u)
-                            + p1 * (3.0 * u * u * t)
-                            + p2 * (3.0 * u * t * t)
-                            + p3 * (t * t * t)
-                    })
-                    .collect();
-                let scroll = -self.fps_at.elapsed().as_secs_f32() * 2.0;
-                let mat = if held.is_some() {
-                    g.beam_active_mat.as_ref().or(g.beam_mat.as_ref())
-                } else {
-                    g.beam_mat.as_ref()
-                };
-                if std::env::var_os("GM_BEAM_LOG").is_some() {
-                    static N: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
-                    if N.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
-                        .is_multiple_of(60)
-                    {
-                        eprintln!(
-                            "physgun beam: start {start:?} end {end:?} len {len:.0} held {} mat {}",
-                            held.is_some(),
-                            mat.is_some()
-                        );
+            // the beam only while something is held (binary study physgun.md §10): three
+            // quadratic Beziers start -> control -> end with control = start + aim * |start - end|
+            // * K2 (K2 unresolved, 0.5), widths 2 / rand 2..5 / rand 2..6 re-rolled every frame,
+            // `sprites/physbeama`, and 7 `sprites/physbeam` sprites of rand 1..16 u, alpha
+            // rand 100..255, at the end
+            if let Some(end) = held_pos {
+                let len = (end - start).length();
+                if len > 1.0 {
+                    dlights.push(gm_render::world::DLight {
+                        pos: end,
+                        radius: 160.0,
+                        color: wc,
+                        ..Default::default()
+                    });
+                    let (p0, p1, p2) = (start, start + fwd * (len * 0.5), end);
+                    let n = 24;
+                    let points: Vec<Vec3> = (0..=n)
+                        .map(|i| {
+                            let t = i as f32 / n as f32;
+                            let u = 1.0 - t;
+                            p0 * (u * u) + p1 * (2.0 * u * t) + p2 * (t * t)
+                        })
+                        .collect();
+                    let reversed: Vec<Vec3> = points.iter().rev().copied().collect();
+                    let t = self.fps_at.elapsed().as_secs_f32();
+                    let seed = &mut self.fx_seed;
+                    let widths = [
+                        (2.0, -t * 2.0, false),
+                        (particles::range(seed, 2.0, 5.0), -t * 3.0, true),
+                        (particles::range(seed, 2.0, 6.0), -t * 1.5, true),
+                    ];
+                    if let Some(bm) = g.beam_active_mat.as_ref().or(g.beam_mat.as_ref()) {
+                        for (w, scroll, rev) in widths {
+                            let pts = if rev { &reversed } else { &points };
+                            let (v, i) = g.world.beam_strip(
+                                pts,
+                                w,
+                                color,
+                                camera.position,
+                                scroll,
+                                1.0 / 128.0,
+                            );
+                            additive.push((bm, v, i));
+                        }
                     }
-                }
-                if let Some(bm) = mat {
-                    // physbeam_white is a dim 4-texel core in a 64-texel-wide strip: the
-                    // strip is wide and overdriven so the core reads as the game's ~1 u beam
-                    let (v, i) = g.world.beam_strip(
-                        &points,
-                        12.0,
-                        color.map(|c| c * 2.0),
-                        camera.position,
-                        scroll,
-                        1.0 / 128.0,
-                    );
-                    additive.push((bm, v, i));
-                }
-                if let Some(gl) = &g.glow1 {
-                    let (v, i) = g.world.sprite_quad(end, 12.0, color, &camera);
-                    additive.push((gl, v, i));
-                }
-                if let Some(gl) = &g.glow2 {
-                    let (v, i) = g.world.sprite_quad(start, 6.0, color, &camera);
-                    additive.push((gl, v, i));
+                    if let Some(bm) = &g.beam_mat {
+                        for _ in 0..7 {
+                            let size = particles::range(seed, 1.0, 16.0);
+                            let a = particles::range(seed, 100.0, 255.0) / 255.0;
+                            let (v, i) = g.world.sprite_quad_var(
+                                end,
+                                size,
+                                [color[0], color[1], color[2], a],
+                                particles::range(seed, 0.0, std::f32::consts::TAU),
+                                None,
+                                &camera,
+                            );
+                            additive.push((bm, v, i));
+                        }
+                    }
                 }
             }
         }
