@@ -5749,6 +5749,9 @@ pub struct Player {
     pub cmd_tick: u64,
     /// `Player:Flashlight` state (a script toggle; no client impulse yet).
     pub flashlight: bool,
+    /// `m_vecTotalBulletForce`: the damage forces of the bullets that hit since the spawn, the
+    /// death ragdoll's extra velocity (player.md F4/F35: a shotgun kill flings the body).
+    pub death_force: Vec3,
     /// `Player:SetFOV(fov, time)`: the target field of view and the seconds to blend to it
     /// (None: the client's own `fov_desired`).
     pub fov: Option<(f32, f32)>,
@@ -7498,6 +7501,7 @@ impl Player {
             seat: None,
             swep: BTreeMap::new(),
             prev_buttons: 0,
+            death_force: Vec3::ZERO,
             buttons: 0,
             buttons_last: 0,
             cmd_move: Vec3::ZERO,
@@ -9054,12 +9058,15 @@ impl<'w> Server<'w> {
         if p.health <= 0 {
             p.alive = false;
             p.deaths += 1;
+            // the flashlight goes out with the player (player.md F50)
+            p.flashlight = false;
             p.ragdoll = Some(Ragdoll {
                 class: RAGDOLL_CLASS,
                 model: p.model.clone(),
                 origin: p.state.origin,
                 angles: Vec3::ZERO,
-                velocity: p.state.velocity,
+                // the bullets' force over the 85 kg body (`CreateRagdollEntity` force vector)
+                velocity: p.state.velocity + p.death_force / 85.0,
                 tick,
                 ducked: p.state.ducked,
             });
@@ -9271,6 +9278,7 @@ impl<'w> Server<'w> {
         p.health = p.max_health;
         p.armor = 0;
         p.suit = false;
+        p.death_force = Vec3::ZERO;
         p.eye_override = None;
         p.ragdoll = None;
         p.death_tick = None;
@@ -10336,6 +10344,7 @@ impl<'w> Server<'w> {
         if let Some(t) = self.players.get_mut(&target) {
             t.state.impulse += push;
             t.last_damage = (attacker, class);
+            t.death_force += d * (weapons::prop_bullet_force(shot.ammo) * shot.pellets as f32);
         }
         self.damage_player(target, damage, dmg_type);
     }
@@ -22913,6 +22922,10 @@ impl<'w> Server<'w> {
         self.sandbox.tool(player).stage.min(255) as u8
     }
     pub fn use_flashlight(&mut self, player: u32) -> bool {
+        // `mp_flashlight 0` leaves every flashlight off (player.md F48)
+        if self.cvar("mp_flashlight").is_some_and(|v| v.trim() == "0") {
+            return false;
+        }
         let Some(on) = self
             .players
             .get(&player)
@@ -23172,6 +23185,26 @@ impl<'w> Server<'w> {
             .collect();
         for id in flash {
             self.use_flashlight(id);
+        }
+        // `CHL2_Player::StartSprinting`: `HL2Player.SprintStart` on every sprint press of a
+        // living player who may sprint (player.md F57; the suit never runs dry with gmod_suit 0)
+        let sprint_starts: Vec<Vec3> = cmds
+            .iter()
+            .filter_map(|(id, pc)| {
+                let p = self.players.get(id)?;
+                let pressed = pc.cmd.buttons & gm_move::buttons::SPEED != 0
+                    && p.prev_buttons & gm_move::buttons::SPEED == 0;
+                (pressed && p.alive && p.move_override.effective(&self.mover.cfg).sprint_enabled)
+                    .then_some(p.state.origin)
+            })
+            .collect();
+        for pos in sprint_starts {
+            self.sounds.push(WorldSound {
+                name: "HL2Player.SprintStart".to_owned(),
+                pos,
+                volume: 1.0,
+                ..Default::default()
+            });
         }
         for (id, pc) in cmds.iter() {
             let Some(p) = self.players.get_mut(id) else {
