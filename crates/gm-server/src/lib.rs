@@ -5717,6 +5717,8 @@ pub struct Player {
     pub use_target: Option<u32>,
     /// `IN_RELOAD` was down in the last command (the physgun unfreezes on the press).
     pub reload_down: bool,
+    /// Tick of the last physgun unfreeze: a second press within 0.25 s unfreezes everything.
+    pub last_unfreeze: Option<u64>,
     pub alive: bool,
     pub health: i32,
     pub armor: i32,
@@ -7459,6 +7461,7 @@ impl Player {
             use_down: false,
             use_target: None,
             reload_down: false,
+            last_unfreeze: None,
             alive: true,
             health: PLAYER_HEALTH,
             armor: 0,
@@ -7514,6 +7517,8 @@ pub const PLAYER_HEALTH: i32 = 100;
 pub const PLAYER_MODEL: &str = "models/player/kleiner.mdl";
 /// Sandbox `PlayerLoadout` gives the physgun last and `SwitchToDefaultWeapon` keeps it while
 /// `cl_defaultweapon` is unset (binary study player.md F45).
+/// Mass the physgun gives whatever it holds (`CWeaponPhysGun`, physgun.md 5.1).
+pub const HELD_MASS: f32 = 45678.0;
 pub const SPAWN_WEAPON: &str = "weapon_physgun";
 pub const RESPAWN_TICKS: u64 = 135;
 pub const SPAWN_Z_OFFSET: f32 = 1.0;
@@ -22043,14 +22048,45 @@ impl<'w> Server<'w> {
             p.reload_down = reload;
         }
         if reload_pressed && pc.physgun {
-            // `PhysgunUnfreeze`: every frozen prop of the player, each asked
-            let frozen: Vec<u32> = self
-                .sandbox
-                .props()
-                .iter()
-                .filter(|p| p.frozen && p.owner == player)
-                .map(|p| p.id)
-                .collect();
+            // sandbox `PhysgunUnfreeze` (physgun.md 8): the aimed entity's constrained group
+            // (`constraint.GetAllConstrainedEntities`), each asked `CanPlayerUnfreeze`; a
+            // second press within 0.25 s unfreezes every frozen object of the player
+            let tick = self.tick_count;
+            let all = self
+                .players
+                .get(&player)
+                .and_then(|p| p.last_unfreeze)
+                .is_some_and(|t| tick.saturating_sub(t) <= 16);
+            if let Some(p) = self.players.get_mut(&player) {
+                p.last_unfreeze = Some(tick);
+            }
+            let frozen: Vec<u32> = if all {
+                self.sandbox
+                    .props()
+                    .iter()
+                    .filter(|p| p.frozen && p.owner == player)
+                    .map(|p| p.id)
+                    .collect()
+            } else {
+                let bodies = self.trace_bodies();
+                let aimed = gm_sandbox::tool_trace(self.collision, &bodies, eye, forward)
+                    .and_then(|h| h.ent);
+                let mut group: Vec<u32> = aimed.into_iter().collect();
+                let mut i = 0;
+                while i < group.len() {
+                    let e = group[i];
+                    for c in self.sandbox.constraints() {
+                        for other in [c.ent1, c.ent2].into_iter().flatten() {
+                            if (c.ent1 == Some(e) || c.ent2 == Some(e)) && !group.contains(&other) {
+                                group.push(other);
+                            }
+                        }
+                    }
+                    i += 1;
+                }
+                group.retain(|e| self.sandbox.props().iter().any(|p| p.id == *e && p.frozen));
+                group
+            };
             let mut count = 0;
             for ent in frozen {
                 if self.ask(Request::Unfreeze { player, ent }) != Verdict::Cancel
@@ -22090,6 +22126,13 @@ impl<'w> Server<'w> {
                             let mut g =
                                 Grab::new(eye, forward, h.pos, st.position, st.rotation, view.y);
                             g.bone = h.bone;
+                            // the game holds props at 45678 kg so they shove everything else
+                            // (not ragdoll parts; restored on release)
+                            let mass = self.physics.mass(b);
+                            if !self.ragdoll_bodies.contains_key(&ent) && mass < HELD_MASS {
+                                g.saved_mass = mass;
+                                self.physics.set_mass(b, HELD_MASS);
+                            }
                             (ent, g)
                         })
                     }
@@ -22099,6 +22142,9 @@ impl<'w> Server<'w> {
             Some((ent, g)) if !attack => {
                 if let Some(b) = self.part_body(ent, g.bone) {
                     self.physics.release(b);
+                    if g.saved_mass > 0.0 {
+                        self.physics.set_mass(b, g.saved_mass);
+                    }
                 }
                 self.game_events
                     .push(GameEvent::PhysgunDrop { player, ent });
@@ -22107,6 +22153,9 @@ impl<'w> Server<'w> {
             Some((ent, g)) if attack2 => {
                 if let Some(b) = self.part_body(ent, g.bone) {
                     self.physics.freeze(b);
+                    if g.saved_mass > 0.0 {
+                        self.physics.set_mass(b, g.saved_mass);
+                    }
                 }
                 // sandbox `OnPhysgunFreeze`: only the held physics object stops; the ragdoll
                 // entity counts as frozen once every part is

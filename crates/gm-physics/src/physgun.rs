@@ -44,6 +44,8 @@ pub struct Grab {
     pub offset: Vec3,
     pub yaw: f32,
     pub rotation: Quat,
+    /// The body's mass before the hold (the game holds everything at 45678 kg), 0 = untouched.
+    pub saved_mass: f32,
 }
 
 /// Degrees of prop rotation per mouse unit in rotate mode (E held): 20 units per tick turned
@@ -73,6 +75,7 @@ impl Grab {
             offset: body_rot.inverse() * (body_pos - hit),
             yaw,
             rotation: body_rot,
+            saved_mass: 0.0,
         }
     }
 
