@@ -1340,6 +1340,9 @@ struct App {
     acc: f32,
     frames: u32,
     fps_at: Instant,
+    /// Effect time base (the toolgun screen scroll, beam noise / scroll): never reset,
+    /// unlike `fps_at` which restarts every second.
+    fx_epoch: Instant,
     error: Option<anyhow::Error>,
     console: Console,
 }
@@ -3923,7 +3926,7 @@ impl App {
             .players
             .iter()
             .any(|p| Some(p.id) == me && p.held.is_some());
-        let t = self.fps_at.elapsed().as_secs_f32();
+        let t = self.fx_epoch.elapsed().as_secs_f32();
         match vm.hold {
             Some(hold) if held => (hold, t),
             _ => (vm.idle, t),
@@ -5469,7 +5472,7 @@ impl App {
                         })
                         .collect();
                     let reversed: Vec<Vec3> = points.iter().rev().copied().collect();
-                    let t = self.fps_at.elapsed().as_secs_f32();
+                    let t = self.fx_epoch.elapsed().as_secs_f32();
                     let seed = &mut self.fx_seed;
                     let widths = [
                         (2.0, -t * 2.0, false),
@@ -5801,7 +5804,7 @@ impl App {
             let core = vm_attach("muzzle")
                 .unwrap_or(camera.position + right * 6.0 - Vec3::Z * 5.0 + fwd * 14.0);
             let holding = held_pos.is_some();
-            let t = self.fps_at.elapsed().as_secs_f32();
+            let t = self.fx_epoch.elapsed().as_secs_f32();
             let seed = &mut self.fx_seed;
             let noise = |k: u32, frame: u32| -> f32 {
                 let h = (k.wrapping_mul(0x9E37_79B9) ^ frame.wrapping_mul(0x85EB_CA6B))
@@ -6382,7 +6385,7 @@ impl App {
                 &self.mount,
                 &self.tool,
                 self.content_lang.as_ref(),
-                self.fps_at.elapsed().as_secs_f32(),
+                self.fx_epoch.elapsed().as_secs_f32(),
                 g,
             );
         }
@@ -8827,6 +8830,7 @@ fn main() -> Result<()> {
         acc: 0.0,
         frames: 0,
         fps_at: Instant::now(),
+        fx_epoch: Instant::now(),
         error: None,
         console: Console::new(),
     };
