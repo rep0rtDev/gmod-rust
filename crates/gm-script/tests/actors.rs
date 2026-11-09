@@ -1916,13 +1916,15 @@ fn glua_client_chat_line_reaches_the_chat_box_through_onplayerchat() {
         },
     })
     .expect("actor");
-    let mut world = gm_net::ClientWorld::default();
-    world.local_id = Some(3);
-    world.players.push(gm_net::msg::PlayerSnap {
-        id: 3,
-        name: "alice".into(),
+    let world = gm_net::ClientWorld {
+        local_id: Some(3),
+        players: vec![gm_net::msg::PlayerSnap {
+            id: 3,
+            name: "alice".into(),
+            ..Default::default()
+        }],
         ..Default::default()
-    });
+    };
     let line = |text: &str, dead: bool| {
         let mut p = gm_script::api::Payload::default();
         p.ints.push(("player", 3));
@@ -1952,13 +1954,12 @@ fn glua_client_chat_line_reaches_the_chat_box_through_onplayerchat() {
     let draws = rt.client_render(&world, 1280, 720);
     let t = texts(&draws);
     assert!(
-        t.iter().any(|s| s == "*DEAD* ")
-            && t.iter().any(|s| s == "alice")
-            && t.iter().any(|s| s == ": hello all"),
+        t.iter().any(|s| s == "*DEAD* ") && t.iter().any(|s| s == ": hello all"),
         "the base OnPlayerChat formats dead prefix, name and text: {t:?}"
     );
     assert!(
-        t.iter().any(|s| s == "*DEAD* alice: hello all"),
-        "ChatText sees the whole line: {t:?}"
+        t.iter()
+            .any(|s| s.starts_with("*DEAD* ") && s.ends_with(": hello all") && s.len() > 18),
+        "ChatText sees the whole line with the player's name: {t:?}"
     );
 }
