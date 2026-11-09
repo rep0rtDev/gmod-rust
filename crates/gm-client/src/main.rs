@@ -232,8 +232,9 @@ struct Gfx {
     thruster_fx: Vec<ThrusterParticle>,
     particles: particles::Particles,
     particles_tick: Option<std::time::Instant>,
-    /// Missiles whose `Rocket_Smoke_Trail` already runs.
-    missile_trails: std::collections::HashSet<u32>,
+    /// RPG missiles' last drawn origin: the `RocketTrail` puffs are spread over each frame's
+    /// movement (clientfx.md 7.2, gap-report #132).
+    missile_trails: HashMap<u32, Vec3>,
     /// Next emission time per thruster (the effects' 0.01 / 0.015 s timers).
     thruster_emit: std::collections::HashMap<u32, std::time::Instant>,
     fx_rng: u32,
@@ -5977,21 +5978,65 @@ impl App {
                 }
             }
         }
-        // `.pcf` particle systems the game asked for; an RPG missile trails
-        // `Rocket_Smoke_Trail` from the moment it appears (`CMissile::CreateSmokeTrail`)
+        // `RocketTrail` on every RPG missile (`CMissile::CreateSmokeTrail`, clientfx.md 7.2,
+        // gap-report #132): the game has no Rocket_Smoke_Trail .pcf (client.dll carries
+        // none); numPuffs = moved / (startSize/2) smoke puffs per frame plus the 8-sprite
+        // muzzle flare at the nozzle
         let now = std::time::Instant::now();
-        g.missile_trails.retain(|id| ents.contains_key(id));
+        g.missile_trails.retain(|id, _| ents.contains_key(id));
+        let mut puffs = Vec::new();
         for e in ents.values().filter(|e| e.model.contains("w_missile")) {
-            if g.missile_trails.insert(e.id) {
-                g.particles.ensure_loaded(&self.mount);
-                g.particles.spawn(&particles::Spawn {
-                    name: "Rocket_Smoke_Trail".to_string(),
-                    pos: e.pos,
-                    angles: e.angles,
-                    parent: e.id,
+            let Some(last) = g.missile_trails.insert(e.id, e.pos) else {
+                continue;
+            };
+            let r = &mut g.fx_rng;
+            let moved = e.pos - last;
+            let n = (moved.length() / 17.5) as usize;
+            for i in 0..n {
+                let jitter = fx_vec_rand(r) * 2.0;
+                let kind = if fx_rand(r) < 0.5 {
+                    FxKind::TrailSmoke
+                } else {
+                    FxKind::TrailNoise
+                };
+                let c = 0.5 * fx_range(r, 0.75, 1.25);
+                puffs.push(FxSprite {
+                    kind,
+                    variant: 0,
+                    pos: last + moved * (i as f32 / n as f32) + jitter,
+                    vel: fx_vec_rand(r) * fx_range(r, 2.0, 4.0),
+                    born: now,
+                    life: 5.0 + fx_range(r, 4.5, 5.5),
+                    size0: 35.0 * fx_range(r, 0.75, 1.25),
+                    size1: 55.0 * fx_range(r, 1.0, 1.25),
+                    color: [c; 3],
+                    roll: fx_range(r, 0.0, 360.0),
+                    roll_d: fx_range(r, -8.0, 8.0),
+                    alpha: 0.5 * fx_range(r, 0.75, 1.25),
+                });
+            }
+            // nozzle flare: muzzleflash1..4 sprites behind the missile, 0.01 s (the
+            // attachment is the model's rear; flareScale 1 -> rand(0.5,1.5))
+            let fwd = gm_render::props::angle_matrix(e.angles.to_array()) * Vec3::X;
+            let scale = fx_range(r, 0.5, 1.5);
+            for (pos, size, roll, variant) in muzzle_sprites(r, e.pos - fwd * 6.0, -fwd, scale) {
+                puffs.push(FxSprite {
+                    kind: FxKind::Muzzle,
+                    variant,
+                    pos,
+                    vel: Vec3::ZERO,
+                    born: now,
+                    life: 0.01,
+                    size0: size,
+                    size1: size,
+                    color: [1.0; 3],
+                    roll,
+                    roll_d: 0.0,
+                    alpha: 1.0,
                 });
             }
         }
+        self.fx_sprites.extend(puffs);
         if !g.particles.is_empty() {
             let dt = g
                 .particles_tick
@@ -6637,6 +6682,16 @@ impl App {
                     FxKind::DustNoise => (g.fx_noise.as_ref(), ramp, false),
                     FxKind::Flare => (g.fx_flare.as_ref(), ramp, true),
                     FxKind::Muzzle => (g.fx_muzzles.get(sp.variant), 0.5 + 0.5 * ramp, true),
+                    FxKind::TrailSmoke => (
+                        g.fx_explo_smoke.as_ref(),
+                        sp.alpha * (std::f32::consts::PI * t).sin(),
+                        false,
+                    ),
+                    FxKind::TrailNoise => (
+                        g.fx_noise.as_ref(),
+                        sp.alpha * (std::f32::consts::PI * t).sin(),
+                        false,
+                    ),
                     FxKind::Spark => unreachable!(),
                 };
                 if let Some(m) = m {
@@ -10903,6 +10958,10 @@ enum FxKind {
     Flare,
     /// One of the 8 `muzzleflash1..4` sprites of another player's shot.
     Muzzle,
+    /// `SmokeTrail`/`RocketTrail` puffs: `particle_smokegrenade` / `particle_noisesphere`
+    /// with the `alpha * sin(pi t)` fade-in/out curve (clientfx.md 7.1).
+    TrailSmoke,
+    TrailNoise,
 }
 
 /// `FX_MuzzleEffect` (clientfx.md 2.1.2): 8 sprites along `forward` at 2*i u, half-size
