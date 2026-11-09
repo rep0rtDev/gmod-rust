@@ -1363,6 +1363,8 @@ struct App {
     /// (render.md §1.1, gap-report #141) runs from the FOV at the call with
     /// `start + (target - start) * (3t^2 - 2t^3)`, t = elapsed / rate.
     fov_blend: Option<(f32, f32, std::time::Instant, f32)>,
+    /// The own flashlight's `distMod` pull-back from a near wall (render.md 3.3 step 6, #137).
+    flashlight_dist_mod: f32,
     /// `Player:SendHint` tokens waiting for their delay.
     hint_queue: Vec<(Instant, String)>,
     /// `Player:ScreenFade`: the running full-screen fade.
@@ -6675,7 +6677,45 @@ impl App {
                 continue;
             }
             let (pos, dir) = if Some(p.id) == me {
-                (camera.position, camera.forward())
+                // CFlashlightEffect::UpdateLight (render.md 3.3, gap-report #137): the
+                // origin sits r_flashlightoffsety (-20) below the eye, raised by the swing
+                // (-12 u along the view) when looking down, reset to the eye when a 4 u hull
+                // cannot reach it; the beam aims at eye + 750 u and is pulled back from a
+                // wall nearer than 128 u, smoothed 20 % a frame (the ladder case is not done)
+                let eye = camera.position;
+                let fwd = camera.forward();
+                let up = camera.up();
+                let col = &self.sim.collision;
+                let hull = (Vec3::splat(-4.0), Vec3::splat(4.0));
+                let mut off_y = -20.0;
+                let swing = eye - fwd * 12.0;
+                if swing.z > eye.z {
+                    off_y += swing.z - eye.z;
+                }
+                let mut origin = eye + up * off_y;
+                let tr = col.trace_box(eye, origin, hull.0, hull.1, gm_collision::MASK_SOLID);
+                if tr.start_solid || tr.fraction < 1.0 {
+                    origin = eye;
+                }
+                let target = eye + fwd * 750.0;
+                let dir = (target - origin).normalize_or_zero();
+                let tr = col.trace_box(origin, target, hull.0, hull.1, gm_collision::MASK_SOLID);
+                let dist = tr.end.distance(origin);
+                let dm = &mut self.flashlight_dist_mod;
+                if tr.fraction < 1.0 && dist < 128.0 {
+                    *dm += (128.0 - dist - *dm) * 0.2;
+                    let back = col.trace_box(
+                        origin,
+                        origin - dir * (dist - 0.1).max(0.0),
+                        hull.0,
+                        hull.1,
+                        gm_collision::MASK_SOLID,
+                    );
+                    *dm = dm.min((back.end.distance(origin) - 0.1).max(0.0));
+                } else {
+                    *dm *= 0.8;
+                }
+                (origin - dir * *dm, dir)
             } else {
                 let (pitch, yaw) = (p.view_angles.x.to_radians(), p.view_angles.y.to_radians());
                 (
@@ -9227,6 +9267,7 @@ fn main() -> Result<()> {
         backgrounds: Backgrounds::default(),
         settings,
         fov_blend: None,
+        flashlight_dist_mod: 0.0,
         hint_queue: Vec::new(),
         screen_fade: None,
         menu_muted: false,
