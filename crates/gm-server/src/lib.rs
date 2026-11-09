@@ -11941,7 +11941,7 @@ impl<'w> Server<'w> {
             // motion clamped to 285 u/s and 720 deg/s (a launch clears it afterwards)
             let st = self.physics.state(b);
             let v = st.velocity.clamp_length_max(285.0);
-            let w = st.angular_velocity.clamp_length_max(720.0_f32.to_radians());
+            let w = st.angular_velocity.clamp_length_max(720.0);
             self.physics.set_velocity(b, v, w);
         }
         self.game_events.push(GameEvent::Drop { player, ent });
