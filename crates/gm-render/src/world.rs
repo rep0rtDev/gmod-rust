@@ -589,6 +589,32 @@ impl Camera {
         Vec3::new(p.cos() * y.cos(), p.cos() * y.sin(), -p.sin())
     }
 
+    /// The view's up vector (`AngleVectors` up, with the roll).
+    pub fn up(&self) -> Vec3 {
+        let (p, y, r) = (
+            self.angles.x.to_radians(),
+            self.angles.y.to_radians(),
+            self.angles.z.to_radians(),
+        );
+        Vec3::new(
+            r.cos() * p.sin() * y.cos() + r.sin() * y.sin(),
+            r.cos() * p.sin() * y.sin() - r.sin() * y.cos(),
+            r.cos() * p.cos(),
+        )
+    }
+
+    /// Sprite axes of a camera-facing (`vp_parallel`) quad (clientfx.md §10, gap-report
+    /// #135): `right = forward x up_view`, `up = right x forward`, never degenerate.
+    pub fn sprite_axes(&self) -> (Vec3, Vec3) {
+        let fwd = self.forward();
+        let mut right = fwd.cross(self.up()).normalize_or_zero();
+        if right == Vec3::ZERO {
+            right = Vec3::X;
+        }
+        let up = right.cross(fwd).normalize_or_zero();
+        (right, up)
+    }
+
     pub fn view_proj(&self, aspect: f32) -> Mat4 {
         let view = Mat4::look_to_rh(self.position, self.forward(), Vec3::Z);
         // Source fov is horizontal at 4:3; convert to vertical for the given aspect
@@ -4843,12 +4869,18 @@ impl WorldRenderer {
         axis: Option<Vec3>,
         camera: &Camera,
     ) -> (Vec<Vertex>, Vec<u32>) {
-        let fwd = axis.unwrap_or_else(|| camera.forward());
-        let mut right = fwd.cross(Vec3::Z).normalize_or_zero();
-        if right == Vec3::ZERO {
-            right = Vec3::X;
-        }
-        let up = right.cross(fwd).normalize_or_zero();
+        // camera-facing quads take the view's axes (#135); an explicit axis orients the quad
+        // around it
+        let (right, up) = match axis {
+            None => camera.sprite_axes(),
+            Some(fwd) => {
+                let mut right = fwd.cross(Vec3::Z).normalize_or_zero();
+                if right == Vec3::ZERO {
+                    right = Vec3::X;
+                }
+                (right, right.cross(fwd).normalize_or_zero())
+            }
+        };
         let (sr, cr) = roll.sin_cos();
         let (right, up) = (right * cr + up * sr, up * cr - right * sr);
         let h = size * 0.5;
@@ -4901,9 +4933,7 @@ impl WorldRenderer {
         color: [f32; 3],
         camera: &Camera,
     ) -> (Vec<Vertex>, Vec<u32>) {
-        let fwd = camera.forward();
-        let right = fwd.cross(Vec3::Z).normalize_or_zero();
-        let up = right.cross(fwd).normalize_or_zero();
+        let (right, up) = camera.sprite_axes();
         let h = size * 0.5;
         let verts = [(-1.0f32, -1.0f32), (1.0, -1.0), (1.0, 1.0), (-1.0, 1.0)]
             .into_iter()
