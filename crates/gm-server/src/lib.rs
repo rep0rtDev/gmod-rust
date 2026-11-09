@@ -5714,6 +5714,8 @@ pub struct Player {
     pub view_angles: Vec3,
     /// The prop held by the physgun and how it was grabbed.
     pub held: Option<(u32, Grab)>,
+    /// The VPhysics shell (`update_player_shells`) and whether it is the ducked hull.
+    pub shell: Option<(BodyHandle, bool)>,
     /// The prop carried with +use (`gm_physics::pickup`).
     pub carry: Option<(u32, gm_physics::pickup::Carry)>,
     /// The prop driven with the `drive` property.
@@ -7546,6 +7548,7 @@ impl Player {
             move_override: MoveOverride::default(),
             conn: ConnInfo::default(),
             steps: gm_move::Footsteps::default(),
+            shell: None,
         }
     }
 }
@@ -11167,7 +11170,118 @@ impl<'w> Server<'w> {
     /// The player leaves: whatever the physgun held is released, the entry goes; props,
     /// constraints and their ownership stay (the game keeps a leaver's props).
     pub fn remove_player(&mut self, id: u32) -> bool {
-        self.players.remove(&id).is_some()
+        let Some(p) = self.players.remove(&id) else {
+            return false;
+        };
+        if let Some((body, _)) = p.shell {
+            self.physics.remove_body(body);
+        }
+        true
+    }
+
+    /// The players' VPhysics shells (gap-report #41, vphysics.md 3.1 / 7): a live walking
+    /// player has an 85 kg hull body (standing 32x32x72, ducked 32x32x36) that its shadow
+    /// controller drives to the player's position every tick with the velocity that gets it
+    /// there (damping 1.0, speed capped at 10000 u/s), teleported when it is more than 24 u
+    /// off; the props it meets are pushed with that momentum, and the prop a player stands on
+    /// carries the player's weight (85 kg under 600 u/s^2) as a downward impulse.
+    fn update_player_shells(&mut self) {
+        const SHELL_MASS: f32 = 85.0;
+        const SHELL_MAX_SPEED: f32 = 10000.0;
+        const SHELL_TELEPORT_DISTANCE: f32 = 24.0;
+        const SHELL_GRAVITY: f32 = 600.0;
+        let dt = self.physics.tick_interval;
+        let ids: Vec<u32> = self.players.keys().copied().collect();
+        for id in ids {
+            let Some(p) = self.players.get(&id) else {
+                continue;
+            };
+            let wanted = p.alive
+                && matches!(
+                    p.state.move_type,
+                    gm_move::MoveType::Walk | gm_move::MoveType::Ladder
+                );
+            let ducked = p.state.ducked;
+            let origin = p.state.origin;
+            let velocity = p.state.velocity;
+            let ground =
+                (p.state.on_ground && p.state.ground_ent != 0).then_some(p.state.ground_ent);
+            let shell = p.shell;
+            if let Some((body, was_ducked)) = shell {
+                if !wanted || was_ducked != ducked {
+                    self.physics.remove_body(body);
+                    if let Some(p) = self.players.get_mut(&id) {
+                        p.shell = None;
+                    }
+                }
+            }
+            if !wanted {
+                continue;
+            }
+            let height = if ducked { 36.0 } else { 72.0 };
+            let target = origin + Vec3::new(0.0, 0.0, height * 0.5);
+            let body = match self.players.get(&id).and_then(|p| p.shell) {
+                Some((body, _)) => body,
+                None => {
+                    let (hx, hz) = (16.0, height * 0.5);
+                    let hull: Vec<Vec3> = (0..8)
+                        .map(|i| {
+                            Vec3::new(
+                                if i & 1 == 0 { -hx } else { hx },
+                                if i & 2 == 0 { -hx } else { hx },
+                                if i & 4 == 0 { -hz } else { hz },
+                            )
+                        })
+                        .collect();
+                    let Ok(body) = self.physics.add_prop(&PropDesc {
+                        hulls: std::slice::from_ref(&hull),
+                        mass: SHELL_MASS,
+                        volume: 32.0 * 32.0 * height,
+                        position: target,
+                        angles: (0.0, 0.0, 0.0),
+                        velocity,
+                        angular_velocity: Vec3::ZERO,
+                        surface: Surface::default(),
+                        linear_damping: 0.0,
+                        angular_damping: 0.0,
+                        drag_axis_areas: Vec3::ONE,
+                        // the shadow keeps the hull upright (100 angular damping in the game)
+                        inertia: Some(Vec3::splat(1.0e9)),
+                        mass_center: None,
+                    }) else {
+                        continue;
+                    };
+                    self.physics.set_gravity(body, false);
+                    if let Some(p) = self.players.get_mut(&id) {
+                        p.shell = Some((body, ducked));
+                    }
+                    body
+                }
+            };
+            let state = self.physics.state(body);
+            let delta = target - state.position;
+            if delta.length() > SHELL_TELEPORT_DISTANCE {
+                self.physics.teleport(body, target, Quat::IDENTITY);
+                self.physics.set_velocity(body, velocity, Vec3::ZERO);
+            } else {
+                let v = delta / dt.max(1.0e-4);
+                let v = if v.length() > SHELL_MAX_SPEED {
+                    v.normalize() * SHELL_MAX_SPEED
+                } else {
+                    v
+                };
+                self.physics.set_velocity(body, v, Vec3::ZERO);
+            }
+            if let Some(&under) = ground.and_then(|g| self.bodies.get(&g)) {
+                if !self.physics.is_frozen(under) {
+                    self.physics.add_impulse_at(
+                        under,
+                        origin,
+                        Vec3::new(0.0, 0.0, -SHELL_MASS * SHELL_GRAVITY * dt),
+                    );
+                }
+            }
+        }
     }
 
     /// Marks a player as a human client (not a bot): see `Player::bot`.
@@ -23335,6 +23449,7 @@ impl<'w> Server<'w> {
         }
         self.animate_ragdoll_friction();
         // the physics step after bullets, moves and projectiles: a prop hit by any of them takes
+        self.update_player_shells();
         self.buoyancy();
         // the impulse before the floor acts on it in the same tick (`shoot_prop_crossbow_drum`)
         if !self.physics_paused {
