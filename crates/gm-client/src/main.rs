@@ -7803,14 +7803,31 @@ impl App {
                     && !self.main_menu
                     && !hidden("CHudCrosshair")
                 {
-                    let cm = g.ui.font_metrics(Some("Crosshairs"));
-                    items.push(UiItem::Text {
-                        font: Some("Crosshairs".to_string()),
-                        x: w / 2.0 - cm.text_width("Q") / 2.0,
-                        y: h / 2.0 - cm.line_height / 2.0,
-                        text: "Q".to_string(),
-                        color: [1.0, 208.0 / 255.0, 64.0 / 255.0, 1.0],
-                    });
+                    let classes = gm_net::msg::weapon_classes(&self.sim.client.world.weapon_defs);
+                    let class = classes.get(self.weapon as usize).map(String::as_str);
+                    if class.is_some_and(weapon_has_crosshair_glyph) {
+                        let cm = g.ui.font_metrics(Some("Crosshairs"));
+                        items.push(UiItem::Text {
+                            font: Some("Crosshairs".to_string()),
+                            x: w / 2.0 - cm.text_width("Q") / 2.0,
+                            y: h / 2.0 - cm.line_height / 2.0,
+                            text: "Q".to_string(),
+                            color: [1.0, 208.0 / 255.0, 64.0 / 255.0, 1.0],
+                        });
+                    } else {
+                        // no glyph (stunstick, scripted weapons): the white crosshair_default,
+                        // sprites/crosshairs (128x128) x 0 y 48 24x24 (ui.md §7.1, gap-report #157)
+                        let sz = 24.0 * s;
+                        items.push(UiItem::Slice {
+                            x: w / 2.0 - sz / 2.0,
+                            y: h / 2.0 - sz / 2.0,
+                            w: sz,
+                            h: sz,
+                            material: "sprites/crosshairs".to_string(),
+                            color: [1.0, 1.0, 1.0, 1.0],
+                            uv: [0.0, 48.0 / 128.0, 24.0 / 128.0, 72.0 / 128.0],
+                        });
+                    }
                 }
                 // gmod_tool SWEP:DrawHUD: the tool's name and description on a dark panel
                 // at (50, 40), then its Information rows (LMB/RMB/R/E icons, text from
@@ -10022,6 +10039,26 @@ impl Notices {
 }
 
 /// WeaponIcons glyph of a loadout weapon (scripts/weapon_*.txt TextureData "weapon").
+/// Whether the weapon's script carries a `crosshair` glyph (`Crosshairs` "Q"): every HL2
+/// weapon script does except weapon_stunstick, which uses `crosshair_default`; scripted
+/// weapons have no script texture data at all.
+fn weapon_has_crosshair_glyph(class: &str) -> bool {
+    matches!(
+        class,
+        "weapon_pistol"
+            | "weapon_357"
+            | "weapon_smg1"
+            | "weapon_ar2"
+            | "weapon_shotgun"
+            | "weapon_crossbow"
+            | "weapon_rpg"
+            | "weapon_frag"
+            | "weapon_crowbar"
+            | "weapon_physcannon"
+            | "weapon_physgun"
+    )
+}
+
 fn weapon_icon(class: &str) -> Option<&'static str> {
     Some(match class {
         "weapon_crowbar" => "c",
