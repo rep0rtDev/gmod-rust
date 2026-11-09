@@ -40,6 +40,10 @@ use winit::window::{CursorGrabMode, Window, WindowId};
 const PHYSGUN_SLOT: u8 = 0;
 /// Slots in `WEAPONS` of the weapons with their own effects.
 const RPG_SLOT: u8 = 9;
+/// Decals never expire with time in the game; `r_decals` (2048) is a ring that drops the
+/// oldest (clientfx.md §4, gap-report #128).
+const DECAL_RING: usize = 2048;
+const DECAL_LIFE: f32 = f32::INFINITY;
 const GRAVGUN_SLOT: u8 = 10;
 /// `gmod_camera` in `WEAPONS`.
 const CAMERA_SLOT: u8 = 12;
@@ -4416,7 +4420,7 @@ impl App {
                         surface,
                         ..
                     } => {
-                        if self.fx_decals.len() >= 256 {
+                        if self.fx_decals.len() >= DECAL_RING {
                             self.fx_decals.pop_front();
                         }
                         self.fx_decals
@@ -4530,7 +4534,7 @@ impl App {
                             gm_collision::MASK_SOLID,
                         );
                         if tr.fraction < 1.0 {
-                            if self.fx_decals.len() >= 256 {
+                            if self.fx_decals.len() >= DECAL_RING {
                                 self.fx_decals.pop_front();
                             }
                             let n = 1 + (pos.x.to_bits() ^ pos.y.to_bits()) % 2;
@@ -4607,7 +4611,7 @@ impl App {
                         // `UTIL_BloodDecalTrace`: the `Blood` / `YellowBlood` groups (green
                         // bleeds red decals as in the game)
                         for (p, n) in decals {
-                            if self.fx_decals.len() >= 256 {
+                            if self.fx_decals.len() >= DECAL_RING {
                                 self.fx_decals.pop_front();
                             }
                             let k = 1 + (p.x.to_bits() ^ p.z.to_bits().rotate_left(7)) % 6;
@@ -6270,7 +6274,8 @@ impl App {
                 };
                 let total = (end - start).length();
                 let head = now.duration_since(born).as_secs_f32() * 5000.0;
-                if total < 1.0 || head >= total {
+                // FX_Tracer draws nothing under 256 u (clientfx.md 5.3, gap-report #129)
+                if total < 256.0 || head >= total {
                     continue;
                 }
                 keep.push((player, end, born, ar2));
@@ -6587,7 +6592,7 @@ impl App {
                 }
             }
             self.fx_decals
-                .retain(|(_, _, _, born)| now.duration_since(*born).as_secs_f32() < 120.0);
+                .retain(|(_, _, _, born)| now.duration_since(*born).as_secs_f32() < DECAL_LIFE);
             for (_, _, name, _) in &self.fx_decals {
                 if !name.is_empty() && !g.fx_decal_mats.contains_key(name) {
                     let m = g.world.decal(&g.gpu, &self.mount, name);
@@ -6601,7 +6606,7 @@ impl App {
                 }
             }
             self.fx_prop_decals
-                .retain(|(_, _, _, _, born)| now.duration_since(*born).as_secs_f32() < 120.0);
+                .retain(|(_, _, _, _, born)| now.duration_since(*born).as_secs_f32() < DECAL_LIFE);
             for (_, _, _, name, _) in &self.fx_prop_decals {
                 if !name.is_empty() && !g.fx_decal_mats.contains_key(name) {
                     let m = g.world.decal(&g.gpu, &self.mount, name);
