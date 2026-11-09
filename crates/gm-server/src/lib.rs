@@ -11532,6 +11532,76 @@ impl<'w> Server<'w> {
             }
         }
     }
+    /// Buoyancy (vphysics.md fluid controller, gap-report #43): a prop in water gets the
+    /// buoyant force of its submerged volume, density * volume * g, i.e. the acceleration
+    /// g * submerged / ratio with ratio = mass / (water density * volume), plus the fluid's
+    /// viscous damping (1.0 linear) on the submerged part; nothing for held (shadow-controlled)
+    /// or frozen bodies. The submerged fraction is the body's height under the water surface,
+    /// the surface found by sampling the water contents upward from the body. The model's
+    /// `.phy` volume is in cubic inches (x0.0254^3 for cubic metres); a model without one
+    /// uses its hull box.
+    fn buoyancy(&mut self) {
+        const WATER_DENSITY: f32 = 1000.0;
+        const GRAVITY: f32 = 600.0;
+        let dt = self.physics.tick_interval;
+        let mut pushes: Vec<(BodyHandle, Vec3, bool)> = Vec::new();
+        for p in self.sandbox.props() {
+            let Some(&body) = self.bodies.get(&p.id) else {
+                continue;
+            };
+            if self.physics.is_frozen(body) || self.physics.is_held(body) {
+                continue;
+            }
+            let Some(info) = self.models.get(&p.model) else {
+                continue;
+            };
+            let st = self.physics.state(body);
+            let bottom = st.position.z + info.bounds.min.z;
+            let top = st.position.z + info.bounds.max.z;
+            if top - bottom < 1.0 {
+                continue;
+            }
+            let wet = |z: f32| {
+                self.collision
+                    .point_contents(Vec3::new(st.position.x, st.position.y, z))
+                    & gm_collision::MASK_WATER
+                    != 0
+            };
+            let mut z = bottom + 0.5;
+            if !wet(z) {
+                continue;
+            }
+            // the water surface: step up until dry (or the body's top)
+            let step = ((top - bottom) / 32.0).max(1.0);
+            while z < top && wet(z + step) {
+                z += step;
+            }
+            let frac = ((z - bottom) / (top - bottom)).clamp(0.0, 1.0);
+            let box_volume = {
+                let d = info.bounds.max - info.bounds.min;
+                d.x * d.y * d.z
+            };
+            let volume_in3 = if info.volume > 0.0 {
+                info.volume
+            } else {
+                box_volume
+            };
+            let volume_m3 = volume_in3 * 0.0254 * 0.0254 * 0.0254;
+            let mass = self.physics.mass(body).max(0.1);
+            let ratio = mass / (WATER_DENSITY * volume_m3.max(1e-6));
+            let lift = GRAVITY * frac / ratio;
+            let damping = -st.velocity * frac * 1.0;
+            let impulse = (Vec3::new(0.0, 0.0, lift) + damping) * mass * dt;
+            pushes.push((body, impulse, !st.active));
+        }
+        for (body, impulse, asleep) in pushes {
+            if asleep {
+                self.physics.activate(body);
+            }
+            self.physics.add_impulse(body, impulse);
+        }
+    }
+
     /// Breakable constraints (vphysics.md / props.md #63, #66, gap-report #42 / #46): a weld,
     /// axis or ballsocket with a `forcelimit` / `torquelimit` (0 = unbreakable) breaks when the
     /// solver's force / torque on it over the step exceeds the limit. The limits are the tools'
@@ -23189,6 +23259,7 @@ impl<'w> Server<'w> {
         }
         self.animate_ragdoll_friction();
         // the physics step after bullets, moves and projectiles: a prop hit by any of them takes
+        self.buoyancy();
         // the impulse before the floor acts on it in the same tick (`shoot_prop_crossbow_drum`)
         if !self.physics_paused {
             let base = self.physics.tick_interval;
