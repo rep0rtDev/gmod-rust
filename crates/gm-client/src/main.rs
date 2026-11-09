@@ -475,6 +475,9 @@ struct Viewmodel {
     /// `reload` is its start).
     reload_shell: Option<&'static str>,
     reload_end: Option<&'static str>,
+    /// The FOV the viewmodel is drawn with: `viewmodel_fov` 54 for HL2 weapons,
+    /// `SWEP.ViewModelFOV` (62) for scripted ones (render.md §2.1, gap-report #144).
+    fov: f32,
 }
 
 const fn vm(
@@ -499,6 +502,7 @@ const fn vm(
         dry: None,
         reload_shell: None,
         reload_end: None,
+        fov: VIEWMODEL_FOV,
     }
 }
 
@@ -3595,6 +3599,11 @@ impl App {
             .map(|d| {
                 let vm = Viewmodel {
                     reload: Some("reload"),
+                    fov: if d.view_model_fov > 0.0 {
+                        d.view_model_fov
+                    } else {
+                        62.0
+                    },
                     ..vm(
                         leak(&d.class),
                         leak(&d.print_name),
@@ -5607,7 +5616,7 @@ impl App {
             // the viewmodel is drawn with its own FOV: put the point where it appears on
             // screen under the world camera (same clip position, world projection)
             let aspect = g.config.width as f32 / g.config.height as f32;
-            let vm_fov = scale_fov_by_width(VIEWMODEL_FOV, aspect);
+            let vm_fov = scale_fov_by_width(vm.fov, aspect);
             let k = (vm_fov.to_radians() * 0.5).tan() / (camera.fov_x.to_radians() * 0.5).tan();
             let view = glam::Mat4::look_to_rh(camera.position, camera.forward(), Vec3::Z);
             let mut v = view.transform_point3(p);
@@ -6891,7 +6900,7 @@ impl App {
                     _ => None,
                 };
                 // Source fovs are given for 4:3; wider screens widen the horizontal fov
-                let fov_x = scale_fov_by_width(VIEWMODEL_FOV, aspect);
+                let fov_x = scale_fov_by_width(vm.fov, aspect);
                 let vm_camera = Camera {
                     fov_x,
                     near: 1.0,

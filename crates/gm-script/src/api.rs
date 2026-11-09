@@ -1594,7 +1594,7 @@ local sweps = {}
 function weapon.register(class: string, def)
     sweps[class] = def
     local d = { class = class }
-    for _, k in ipairs({ "print_name", "slot", "slot_pos", "hold_type", "view_model", "world_model",
+    for _, k in ipairs({ "print_name", "slot", "slot_pos", "hold_type", "view_model", "view_model_fov", "world_model",
         "clip_size", "default_clip", "ammo", "automatic", "primary_delay", "secondary_delay", "reload_time" }) do
         d[k] = def[k]
     end
@@ -2424,6 +2424,7 @@ pub fn install(lua: &Lua, shared: Arc<Shared>) -> Result<()> {
                             view_model: t
                                 .get::<Option<String>>("view_model")?
                                 .unwrap_or_else(|| "models/weapons/c_pistol.mdl".into()),
+                            view_model_fov: t.get::<Option<f32>>("view_model_fov")?.unwrap_or(62.0),
                             world_model: t
                                 .get::<Option<String>>("world_model")?
                                 .unwrap_or_else(|| "models/weapons/w_pistol.mdl".into()),

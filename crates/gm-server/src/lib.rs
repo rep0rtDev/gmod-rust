@@ -5703,6 +5703,8 @@ pub struct ScriptedWeapon {
     pub slot_pos: u8,
     pub hold_type: String,
     pub view_model: String,
+    /// `SWEP.ViewModelFOV` (62 by default; HL2 weapons draw at `viewmodel_fov` 54).
+    pub view_model_fov: f32,
     pub world_model: String,
     /// -1: no clip (every shot takes from the reserve directly).
     pub clip_size: i32,
@@ -26544,6 +26546,7 @@ mod slot_tests {
             slot_pos: 0,
             hold_type: "pistol".into(),
             view_model: String::new(),
+            view_model_fov: 62.0,
             world_model: String::new(),
             clip_size: -1,
             default_clip: -1,
@@ -26626,6 +26629,7 @@ mod parent_tests {
             slot_pos: 0,
             hold_type: "smg".into(),
             view_model: String::new(),
+            view_model_fov: 62.0,
             world_model: String::new(),
             clip_size: 30,
             default_clip: 30,

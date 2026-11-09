@@ -1470,6 +1470,7 @@ impl ServerMsg {
                     w.u8(d.slot_pos);
                     w.str(&d.hold_type);
                     w.str(&d.view_model);
+                    w.f32(d.view_model_fov);
                     w.str(&d.world_model);
                     w.i32(d.clip_size);
                     w.i32(d.default_clip);
@@ -2066,6 +2067,7 @@ impl ServerMsg {
                         slot_pos: r.u8()?,
                         hold_type: r.str()?,
                         view_model: r.str()?,
+                        view_model_fov: r.f32()?,
                         world_model: r.str()?,
                         clip_size: r.i32()?,
                         default_clip: r.i32()?,

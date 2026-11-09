@@ -175,7 +175,7 @@ function weapons.Register(SWEP, class)
     local function inst(p) return instance_for(wep_defs, wep_defs, class, p.player, __glua_classes.Weapon.__from(class, p.player)) end
     weapon.register(class, {
         print_name = SWEP.PrintName, slot = SWEP.Slot, slot_pos = SWEP.SlotPos, hold_type = SWEP.HoldType,
-        view_model = SWEP.ViewModel, world_model = SWEP.WorldModel, clip_size = P.ClipSize, default_clip = P.DefaultClip,
+        view_model = SWEP.ViewModel, view_model_fov = SWEP.ViewModelFOV, world_model = SWEP.WorldModel, clip_size = P.ClipSize, default_clip = P.DefaultClip,
         ammo = P.Ammo, automatic = P.Automatic, primary_delay = SWEP.PrimaryDelay, secondary_delay = SWEP.SecondaryDelay, reload_time = SWEP.ReloadTime,
         primary = function(p) local i = inst(p); rawset(i, "Owner", Player(p.player)); if i.CanPrimaryAttack and i:CanPrimaryAttack() == false then return end if i.PrimaryAttack then return i:PrimaryAttack() end end,
         secondary = function(p) local i = inst(p); rawset(i, "Owner", Player(p.player)); if i.CanSecondaryAttack and i:CanSecondaryAttack() == false then return end if i.SecondaryAttack then return i:SecondaryAttack() end end,
