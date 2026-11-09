@@ -792,6 +792,10 @@ impl VmView {
 }
 
 /// The m_anm gesture another player plays for a viewmodel event (`PlayerSnap::vm_act`), by hold
+/// The sandbox stools whose click repeats every tick while held (the game's
+/// `TOOL.LeftClickAutomatic` / `RightClickAutomatic`).
+const AUTOMATIC_STOOLS: &[&str] = &["leafblower", "inflator", "paint"];
+
 /// type: `range_*` on a shot, `reload_*` where the animation model has one.
 fn gesture_for(act: u8, hold: &str) -> Option<&'static str> {
     Some(match (act, hold) {
@@ -4084,6 +4088,21 @@ impl App {
             cmd.mouse_y = my;
             cmd.wheel = std::mem::take(&mut self.wheel_delta);
             self.sim.tick(cmd);
+            // automatic stools (`TOOL.LeftClickAutomatic` / `RightClickAutomatic`: leafblower,
+            // inflator, paint in the game's sandbox) fire every tick while the button is held
+            // (toolgun.md F9-F10, gap-report #90); the others only on the press edge
+            if self.weapon == 1 && AUTOMATIC_STOOLS.contains(&self.tool.as_str()) {
+                for (b, right) in [(0, false), (1, true)] {
+                    if self.mouse.contains(&b) {
+                        self.sim.client.command(Command::ToolClick {
+                            tool: self.tool.clone(),
+                            right,
+                            reload: false,
+                            settings: self.tool_settings_list(),
+                        });
+                    }
+                }
+            }
             let keys = std::mem::take(&mut self.pending_input);
             self.sim.script.client_input(&self.sim.client.world, &keys);
             self.acc -= dt;
