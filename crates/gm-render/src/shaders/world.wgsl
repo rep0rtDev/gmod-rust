@@ -23,8 +23,10 @@ struct Camera {
     sky_sun_color: vec4<f32>,
     sky_dusk: vec4<f32>,
     sky_dusk_scale: vec4<f32>,
-    flashlight_vp: array<mat4x4<f32>, 4>,
+    flashlight_vp: array<mat4x4<f32>, 5>,
     shadow_slot: array<vec4<f32>, 2>,
+    // entity shadows: on, r_shadowdist as a fraction of the map's depth range, opacity
+    sun_shadow: vec4<f32>,
 };
 
 @group(0) @binding(0) var<uniform> camera: Camera;
@@ -64,6 +66,27 @@ fn flashlight_shadow(slot: i32, world: vec3<f32>) -> f32 {
         return 1.0;
     }
     return textureSampleCompareLevel(flashlight_depth, flashlight_sampler, uv, slot, ndc.z - 0.0005);
+}
+// Entity shadows (render.md 11): the dynamic models' depth from the light_environment
+// direction in the last layer; a world point is shaded when a caster lies between it and
+// the light within r_shadowdist, fading over the second half of that distance (the two
+// comparisons at half and full distance stand in for the blob's linear fade)
+fn sun_shadow_factor(world: vec3<f32>) -> f32 {
+    if camera.sun_shadow.x < 0.5 {
+        return 1.0;
+    }
+    let p = camera.flashlight_vp[4] * vec4<f32>(world, 1.0);
+    let ndc = p.xyz / p.w;
+    let uv = vec2<f32>(ndc.x * 0.5 + 0.5, 0.5 - ndc.y * 0.5);
+    if any(uv < vec2<f32>(0.0)) || any(uv > vec2<f32>(1.0)) || ndc.z >= 1.0 || ndc.z <= 0.0 {
+        return 1.0;
+    }
+    let d = camera.sun_shadow.y;
+    let lit = textureSampleCompareLevel(flashlight_depth, flashlight_sampler, uv, 4, ndc.z - 0.001);
+    let lit_half = textureSampleCompareLevel(flashlight_depth, flashlight_sampler, uv, 4, ndc.z - d * 0.5);
+    let lit_full = textureSampleCompareLevel(flashlight_depth, flashlight_sampler, uv, 4, ndc.z - d);
+    let shadow = 0.5 * (max(lit_half - lit, 0.0) + max(lit_full - lit, 0.0));
+    return 1.0 - camera.sun_shadow.z * shadow;
 }
 @group(1) @binding(0) var base: texture_2d<f32>;
 @group(1) @binding(1) var base_sampler: sampler;
@@ -218,6 +241,10 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
             }
             light += camera.dlight_color[i].rgb * (k * k * facing);
         }
+    }
+    // the entity shadow decals darken the lit world surface (models carry w = 1: none)
+    if material.water_range.w < 0.5 {
+        light = light * sun_shadow_factor(in.world);
     }
     if material.unlit != 0u {
         light = vec3<f32>(1.0);

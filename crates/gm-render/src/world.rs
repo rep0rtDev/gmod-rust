@@ -369,8 +369,11 @@ struct CameraUniform {
     sky_dusk_scale: [f32; 4],
     /// The view-projection of each flashlight shadow map, and per dynamic light the shadow
     /// map that shades it (-1: none).
-    flashlight_vp: [[[f32; 4]; 4]; SHADOW_LAYERS],
+    flashlight_vp: [[[f32; 4]; 4]; DEPTH_LAYERS],
     shadow_slot: [[f32; 4]; 2],
+    /// Entity sun shadows (render.md 11): on, `r_shadowdist` as a depth-map fraction, the
+    /// shadow's opacity, 0.
+    sun_shadow: [f32; 4],
 }
 
 /// Dynamic lights lit per frame.
@@ -382,6 +385,19 @@ pub const MAX_DLIGHTS: usize = 8;
 /// get one.
 const SHADOW_SIZE: u32 = 2048;
 pub const SHADOW_LAYERS: usize = 4;
+/// The last depth layer holds the entity shadows: the dynamic models seen from the
+/// `light_environment` direction (the client shadow manager's render-to-texture shadows,
+/// `r_shadowrendertotexture 1` in GMod), projected onto the world within `r_shadowdist`.
+const SUN_LAYER: usize = SHADOW_LAYERS;
+const DEPTH_LAYERS: usize = SHADOW_LAYERS + 1;
+/// Side of the orthographic sun shadow map around the camera (units) and its depth range.
+const SUN_SHADOW_EXTENT: f32 = 1024.0;
+const SUN_SHADOW_RANGE: f32 = 4096.0;
+/// `r_shadowdist`: how far below the caster the shadow reaches (SDK default, 50 u).
+const SUN_SHADOW_DIST: f32 = 50.0;
+/// Opacity of the shadow on the surface (an approximation: the game's shadow decal
+/// alpha was not resolved from the binary).
+const SUN_SHADOW_ALPHA: f32 = 0.6;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct DLight {
@@ -715,7 +731,7 @@ pub struct WorldRenderer {
     /// The flashlights (index among the dynamic lights, light) whose shadow maps are drawn,
     /// the local player's first; the first `SHADOW_LAYERS` get one.
     flashlights: Vec<(usize, DLight)>,
-    flashlight_vp: std::cell::Cell<[Option<Mat4>; SHADOW_LAYERS]>,
+    flashlight_vp: std::cell::Cell<[Option<Mat4>; DEPTH_LAYERS]>,
     shadow_pipeline: wgpu::RenderPipeline,
     shadow_layers: Vec<wgpu::TextureView>,
     camera_bind_group: wgpu::BindGroup,
@@ -2450,7 +2466,7 @@ impl WorldRenderer {
             size: wgpu::Extent3d {
                 width: SHADOW_SIZE,
                 height: SHADOW_SIZE,
-                depth_or_array_layers: SHADOW_LAYERS as u32,
+                depth_or_array_layers: DEPTH_LAYERS as u32,
             },
             mip_level_count: 1,
             sample_count: 1,
@@ -2463,7 +2479,7 @@ impl WorldRenderer {
             dimension: Some(wgpu::TextureViewDimension::D2Array),
             ..Default::default()
         });
-        let shadow_layers: Vec<wgpu::TextureView> = (0..SHADOW_LAYERS as u32)
+        let shadow_layers: Vec<wgpu::TextureView> = (0..DEPTH_LAYERS as u32)
             .map(|layer| {
                 shadow_texture.create_view(&wgpu::TextureViewDescriptor {
                     dimension: Some(wgpu::TextureViewDimension::D2),
@@ -3247,7 +3263,7 @@ impl WorldRenderer {
             translucent_pipeline,
             camera_buffer,
             flashlights: Vec::new(),
-            flashlight_vp: std::cell::Cell::new([None; SHADOW_LAYERS]),
+            flashlight_vp: std::cell::Cell::new([None; DEPTH_LAYERS]),
             shadow_pipeline,
             shadow_layers,
             camera_bind_group,
@@ -3291,11 +3307,13 @@ impl WorldRenderer {
         scene_src: Option<&wgpu::Texture>,
         reflect_items: &[DrawItem<'_>],
     ) {
-        let mut vps = [None; SHADOW_LAYERS];
+        let mut vps = [None; DEPTH_LAYERS];
         for (slot, (_, l)) in self.flashlights.iter().take(SHADOW_LAYERS).enumerate() {
             vps[slot] =
                 Some(self.draw_flashlight_depth(gpu, l, &self.shadow_layers[slot], reflect_items));
         }
+        vps[SUN_LAYER] =
+            self.draw_sun_depth(gpu, camera, &self.shadow_layers[SUN_LAYER], reflect_items);
         self.flashlight_vp.set(vps);
         self.draw_reflection(gpu, camera, aspect, reflect_items);
         self.draw_inner(
@@ -3538,6 +3556,12 @@ impl WorldRenderer {
                 let vps = self.flashlight_vp.get();
                 std::array::from_fn(|s| vps[s].unwrap_or(Mat4::IDENTITY).to_cols_array_2d())
             },
+            sun_shadow: [
+                f32::from(self.flashlight_vp.get()[SUN_LAYER].is_some()),
+                SUN_SHADOW_DIST / SUN_SHADOW_RANGE,
+                SUN_SHADOW_ALPHA,
+                0.0,
+            ],
             shadow_slot: {
                 let vps = self.flashlight_vp.get();
                 let mut slots = [[-1.0f32; 4]; 2];
@@ -4087,6 +4111,84 @@ impl WorldRenderer {
         vp
     }
 
+    /// The entity shadow map: the dynamic models alone, orthographic along the light's travel
+    /// direction (the sun's opposite) over `SUN_SHADOW_EXTENT` around the camera; None when
+    /// nothing casts.
+    fn draw_sun_depth(
+        &self,
+        gpu: &Gpu,
+        camera: &Camera,
+        view: &wgpu::TextureView,
+        items: &[DrawItem<'_>],
+    ) -> Option<Mat4> {
+        let dir = (-self.sun).normalize_or_zero();
+        if items.is_empty() || dir == Vec3::ZERO {
+            return None;
+        }
+        let (mverts, midx, mdraws) = self.model_mesh(items);
+        if mdraws.is_empty() {
+            return None;
+        }
+        let up = if dir.z.abs() > 0.99 { Vec3::X } else { Vec3::Z };
+        let eye = camera.position - dir * (SUN_SHADOW_RANGE * 0.5);
+        let vp = Mat4::orthographic_rh(
+            -SUN_SHADOW_EXTENT,
+            SUN_SHADOW_EXTENT,
+            -SUN_SHADOW_EXTENT,
+            SUN_SHADOW_EXTENT,
+            0.0,
+            SUN_SHADOW_RANGE,
+        ) * Mat4::look_to_rh(eye, dir, up);
+        let mut u: CameraUniform = bytemuck::Zeroable::zeroed();
+        u.view_proj = vp.to_cols_array_2d();
+        gpu.queue
+            .write_buffer(&self.camera_buffer, 0, bytemuck::bytes_of(&u));
+        let vb = gpu
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("sun shadow model vertices"),
+                contents: bytemuck::cast_slice(&mverts),
+                usage: wgpu::BufferUsages::VERTEX,
+            });
+        let ib = gpu
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("sun shadow model indices"),
+                contents: bytemuck::cast_slice(&midx),
+                usage: wgpu::BufferUsages::INDEX,
+            });
+        let mut encoder = gpu
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("sun shadow depth"),
+            });
+        {
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("sun shadow depth"),
+                color_attachments: &[],
+                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                    view,
+                    depth_ops: Some(wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(1.0),
+                        store: wgpu::StoreOp::Store,
+                    }),
+                    stencil_ops: None,
+                }),
+                ..Default::default()
+            });
+            pass.set_pipeline(&self.shadow_pipeline);
+            pass.set_bind_group(0, &self.shadow_camera_bind_group, &[]);
+            pass.set_vertex_buffer(0, vb.slice(..));
+            pass.set_index_buffer(ib.slice(..), wgpu::IndexFormat::Uint32);
+            for (bg, first, count) in &mdraws {
+                pass.set_bind_group(1, *bg, &[]);
+                pass.draw_indexed(*first..*first + *count, 0, 0..1);
+            }
+        }
+        gpu.queue.submit(Some(encoder.finish()));
+        Some(vp)
+    }
+
     /// Auto-exposure step from a frame probe: `bright` is the brightness (linear, 0..1 of
     /// the display range) the brightest 2 % of pixels reach, which the tonemap aims at 60 %
     /// (`mat_tonemap_percent_bright_pixels` / `mat_tonemap_percent_target`); the goal is
@@ -4118,6 +4220,7 @@ impl WorldRenderer {
         let params = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("model material params"),
             contents: bytemuck::bytes_of(&MaterialParams {
+                water_range: [0.0, 0.0, 0.0, 1.0],
                 alpha_test: mat.alpha_test as u32,
                 unlit: is_unlit(&mat.shader) as u32,
                 translucent: mat.translucent as u32,
@@ -4126,7 +4229,6 @@ impl WorldRenderer {
                 uv2_m: [1.0, 0.0, 0.0, 1.0],
                 uv2_t: [0.0; 4],
                 water_color: [0.0; 4],
-                water_range: [0.0; 4],
                 envmap: envmap_params(mat),
                 envmap2: envmap2_params(mat),
                 envmap3: envmap3_params(mat),
@@ -4534,6 +4636,7 @@ impl WorldRenderer {
         let params = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("sprite params"),
             contents: bytemuck::bytes_of(&MaterialParams {
+                water_range: [0.0, 0.0, 0.0, 1.0],
                 alpha_test: 0,
                 unlit: fog,
                 translucent: 1,
@@ -4542,7 +4645,6 @@ impl WorldRenderer {
                 uv2_m: [1.0, 0.0, 0.0, 1.0],
                 uv2_t: [0.0; 4],
                 water_color: [0.0; 4],
-                water_range: [0.0; 4],
                 envmap: [0.0, refract, 0.0, 0.0],
                 envmap2: [0.0; 4],
                 envmap3: [0.0; 4],
@@ -5170,6 +5272,7 @@ impl WorldRenderer {
         let params = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("solid params"),
             contents: bytemuck::bytes_of(&MaterialParams {
+                water_range: [0.0, 0.0, 0.0, 1.0],
                 alpha_test: 0,
                 unlit: 0,
                 translucent: 0,
@@ -5178,7 +5281,6 @@ impl WorldRenderer {
                 uv2_m: [1.0, 0.0, 0.0, 1.0],
                 uv2_t: [0.0; 4],
                 water_color: [0.0; 4],
-                water_range: [0.0; 4],
                 envmap: [0.0; 4],
                 envmap2: [0.0; 4],
                 envmap3: [0.0; 4],
