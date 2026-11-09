@@ -1275,7 +1275,9 @@ struct App {
     fx_muzzle_until: Option<Instant>,
     /// The own muzzle flash's 8 sprites (position, half-size, roll, material, born), drawn in
     /// the viewmodel pass; `fx_muzzle_spawned` is the `fx_muzzle_until` they were made for.
-    fx_vm_muzzle: Vec<(Vec3, f32, f32, usize, Instant)>,
+    fx_vm_muzzle: Vec<(Vec3, f32, f32, usize, Instant, f32)>,
+    /// The muzzle event's entity light (clientfx.md 2.1.4, #122): radius randint(32, 64), born.
+    fx_muzzle_light: Option<(f32, Instant)>,
     fx_muzzle_spawned: Option<Instant>,
     /// Surface property -> game material letter (`scripts/surfaceproperties*.txt`).
     gamematerials: HashMap<String, char>,
@@ -4463,7 +4465,7 @@ impl App {
                             let right = fwd.cross(Vec3::Z).normalize_or_zero();
                             let muzzle = start + fwd * 16.0 + right * 6.0 - Vec3::Z * 4.0;
                             for (pos, size, roll, variant) in
-                                muzzle_sprites(&mut self.fx_seed, muzzle, fwd)
+                                muzzle_sprites(&mut self.fx_seed, muzzle, fwd, 1.0)
                             {
                                 self.fx_sprites.push(FxSprite {
                                     kind: FxKind::Muzzle,
@@ -6362,19 +6364,41 @@ impl App {
                 vm_flash = Some(own_muzzle);
                 if self.fx_muzzle_spawned != self.fx_muzzle_until {
                     self.fx_muzzle_spawned = self.fx_muzzle_until;
+                    // per-weapon flash callbacks (clientfx.md 2.2, #121): the core's scale
+                    // range and lifetime; the generic attached flash for everything else
+                    let (lo, hi, life) = match viewmodel(self.weapon).map(|v| v.class) {
+                        Some("weapon_pistol") => (1.0, 1.25, 0.01),
+                        Some("weapon_357") => (1.25, 1.5, 0.01),
+                        Some("weapon_smg1") => (1.25, 1.5, 0.025),
+                        Some("weapon_shotgun") => (1.25, 1.5, 0.0001),
+                        Some("weapon_ar2") => (2.0, 2.25, 0.025),
+                        _ => (1.0, 1.0, 0.1),
+                    };
+                    let scale = fx_range(&mut self.fx_seed, lo, hi);
                     for (pos, size, roll, variant) in
-                        muzzle_sprites(&mut self.fx_seed, own_muzzle, fwd)
+                        muzzle_sprites(&mut self.fx_seed, own_muzzle, fwd, scale)
                     {
-                        self.fx_vm_muzzle.push((pos, size, roll, variant, now));
+                        self.fx_vm_muzzle
+                            .push((pos, size, roll, variant, now, life));
                     }
+                    let radius = 32.0 + (fx_rand(&mut self.fx_seed) * 33.0).floor();
+                    self.fx_muzzle_light = Some((radius, now));
                 }
-                // the muzzle event's entity light: radius randint(32,64), (255,192,64), 0.05 s
-                dlights.push(gm_render::world::DLight {
-                    pos: own_muzzle,
-                    radius: 48.0,
-                    color: Vec3::new(1.0, 0.75, 0.25),
-                    ..Default::default()
-                });
+            }
+            // the muzzle event's entity light (#122): radius randint(32,64), (255,192,64),
+            // decaying to nothing over 0.05 s
+            if let Some((radius, born)) = self.fx_muzzle_light {
+                let t = now.duration_since(born).as_secs_f32();
+                if t < 0.05 {
+                    dlights.push(gm_render::world::DLight {
+                        pos: own_muzzle,
+                        radius: radius * (1.0 - t / 0.05),
+                        color: Vec3::new(1.0, 192.0 / 255.0, 64.0 / 255.0),
+                        ..Default::default()
+                    });
+                } else {
+                    self.fx_muzzle_light = None;
+                }
             }
             let due: Vec<String> = self
                 .fx_sound_queue
@@ -6815,15 +6839,15 @@ impl App {
                 };
                 g.world.draw_models(&g.gpu, &vm_camera, &target, &vm_items);
                 self.fx_vm_muzzle
-                    .retain(|(_, _, _, _, born)| born.elapsed().as_secs_f32() < 0.1);
+                    .retain(|(_, _, _, _, born, life)| born.elapsed().as_secs_f32() < *life);
                 if vm_flash.is_some() || !self.fx_vm_muzzle.is_empty() {
                     // 8 sprites along the barrel, white, alpha 255 -> 128 over 0.1 s
                     let mut quads = Vec::new();
-                    for &(pos, size, roll, variant, born) in &self.fx_vm_muzzle {
+                    for &(pos, size, roll, variant, born, life) in &self.fx_vm_muzzle {
                         let Some(m) = g.fx_muzzles.get(variant) else {
                             continue;
                         };
-                        let a = 1.0 - 0.5 * (born.elapsed().as_secs_f32() / 0.1).min(1.0);
+                        let a = 1.0 - 0.5 * (born.elapsed().as_secs_f32() / life).min(1.0);
                         let (v, i) = g.world.sprite_quad_var(
                             pos,
                             size * 2.0,
@@ -9116,6 +9140,7 @@ fn main() -> Result<()> {
         fx_sound_queue: Vec::new(),
         fx_muzzle_until: None,
         fx_vm_muzzle: Vec::new(),
+        fx_muzzle_light: None,
         fx_muzzle_spawned: None,
         gamematerials,
         tool_screen: ToolScreen::default(),
@@ -10708,12 +10733,17 @@ enum FxKind {
 
 /// `FX_MuzzleEffect` (clientfx.md 2.1.2): 8 sprites along `forward` at 2*i u, half-size
 /// rand(6,9) * (12 - i) / 9, a random `muzzleflash1..4` and roll each (scale 1).
-fn muzzle_sprites(seed: &mut u32, origin: Vec3, forward: Vec3) -> Vec<(Vec3, f32, f32, usize)> {
+fn muzzle_sprites(
+    seed: &mut u32,
+    origin: Vec3,
+    forward: Vec3,
+    scale: f32,
+) -> Vec<(Vec3, f32, f32, usize)> {
     (1..=8)
         .map(|i| {
-            let size = particles::range(seed, 6.0, 9.0) * (12.0 - i as f32) / 9.0;
+            let size = particles::range(seed, 6.0, 9.0) * (12.0 - i as f32) / 9.0 * scale;
             (
-                origin + forward * (2.0 * i as f32),
+                origin + forward * (2.0 * i as f32 * scale),
                 size,
                 particles::range(seed, 0.0, std::f32::consts::TAU),
                 (particles::rng(seed) * 4.0) as usize,
