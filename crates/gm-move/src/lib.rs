@@ -770,8 +770,12 @@ impl<'a> Mover<'a> {
 
     /// Ground test: a short downward sweep; moving up fast leaves the ground.
     pub fn categorize(&self, st: &mut PlayerState) {
-        // only rising fast rules the ground out: a fall of 1089 u/s is grounded by the probe
-        // 0.3 u above the floor (damage_fall_progressive)
+        // GMod's CategorizePosition (movement.md 3.6): the sweep runs from 2 u above the
+        // origin to 1 u below it, first with the lower-half hull (same footprint, half the
+        // height), then with the full hull. The SDK's "rising faster than 140 u/s has no
+        // ground" early-out is kept although sv_sticktoground 1 skips it in the game: our
+        // ladder jump-off and prop pushes categorise before the move where the game does so
+        // after it (`move_ladder_jump`), and only the early-out keeps those airborne
         if st.velocity.z > NON_JUMP_VELOCITY && !st.ground_push {
             st.on_ground = false;
             return;
@@ -784,22 +788,31 @@ impl<'a> Mover<'a> {
             st.phys_lift = false;
         }
         st.ground_push = false;
-        let (t, ent) = self.trace_ent(
-            st,
-            st.origin,
-            st.origin - Vec3::Z * self.cfg.ground_probe,
-            PROP_SKIN,
-        );
-        let gap = t.fraction * self.cfg.ground_probe;
+        let start = st.origin + Vec3::Z * 2.0;
+        let end = st.origin - Vec3::Z * 1.0;
+        let (mins, maxs) = self.hull(st.ducked);
+        let lower = Vec3::new(maxs.x, maxs.y, maxs.z * 0.5);
+        let mut probe = self.trace_ent_hull(start, end, PROP_SKIN, mins, lower);
+        if !probe.0.hit() || probe.0.normal.z < self.cfg.ground_normal_z {
+            probe = self.trace_ent_hull(start, end, PROP_SKIN, mins, maxs);
+        }
+        let (t, ent) = probe;
+        // the measured reach on props is shorter than on the world (`move_prop_*`)
+        let gap = t.fraction * 3.0 - 2.0;
         let reach = if ent.is_none() {
             self.cfg.world_ground_probe
         } else {
             ENTITY_GROUND_REACH
         };
-        if !t.hit() || t.normal.z < self.cfg.ground_normal_z || gap > reach {
+        if !t.hit() || t.start_solid || t.normal.z < self.cfg.ground_normal_z || gap > reach {
             st.on_ground = false;
             st.ground_ent = 0;
             st.ground_friction = 1.0;
+            // rising past a non-standable surface: quarter friction in the air
+            if t.hit() && !t.start_solid && st.velocity.z > 0.0 && st.move_type != MoveType::Noclip
+            {
+                st.surface_friction = 0.25;
+            }
         } else {
             st.on_ground = true;
             st.ground_normal = t.normal;
