@@ -1,6 +1,7 @@
 # Ghidra headless post script: decompile the functions whose demangled names contain any of the
 # needles in DECOMPILE_NEEDLES (comma separated, env) into DECOMPILE_OUT, one file per function.
 # Output lands under .local/re and never enters the repository; only behavioural notes do.
+import io
 import os
 from ghidra.app.decompiler import DecompInterface
 from ghidra.util.task import ConsoleTaskMonitor
@@ -22,7 +23,7 @@ for f in currentProgram.getFunctionManager().getFunctions(True):
         print("failed: " + name)
         continue
     safe = "".join(c if c.isalnum() or c in "_:" else "_" for c in name).replace("::", "__")
-    with open(os.path.join(out, safe + ".c"), "w") as fh:
-        fh.write(res.getDecompiledFunction().getC())
+    with io.open(os.path.join(out, "%s_%s.c" % (safe[:150], f.getEntryPoint())), "w", encoding="utf-8", errors="replace") as fh:
+        fh.write(unicode(res.getDecompiledFunction().getC()))
     count += 1
 print("decompiled %d functions" % count)
