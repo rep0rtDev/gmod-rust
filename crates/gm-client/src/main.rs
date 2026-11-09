@@ -281,6 +281,8 @@ struct Gfx {
     fx_decal_mats: std::collections::HashMap<String, Option<gm_render::world::Decal>>,
     /// `sprites/redglow1`: the RPG's laser dot.
     fx_laserdot: Option<wgpu::BindGroup>,
+    /// `effects/laser1_noz`: the RPG's 128 u laser beam out of the muzzle (gap-report #110).
+    fx_laserbeam: Option<wgpu::BindGroup>,
     /// `sprites/sent_ball`: the bouncy ball's look (sent_ball.lua `Draw`, a sprite of its size).
     fx_ball: Option<wgpu::BindGroup>,
     /// `env_sprite` materials by name with their texel width.
@@ -978,8 +980,9 @@ fn weapon_sound(act: u8, active: u8) -> Option<String> {
         // secondary fires: SMG1 grenade `Double`, AR2 ball `Weapon_IRifle.Single` (#102, #104)
         (8, "Weapon_SMG1") => "Double",
         (9, "Weapon_AR2") => return Some("Weapon_CombineGuard.Special1".into()),
-        // the stunstick's deploy is `Activate` (hl2weapons.md #113)
+        // the stunstick's deploy is `Activate` (hl2weapons.md #113), the RPG's `LaserOn` (#110)
         (7, "Weapon_StunStick") => "Activate",
+        (7, "Weapon_RPG") => "LaserOn",
         (9, _) | (10, _) | (11, _) | (12, _) | (13, _) => return None,
         (8, "Weapon_AR2") => return Some("Weapon_IRifle.Single".into()),
         (3, "Weapon_357") => return Some("Weapon_Pistol.Empty".into()),
@@ -1591,6 +1594,7 @@ impl App {
         let fx_select_ring = world.sprite_material(&gpu, &self.mount, "effects/select_ring");
         let fx_lgtning = world.sprite_material(&gpu, &self.mount, "sprites/lgtning");
         let fx_laserdot = world.sprite_material(&gpu, &self.mount, "sprites/redglow1");
+        let fx_laserbeam = world.sprite_material(&gpu, &self.mount, "effects/laser1_noz");
         let fx_ball = world.sprite_material(&gpu, &self.mount, "sprites/sent_ball");
         let fx_sun = world
             .env_sun
@@ -1662,6 +1666,7 @@ impl App {
             fx_blueflare,
             fx_decal_mats: Default::default(),
             fx_laserdot,
+            fx_laserbeam,
             fx_ball,
             fx_sprite_mats: Default::default(),
             fx_sun,
@@ -3894,11 +3899,18 @@ impl App {
                 self.cam_zoom = self.settings.fov_desired;
             }
             // the stunstick's holster is `Weapon_StunStick.Deactivate` (hl2weapons.md #113)
-            if weapon != self.weapon
-                && viewmodel(self.weapon).is_some_and(|v| v.class == "weapon_stunstick")
-            {
-                self.sounds
-                    .emit(&self.mount, "Weapon_StunStick.Deactivate", None);
+            if weapon != self.weapon {
+                // holster sounds: the stunstick's `Deactivate` (#113), the RPG's `LaserOff` (#110)
+                match viewmodel(self.weapon).map(|v| v.class) {
+                    Some("weapon_stunstick") => {
+                        self.sounds
+                            .emit(&self.mount, "Weapon_StunStick.Deactivate", None);
+                    }
+                    Some("weapon_rpg") => {
+                        self.sounds.emit(&self.mount, "Weapon_RPG.LaserOff", None);
+                    }
+                    _ => {}
+                }
             }
             self.weapon = weapon;
             self.vm_anim = Some((vm.draw, Instant::now()));
@@ -6506,7 +6518,8 @@ impl App {
                     }
                 }
             }
-            // the RPG's laser dot (`CLaserDot`): a red glow where the aim meets the world
+            // the RPG's laser dot (`CLaserDot`): a red glow where the aim meets the world,
+            // and the 128 u `laser1_noz` beam out of the muzzle (hl2weapons.md, #110)
             if self.weapon == RPG_SLOT {
                 if let Some(m) = &g.fx_laserdot {
                     let hit = self.sim.collision.trace_ray(
@@ -6517,6 +6530,19 @@ impl App {
                     let (v, i) =
                         g.world
                             .sprite_quad(hit.end - fwd * 1.0, 6.0, [1.0, 0.2, 0.2], &camera);
+                    additive.push((m, v, i));
+                }
+                if let Some(m) = &g.fx_laserbeam {
+                    let muzzle = vm_attach("muzzle")
+                        .unwrap_or(camera.position + fwd * 16.0 + right * 6.0 - Vec3::Z * 4.0);
+                    let (v, i) = g.world.beam_strip(
+                        &[muzzle, muzzle + fwd * 128.0],
+                        2.0,
+                        [1.0, 0.1, 0.1],
+                        camera.position,
+                        0.0,
+                        1.0 / 128.0,
+                    );
                     additive.push((m, v, i));
                 }
             }
@@ -10147,20 +10173,29 @@ fn calc_shake(shakes: &mut Vec<Shake>, seed: &mut u32) -> (Vec3, f32) {
     let now = Instant::now();
     let mut offset = Vec3::ZERO;
     let mut roll = 0.0;
+    // CViewEffects::CalcShake (clientfx.md §1, gap-report #120): the offset and roll are
+    // re-rolled at the full amplitude every 1/frequency s and applied scaled by
+    // fraction^2 * sin(t * frequency / fraction), fraction = time left / duration
     shakes.retain_mut(|s| {
         let t = now.duration_since(s.start).as_secs_f32();
         if t >= s.duration {
             return false;
         }
         if t >= s.next_at {
-            let amp = s.amplitude * (1.0 - t / s.duration);
             let r = |seed: &mut u32| fx_rand(seed) * 2.0 - 1.0;
-            s.offset = Vec3::new(r(seed), r(seed), r(seed)) * amp;
-            s.roll = r(seed) * amp * 0.25;
+            s.offset = Vec3::new(r(seed), r(seed), r(seed)) * s.amplitude;
+            s.roll = r(seed) * s.amplitude * 0.25;
             s.next_at = t + 1.0 / s.frequency;
         }
-        offset += s.offset;
-        roll += s.roll;
+        let fraction = 1.0 - t / s.duration;
+        let freq = if fraction > 0.0 {
+            s.frequency / fraction
+        } else {
+            0.0
+        };
+        let scale = fraction * fraction * (t * freq).sin();
+        offset += s.offset * scale;
+        roll += s.roll * scale;
         true
     });
     (offset, roll)
