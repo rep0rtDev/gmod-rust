@@ -772,7 +772,10 @@ end
 function hook.Run(event, ...) return hook.Call(event, GM or GAMEMODE, ...) end
 -- the own event bus feeds the documented hooks
 if events then
-    events.on("tick.pre", function() hook.Run("Think"); hook.Run("Tick") end)
+    -- the game's order (luabind.md F27/F68, gap-report #206): Think, then the timer pass,
+    -- then Tick; `tick.timers` is dispatched right after the timers run
+    events.on("tick.pre", function() hook.Run("Think") end)
+    events.on("tick.timers", function() hook.Run("Tick") end)
 end
 
 ------------------------------------------------------------------------ timer / time

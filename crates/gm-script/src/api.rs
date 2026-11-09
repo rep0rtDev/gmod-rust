@@ -1536,8 +1536,12 @@ function __dispatch(name: string, payload)
             if type(r) == "string" then result = r; payload.text = r end
         end
     end
-    -- timers run after the Think handlers and before the server tick, like the game's
-    if name == "tick.pre" then run_timers() end
+    -- timers run after the Think handlers and before the server tick, like the game's;
+    -- the Tick hook follows them (`tick.timers`)
+    if name == "tick.pre" then
+        run_timers()
+        __dispatch("tick.timers", payload)
+    end
     return result
 end
 state = state or {}

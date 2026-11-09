@@ -225,7 +225,9 @@ function GM:PlayerRequestTeam(ply, teamid)
     hook.Run("PlayerJoinTeam", ply, teamid)
 end
 function GM:PlayerClassChanged(ply, newID) end
-function GM:CheckPassword(steamid, ip, svpass, clpass, name) if svpass == nil or svpass == "" or svpass == clpass then return true end return false, "#GameUI_ServerRejectBadPassword" end
+-- the engine compares with strncmp over sv_password's length: a client password that starts
+-- with the server's passes (luabind.md F18, gap-report #208)
+function GM:CheckPassword(steamid, ip, svpass, clpass, name) if svpass == nil or svpass == "" or string.sub(tostring(clpass or ""), 1, #svpass) == svpass then return true end return false, "#GameUI_ServerRejectBadPassword" end
 function GM:ClientSignOnStateChanged(userid, old, new) end
 function GM:GameContentChanged() end
 function GM:NetworkEntityCreated(ent) end

@@ -1760,11 +1760,14 @@ impl Server<'_> {
             }
             let flags = e.flags;
             let mut inside = Vec::new();
+            // PassesTriggerFilters (props.md #106, gap-report #204): 1 clients, 2 NPCs,
+            // 4 pushables, 8 physics objects, 0x40 everything; no flags -> nothing
+            let all = flags & 0x40 != 0;
             let candidates = players
                 .iter()
-                .filter(|_| flags & 1 != 0 || flags == 0)
-                .chain(npcs.iter().filter(|_| flags & 2 != 0))
-                .chain(props.iter().filter(|_| flags & 8 != 0));
+                .filter(|_| all || flags & 1 != 0)
+                .chain(npcs.iter().filter(|_| all || flags & 2 != 0))
+                .chain(props.iter().filter(|_| all || flags & (8 | 4) != 0));
             for (id, lo, hi) in candidates {
                 if e.overlaps_box(*lo, *hi) {
                     inside.push(*id);
