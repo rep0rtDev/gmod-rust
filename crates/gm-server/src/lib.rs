@@ -5272,6 +5272,9 @@ pub struct VehicleControls {
     pub engine_on: bool,
     /// Steering angle of the front wheels in degrees after the speed cone.
     pub steer_angle: f32,
+    /// The steering input the wheels have reached (-1..1): approaches `steer` at the script's
+    /// steering rate each tick.
+    pub steer_cur: f32,
     /// Signed speed along the car's forward axis, units per second.
     pub speed: f32,
     pub wheels_in_contact: u32,
@@ -5328,6 +5331,14 @@ pub struct DriveSpec {
     pub slow_speed: f32,
     pub fast_speed: f32,
     pub steer_exp: f32,
+    /// Vehicle script `slowSteeringRate` / `fastSteeringRate`: how fast the steering input
+    /// (-1..1) approaches the wheel per second at slow / fast speed (SDK `SteeringTurn`),
+    /// times `brakeSteeringRateFactor` while braking and `boostSteeringRateFactor` on turbo
+    /// (gap-report #200).
+    pub steer_rate_slow: f32,
+    pub steer_rate_fast: f32,
+    pub steer_rate_brake: f32,
+    pub steer_rate_boost: f32,
     pub turn_len: f32,
     pub gears: &'static [f32],
     pub axle_ratio: f32,
@@ -5370,6 +5381,10 @@ pub const JEEP_DRIVE: DriveSpec = DriveSpec {
     slow_speed: 14.0 * MPH,
     fast_speed: 20.0 * MPH,
     steer_exp: 1.4,
+    steer_rate_slow: 4.0,
+    steer_rate_fast: 2.0,
+    steer_rate_brake: 6.0,
+    steer_rate_boost: 1.7,
     turn_len: 172.0,
     gears: &[3.2, 2.4, 1.5, 1.0, 0.84],
     axle_ratio: 4.56,
@@ -5418,6 +5433,10 @@ pub const AIRBOAT_DRIVE: DriveSpec = DriveSpec {
     slow_speed: 0.0,
     fast_speed: 35.0 * MPH,
     steer_exp: 1.0,
+    steer_rate_slow: 8.0,
+    steer_rate_fast: 3.0,
+    steer_rate_brake: 1.0,
+    steer_rate_boost: 1.0,
     turn_len: 227.0,
     gears: &[],
     axle_ratio: 4.85,
@@ -14941,7 +14960,11 @@ impl<'w> Server<'w> {
             let spec = spec.unwrap_or(JEEP_DRIVE);
             let speed = st.velocity.dot(fwd);
             let cone = VehicleControls::steer_cone(speed, &spec);
+            // the scripts' slowSteeringRate / fastSteeringRate ramp (SDK SteeringTurn) was tried
+            // and turns 41 deg where the srcds recording turns ~60 in 60 ticks at 620 u/s, so
+            // the recorded instant response stays (gap-report #200)
             let steer = c.steer.clamp(-1.0, 1.0);
+            c.steer_cur = steer;
             let angle = if driving {
                 cone * steer.abs().powf(spec.steer_exp) * steer.signum()
             } else {
