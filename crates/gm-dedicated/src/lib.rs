@@ -669,8 +669,8 @@ pub fn prop_data_full(
         .map(|list| {
             list.children()
                 .iter()
-                .filter(|n| n.key.ends_with(".mdl"))
-                .map(|n| n.key.clone())
+                .filter(|n| n.key.to_ascii_lowercase().ends_with(".mdl"))
+                .map(|n| n.key.replace('\\', "/").to_ascii_lowercase())
                 .collect::<Vec<_>>()
         })
         .unwrap_or_default();
