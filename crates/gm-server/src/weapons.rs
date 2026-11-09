@@ -624,6 +624,12 @@ impl Inventory {
     pub fn tool_fired(&mut self) {
         vm_event(&mut self.vm_act, &mut self.vm_serial, VmAct::Fire);
     }
+
+    /// The physgun's viewmodel animation: `ACT_VM_SECONDARYATTACK` on the initial attack press
+    /// and on a freeze (physgun.md 70, gap-report #77).
+    pub fn physgun_secondary(&mut self) {
+        vm_event(&mut self.vm_act, &mut self.vm_serial, VmAct::AltFire);
+    }
 }
 
 /// Bullets fired by one trigger pull.

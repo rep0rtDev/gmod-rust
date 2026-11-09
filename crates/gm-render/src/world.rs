@@ -1479,6 +1479,17 @@ impl DynModel {
             .flat_map(|a| a.sequences.iter().map(|q| q.name.as_str()))
     }
 
+    /// Name of the first sequence tagged with activity `act` (`ACT_VM_SECONDARYATTACK`, ...):
+    /// how the game picks a viewmodel animation from `SendWeaponAnim`.
+    pub fn sequence_for_activity(&self, act: &str) -> Option<&str> {
+        self.skeleton
+            .iter()
+            .flat_map(|s| s.anims.iter())
+            .flat_map(|a| a.sequences.iter())
+            .find(|q| q.activity_name.eq_ignore_ascii_case(act))
+            .map(|q| q.name.as_str())
+    }
+
     /// Length in seconds of sequence `name` and whether it loops.
     pub fn sequence_length(&self, name: &str) -> Option<(f32, bool)> {
         let (src, seq) = self.skeleton.as_ref()?.seq(name)?;

@@ -792,6 +792,19 @@ impl VmView {
 }
 
 /// The m_anm gesture another player plays for a viewmodel event (`PlayerSnap::vm_act`), by hold
+/// Interns a model-resolved sequence name so it can sit in the `&'static str` viewmodel
+/// animation slot (a handful of names per process).
+fn static_seq_name(name: &str) -> &'static str {
+    static NAMES: std::sync::Mutex<Vec<&'static str>> = std::sync::Mutex::new(Vec::new());
+    let mut names = NAMES.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(n) = names.iter().find(|n| **n == name) {
+        return n;
+    }
+    let n: &'static str = Box::leak(name.to_owned().into_boxed_str());
+    names.push(n);
+    n
+}
+
 /// The sandbox stools whose click repeats every tick while held (the game's
 /// `TOOL.LeftClickAutomatic` / `RightClickAutomatic`).
 const AUTOMATIC_STOOLS: &[&str] = &["leafblower", "inflator", "paint"];
@@ -3880,7 +3893,17 @@ impl App {
                     5 => vm.reload_end,
                     6 => Some(vm.fire),
                     7 => Some(vm.draw),
-                    8 => vm.alt,
+                    // no named `alt` (the physgun): the model's own ACT_VM_SECONDARYATTACK
+                    // sequence, as the game's SendWeaponAnim resolves it (physgun.md 70, #77)
+                    8 => vm.alt.or_else(|| {
+                        let name = self
+                            .gfx
+                            .as_ref()
+                            .and_then(|g| g.models.get(vm.path))
+                            .and_then(|m| m.as_ref())
+                            .and_then(|m| m.sequence_for_activity("ACT_VM_SECONDARYATTACK"))?;
+                        Some(static_seq_name(name))
+                    }),
                     _ => None,
                 };
                 if let Some(seq) = seq {

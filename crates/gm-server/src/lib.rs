@@ -22763,6 +22763,13 @@ impl<'w> Server<'w> {
                 self.game_events.push(GameEvent::Unfroze { player, count });
             }
         }
+        if pc.physgun && attack {
+            if let Some(p) = self.players.get_mut(&player) {
+                if p.prev_buttons & IN_ATTACK == 0 {
+                    p.inventory.physgun_secondary();
+                }
+            }
+        }
         let held = self.players.get(&player).and_then(|p| p.held);
         let had = held.is_some();
         let held = match held {
@@ -22848,6 +22855,9 @@ impl<'w> Server<'w> {
                 }
                 self.game_events
                     .push(GameEvent::PhysgunFreeze { player, ent });
+                if let Some(p) = self.players.get_mut(&player) {
+                    p.inventory.physgun_secondary();
+                }
                 None
             }
             other => other,
