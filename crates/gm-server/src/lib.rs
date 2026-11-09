@@ -849,6 +849,13 @@ pub enum GameEvent {
         value: String,
     },
     /// Health damage applied (after the armour share, fall damage included), damage type bits.
+    /// `TextMsg`: `PrintMessage` / `Player:PrintMessage` / `Player:ChatPrint` text for one
+    /// player (0 = everyone) with its destination (1 notify, 2 console, 3 chat, 4 centre).
+    PlayerPrint {
+        player: u32,
+        kind: u8,
+        text: String,
+    },
     PlayerDamaged {
         player: u32,
         amount: f32,

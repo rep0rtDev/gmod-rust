@@ -1188,6 +1188,8 @@ struct App {
     wsel: Option<u8>,
     /// When the bucket menu last moved (`m_flSelectionTime`): it fades after 0.5 s idle.
     wsel_at: Option<Instant>,
+    /// HUD_PRINTCENTER text (CHudMessage) and when it arrived.
+    center_print: Option<(String, Instant)>,
     /// When the bucket menu was opened: OpenWeaponSelectionMenu fades Alpha in over 0.1 s.
     wsel_opened: Option<Instant>,
     epoch: Instant,
@@ -4439,6 +4441,28 @@ impl App {
                 }
                 // `Chat <player> <dead> <name>\x1f<text>`: the console gets `name: text`, the
                 // chat box the Lua side (GM:OnPlayerChat -> chat.AddText)
+                if let Some(rest) = e.strip_prefix("Print ") {
+                    // TextMsg destinations (ui.md §12.4, §15; gap-report #164)
+                    let (kind, text) = rest.split_once('\x1f').unwrap_or(("2", rest));
+                    match kind {
+                        "1" => self.notify(text.to_string(), NotifyKind::Hint, 5.0),
+                        "3" | "5" => {
+                            self.console.log(text.to_string());
+                            let mut p = gm_script::api::Payload::default();
+                            p.ints.push(("player", 0));
+                            p.bools.push(("dead", false));
+                            p.bools.push(("team", false));
+                            p.strs.push(("name", String::new()));
+                            p.strs.push(("text", text.to_string()));
+                            self.sim
+                                .script
+                                .client_event(&self.sim.client.world, "chat.line", &p);
+                        }
+                        "4" => self.center_print = Some((text.to_string(), Instant::now())),
+                        _ => self.console.log(text.to_string()),
+                    }
+                    continue;
+                }
                 if let Some(rest) = e.strip_prefix("Chat ") {
                     let mut it = rest.splitn(3, ' ');
                     let player: i64 = it.next().and_then(|v| v.parse().ok()).unwrap_or(0);
@@ -7882,6 +7906,28 @@ impl App {
                         });
                     }
                 }
+                // HUD_PRINTCENTER through CHudMessage: centred lines in the Default font at
+                // 65 % of the height, effect 0 (fade in 0.01 s, hold ~3 s, fade out 1.5 s).
+                // The position/timing are the SDK custom-message defaults as recalled, not
+                // read from the binary (gap-report #164, conf M).
+                if let Some((text, at)) = &self.center_print {
+                    let t = at.elapsed().as_secs_f32();
+                    let a = if t < 3.0 { 1.0 } else { 1.0 - (t - 3.0) / 1.5 };
+                    if a > 0.0 && !hidden("CHudMessage") {
+                        let fm = g.ui.font_metrics(Some("Default"));
+                        let lines: Vec<&str> = text.split('\n').collect();
+                        let th = fm.line_height * lines.len() as f32;
+                        for (k, l) in lines.iter().enumerate() {
+                            items.push(UiItem::Text {
+                                font: Some("Default".to_string()),
+                                x: (w - fm.text_width(l)) / 2.0,
+                                y: h * 0.65 - th / 2.0 + k as f32 * fm.line_height,
+                                text: l.to_string(),
+                                color: [1.0, 1.0, 1.0, a],
+                            });
+                        }
+                    }
+                }
                 // gmod_tool SWEP:DrawHUD: the tool's name and description on a dark panel
                 // at (50, 40), then its Information rows (LMB/RMB/R/E icons, text from
                 // tool.<mode>.<row>) filtered by stage and operation
@@ -9420,6 +9466,7 @@ fn main() -> Result<()> {
         notices: std::cell::RefCell::new(Notices::default()),
         wsel: None,
         wsel_at: None,
+        center_print: None,
         wsel_opened: None,
         epoch: Instant::now(),
         // cl_hints.lua: GM:AddHint( "OpeningMenu", 30 ), Annoy1 5, Annoy2 7

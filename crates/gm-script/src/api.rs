@@ -640,6 +640,12 @@ pub enum QueuedWrite {
     PlayerKick {
         player: u32,
     },
+    /// `Player:PrintMessage(kind, text)` (player 0 = `PrintMessage`, everyone).
+    PlayerPrint {
+        player: u32,
+        kind: u8,
+        text: String,
+    },
     /// `EnterVehicle(ent)` / `ExitVehicle` (`None`).
     /// `Vehicle:SetThrottle` / `SetSteering` / `SetHandbrake` (`None` leaves one alone).
     VehicleControls {
@@ -2929,6 +2935,15 @@ pub fn install(lua: &Lua, shared: Arc<Shared>) -> Result<()> {
                     deaths: Some(int_arg(&arg)?.max(0) as u32),
                 },
                 "player.kick" => QueuedWrite::PlayerKick { player: ent },
+                "player.print" => {
+                    let s = str_arg(&arg)?;
+                    let (kind, text) = s.split_once('\x1f').unwrap_or(("2", s.as_str()));
+                    QueuedWrite::PlayerPrint {
+                        player: ent,
+                        kind: kind.parse().unwrap_or(2),
+                        text: text.to_string(),
+                    }
+                }
                 "player.ban" => QueuedWrite::PlayerBan { player: ent },
                 "player.gesture_act" => QueuedWrite::PlayerGestureAct {
                     player: ent,
@@ -4905,6 +4920,14 @@ pub fn apply(server: &mut Server<'_>, w: &QueuedWrite) -> bool {
             deaths,
         } => server.set_player_score(*player, *frags, *deaths),
         QueuedWrite::PlayerKick { player } => server.remove_player(*player),
+        QueuedWrite::PlayerPrint { player, kind, text } => {
+            server.game_events.push(gm_server::GameEvent::PlayerPrint {
+                player: *player,
+                kind: *kind,
+                text: text.clone(),
+            });
+            true
+        }
         QueuedWrite::PlayerGestureAct {
             player,
             act,

@@ -685,8 +685,8 @@ function PLY:TakeDamage(amount, attacker, inflictor)
 end
 function PLY:TakeDamageInfo(info) qwrite("player.damage", self.__pid, { amount = info:GetDamage(), attacker = info:GetAttacker().UserID and info:GetAttacker():UserID() or 0, type = info:GetDamageType() }) end
 function PLY:SetVelocity(v) end
-function PLY:PrintMessage(kind, msg) print(msg) end
-function PLY:ChatPrint(msg) print(msg) end
+function PLY:PrintMessage(kind, msg) qwrite("player.print", self.__pid, tostring(tonumber(kind) or 2) .. "\31" .. tostring(msg)) end
+function PLY:ChatPrint(msg) self:PrintMessage(HUD_PRINTTALK, msg) end
 function PLY:ConCommand(cmd) end
 function PLY:SendLua(code) end
 function PLY:Spawn() end
@@ -1283,7 +1283,7 @@ MsgC = function(...) local parts = {}; for i = 1, select("#", ...) do local v = 
 MsgAll = Msg
 function ErrorNoHalt(...) local parts = {}; for i = 1, select("#", ...) do parts[i] = tostring(select(i, ...)) end print("[ERROR] " .. table.concat(parts)) end
 ErrorNoHaltWithStack = ErrorNoHalt
-function PrintMessage(kind, msg) print(msg) end
+function PrintMessage(kind, msg) qwrite("player.print", 0, tostring(tonumber(kind) or 2) .. "\31" .. tostring(msg)) end
 function PrintTable(t, indent, done)
     indent = indent or 0
     done = done or {}

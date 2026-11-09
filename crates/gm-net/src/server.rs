@@ -1098,6 +1098,14 @@ impl ServerNet {
                     }
                 }
             }
+            if let gm_server::GameEvent::PlayerPrint { player, kind, text } = e {
+                let line = format!("Print {kind}\x1f{text}");
+                for c in self.clients.values_mut() {
+                    if c.welcomed && !c.closing && (*player == 0 || c.player == *player) {
+                        c.pending_events.push(line.clone());
+                    }
+                }
+            }
             if let gm_server::GameEvent::PlayerDamaged {
                 player,
                 amount,

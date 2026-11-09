@@ -1747,6 +1747,8 @@ impl Runtime {
         for e in events {
             let mut p = api::Payload::default();
             let name = match e {
+                // TextMsg traffic has no Lua hook
+                E::PlayerPrint { .. } => continue,
                 E::PlayerSpawned { player } => {
                     p.ints.push(("player", player as i64));
                     "player.spawned"
