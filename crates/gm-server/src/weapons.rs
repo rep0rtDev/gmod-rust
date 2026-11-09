@@ -259,6 +259,15 @@ const CROWBAR: Fire = Fire {
     secondary_after: Some(0.6667),
     ..BASE
 };
+/// weapon_stunstick (hl2weapons.md, gap-report #113): the bludgeon swing at 0.8 s, no alt.
+const STUNSTICK: Fire = Fire {
+    melee: true,
+    auto: true,
+    from_now: true,
+    cycle: 0.8,
+    secondary_after: None,
+    ..BASE
+};
 /// Punt into nothing: primary 0.5 from now, secondary untouched; repeats while held.
 const PHYSCANNON: Fire = Fire {
     auto: true,
@@ -308,7 +317,7 @@ const FRAG: Fire = Fire {
     ..BASE
 };
 
-pub const WEAPONS: [WeaponDef; 13] = [
+pub const WEAPONS: [WeaponDef; 14] = [
     WeaponDef {
         class: "gmod_camera",
         clip1: -1,
@@ -383,6 +392,21 @@ pub const WEAPONS: [WeaponDef; 13] = [
         fire: Some(CROSSBOW),
         give: None,
         give_ammo: 4,
+    },
+    WeaponDef {
+        class: "weapon_stunstick",
+        clip1: -1,
+        clip2: -1,
+        ammo1: "",
+        ammo2: "",
+        slot: 0,
+        slot_pos: 2,
+        weight: 0,
+        hold_type: "melee",
+        deploy: Some(0.2333),
+        fire: Some(STUNSTICK),
+        give: Some((0.2033, 0.2033)),
+        give_ammo: 0,
     },
     WeaponDef {
         class: "weapon_crowbar",

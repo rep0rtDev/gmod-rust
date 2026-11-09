@@ -7618,8 +7618,9 @@ pub const LOADOUT: [&str; 13] = [
 
 /// Measured (`lua_slots`): `GetSlot()` / `GetSlotPos()` of the sandbox loadout, the categories
 /// of the digit keys 1..6 and the order within one (the tool gun and camera sit at 100, last).
-pub const SLOTS: [(&str, u8, u8); 13] = [
+pub const SLOTS: [(&str, u8, u8); 14] = [
     ("weapon_crowbar", 0, 0),
+    ("weapon_stunstick", 0, 2),
     ("weapon_physcannon", 0, 2),
     ("weapon_physgun", 0, 5),
     ("gmod_tool", 0, 100),
@@ -10445,6 +10446,16 @@ impl<'w> Server<'w> {
     /// A crowbar swing (`weapons::MELEE_*`): the first player hull on the aim within reach,
     /// before the world.
     fn resolve_melee(&mut self, attacker: u32, eye: Vec3, forward: Vec3) {
+        // the crowbar and the stunstick share the bludgeon swing; sounds / inflictor by class
+        let stunstick = self
+            .players
+            .get(&attacker)
+            .is_some_and(|p| p.active_weapon == "weapon_stunstick");
+        let (class, prefix) = if stunstick {
+            ("weapon_stunstick", "Weapon_StunStick")
+        } else {
+            ("weapon_crowbar", "Weapon_Crowbar")
+        };
         let end = eye + forward * weapons::MELEE_RANGE;
         let mut world = self
             .collision
@@ -10493,7 +10504,7 @@ impl<'w> Server<'w> {
                     weapons::DMG_CLUB,
                     h.pos,
                     forward * weapons::MELEE_PROP_FORCE,
-                    "weapon_crowbar",
+                    class,
                 );
                 return;
             }
@@ -10501,16 +10512,16 @@ impl<'w> Server<'w> {
         // `Weapon_Crowbar.Melee_HitWorld` / `.Melee_Hit` on top of the swing's `.Single`
         let Some((target, t)) = best else {
             if world.fraction < 1.0 {
-                self.melee_world_hit(attacker, &world);
+                self.melee_world_hit(attacker, &world, prefix);
             }
             return;
         };
         if world.fraction * weapons::MELEE_RANGE < t {
-            self.melee_world_hit(attacker, &world);
+            self.melee_world_hit(attacker, &world, prefix);
             return;
         }
         self.sounds.push(WorldSound {
-            name: "Weapon_Crowbar.Melee_Hit".to_owned(),
+            name: format!("{prefix}.Melee_Hit"),
             pos: eye + forward * t,
             volume: 1.0,
             ent: attacker,
@@ -10526,7 +10537,7 @@ impl<'w> Server<'w> {
             hitgroup: Some(0),
             pos: eye + forward * (t - 1.0 / 32.0),
             ammo: "",
-            inflictor: "weapon_crowbar",
+            inflictor: class,
         });
         if !self.players_hurt_players {
             return;
@@ -10541,7 +10552,7 @@ impl<'w> Server<'w> {
                 (center - from).normalize_or_zero() * (weapons::MELEE_PUSH_PER_DAMAGE * damage);
             push.z = push.z.min(weapons::PUSH_MAX_Z);
             t.state.impulse += push;
-            t.last_damage = (attacker, "weapon_crowbar");
+            t.last_damage = (attacker, class);
         }
         // crowbar hit view kick: pitch rand(1,2), yaw rand(-2,-1) (hl2weapons.md 1)
         let tick = self.tick_count;
@@ -10554,10 +10565,10 @@ impl<'w> Server<'w> {
         self.damage_player(target, damage, weapons::DMG_CLUB);
     }
 
-    fn melee_world_hit(&mut self, attacker: u32, world: &gm_collision::Trace) {
+    fn melee_world_hit(&mut self, attacker: u32, world: &gm_collision::Trace, prefix: &str) {
         self.world_impact(world, true);
         self.sounds.push(WorldSound {
-            name: "Weapon_Crowbar.Melee_HitWorld".to_owned(),
+            name: format!("{prefix}.Melee_HitWorld"),
             pos: world.end,
             volume: 1.0,
             ent: attacker,

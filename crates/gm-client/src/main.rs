@@ -491,7 +491,7 @@ const fn vm(
 }
 
 /// Slots on the number keys 1..9, 0; the physgun is slot 0 (key 1).
-const WEAPONS: [Viewmodel; 13] = [
+const WEAPONS: [Viewmodel; 14] = [
     Viewmodel {
         hold: Some("hold_idle"),
         ..vm(
@@ -515,6 +515,14 @@ const WEAPONS: [Viewmodel; 13] = [
         "weapon_crowbar",
         "crowbar",
         "models/weapons/c_crowbar.mdl",
+        "idle01",
+        "draw",
+        "misscenter1",
+    ),
+    vm(
+        "weapon_stunstick",
+        "stunstick",
+        "models/weapons/c_stunstick.mdl",
         "idle01",
         "draw",
         "misscenter1",
@@ -942,6 +950,7 @@ fn weapon_sound(act: u8, active: u8) -> Option<String> {
         "weapon_ar2" => "Weapon_AR2",
         "weapon_crossbow" => "Weapon_Crossbow",
         "weapon_crowbar" => "Weapon_Crowbar",
+        "weapon_stunstick" => "Weapon_StunStick",
         "weapon_physcannon" => "Weapon_PhysCannon",
         "weapon_pistol" => "Weapon_Pistol",
         "weapon_rpg" => "Weapon_RPG",
@@ -963,6 +972,8 @@ fn weapon_sound(act: u8, active: u8) -> Option<String> {
         // secondary fires: SMG1 grenade `Double`, AR2 ball `Weapon_IRifle.Single` (#102, #104)
         (8, "Weapon_SMG1") => "Double",
         (9, "Weapon_AR2") => return Some("Weapon_CombineGuard.Special1".into()),
+        // the stunstick's deploy is `Activate` (hl2weapons.md #113)
+        (7, "Weapon_StunStick") => "Activate",
         (9, _) => return None,
         (8, "Weapon_AR2") => return Some("Weapon_IRifle.Single".into()),
         (3, "Weapon_357") => return Some("Weapon_Pistol.Empty".into()),
@@ -3864,6 +3875,13 @@ impl App {
             // gmod_camera `Equip`: the zoom starts from fov_desired (toolgun.md F38, #96)
             if weapon == CAMERA_SLOT && self.weapon != CAMERA_SLOT {
                 self.cam_zoom = self.settings.fov_desired;
+            }
+            // the stunstick's holster is `Weapon_StunStick.Deactivate` (hl2weapons.md #113)
+            if weapon != self.weapon
+                && viewmodel(self.weapon).is_some_and(|v| v.class == "weapon_stunstick")
+            {
+                self.sounds
+                    .emit(&self.mount, "Weapon_StunStick.Deactivate", None);
             }
             self.weapon = weapon;
             self.vm_anim = Some((vm.draw, Instant::now()));
@@ -9550,6 +9568,7 @@ fn weapon_icon(class: &str) -> Option<&'static str> {
 fn weapon_select_name(class: &str, vm: Option<&Viewmodel>) -> String {
     match class {
         "weapon_crowbar" => "CROWBAR",
+        "weapon_stunstick" => "STUNSTICK",
         "weapon_physcannon" => "GRAVITY GUN",
         "weapon_physgun" => "Physics Gun",
         "weapon_pistol" => "9MM PISTOL",
