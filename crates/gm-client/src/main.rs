@@ -1188,6 +1188,8 @@ struct App {
     wsel: Option<u8>,
     /// When the bucket menu last moved (`m_flSelectionTime`): it fades after 0.5 s idle.
     wsel_at: Option<Instant>,
+    /// When the bucket menu was opened: OpenWeaponSelectionMenu fades Alpha in over 0.1 s.
+    wsel_opened: Option<Instant>,
     epoch: Instant,
     /// `GM:AddHint` timers: hint name and when it fires; `hints_done` is `ProcessedHints`.
     hints: Vec<(&'static str, Instant)>,
@@ -3692,6 +3694,12 @@ impl App {
             self.sounds.emit(&self.mount, "Player.WeaponSelected", None);
             return;
         }
+        if self.wsel.is_none() {
+            // OpenWeaponSelectionMenu: Player.WeaponSelectionOpen (ui.md §8.1, gap-report #160)
+            self.wsel_opened = Some(Instant::now());
+            self.sounds
+                .emit(&self.mount, "Player.WeaponSelectionOpen", None);
+        }
         self.wsel = Some(next);
         self.wsel_at = Some(Instant::now());
         self.sounds
@@ -3720,6 +3728,12 @@ impl App {
             self.select_weapon(next);
             self.sounds.emit(&self.mount, "Player.WeaponSelected", None);
             return;
+        }
+        if self.wsel.is_none() {
+            // OpenWeaponSelectionMenu: Player.WeaponSelectionOpen (ui.md §8.1, gap-report #160)
+            self.wsel_opened = Some(Instant::now());
+            self.sounds
+                .emit(&self.mount, "Player.WeaponSelectionOpen", None);
         }
         self.wsel = Some(next);
         self.wsel_at = Some(Instant::now());
@@ -3808,7 +3822,10 @@ impl App {
         }
         // SELECTION_TIMEOUT_THRESHOLD 0.5 s, then SELECTION_FADEOUT_TIME 0.75 s
         let idle = self.wsel_at.map_or(0.0, |t| t.elapsed().as_secs_f32());
-        let fade = (1.0 - (idle - 0.5) / 0.75).clamp(0.0, 1.0);
+        let opened = self
+            .wsel_opened
+            .map_or(1.0, |t| t.elapsed().as_secs_f32() / 0.1);
+        let fade = (1.0 - (idle - 0.5) / 0.75).clamp(0.0, 1.0) * opened.clamp(0.0, 1.0);
         let s = h / 480.0;
         let classes = gm_net::msg::weapon_classes(&self.sim.client.world.weapon_defs);
         let buckets = self.buckets();
@@ -8998,6 +9015,9 @@ impl ApplicationHandler for App {
                     if button == MouseButton::Left {
                         if state == ElementState::Pressed {
                             self.wsel = None;
+                            // CloseWeaponSelectionMenu: Player.WeaponSelectionClose
+                            self.sounds
+                                .emit(&self.mount, "Player.WeaponSelectionClose", None);
                             if let Some(l) = self.to_local(i) {
                                 self.select_weapon(l);
                             }
@@ -9364,6 +9384,7 @@ fn main() -> Result<()> {
         notices: std::cell::RefCell::new(Notices::default()),
         wsel: None,
         wsel_at: None,
+        wsel_opened: None,
         epoch: Instant::now(),
         // cl_hints.lua: GM:AddHint( "OpeningMenu", 30 ), Annoy1 5, Annoy2 7
         hints: vec![
