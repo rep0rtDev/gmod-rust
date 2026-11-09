@@ -1218,6 +1218,9 @@ struct App {
     claw_pose: f32,
     claw_at: Instant,
     gg_core_alpha: f32,
+    /// The gravity gun's networked effect state as the client sees it (gravgun.md 3.1):
+    /// 0 NONE, 1 CLOSED, 2 READY, 3 HOLDING.
+    gg_effect: u8,
     /// The toolgun's predicted click (sound + fire animation played locally; the server's
     /// matching fire event within the window is skipped).
     tool_predicted: Option<Instant>,
@@ -4680,13 +4683,32 @@ impl App {
             } else {
                 (self.claw_pose - dt / 0.5).max(0.0)
             };
-            let (target, time) = if holding {
-                (1.0, 0.1)
+            // effect state (gravgun.md 3.1 / 7.3, gap-report #88): NONE while the weapon is
+            // away (StopEffects), CLOSED with the claws shut (sprites keep their values),
+            // READY with them open, HOLDING with an object; the core follows READY (128 over
+            // 0.2 s) / HOLDING (255 over 0.1 s) and is left alone in CLOSED
+            self.gg_effect = if self.weapon != GRAVGUN_SLOT {
+                0
+            } else if holding {
+                3
+            } else if open {
+                2
             } else {
-                (128.0 / 255.0, 0.2)
+                1
             };
-            let step = dt / time;
-            self.gg_core_alpha += (target - self.gg_core_alpha).clamp(-step, step);
+            match self.gg_effect {
+                0 => self.gg_core_alpha = 0.0,
+                1 => {}
+                st => {
+                    let (target, time) = if st == 3 {
+                        (1.0, 0.1)
+                    } else {
+                        (128.0 / 255.0, 0.2)
+                    };
+                    let step = dt / time;
+                    self.gg_core_alpha += (target - self.gg_core_alpha).clamp(-step, step);
+                }
+            }
         }
         let vm_prev = self.vm_prev;
         // the viewmodel sequence's animation events as `C_BaseViewModel::FireEvent`: the
@@ -5893,7 +5915,8 @@ impl App {
                     );
                     additive.push((m, v, i));
                 }
-                let (Some(end), true) = (held_pos, name.ends_with('t')) else {
+                // end caps and hold beams only in HOLDING (hidden in READY / CLOSED)
+                let (Some(end), true, 3) = (held_pos, name.ends_with('t'), self.gg_effect) else {
                     continue;
                 };
                 if let Some(m) = &g.gg_endcap {
@@ -8864,6 +8887,7 @@ fn main() -> Result<()> {
         claw_pose: 0.0,
         claw_at: Instant::now(),
         gg_core_alpha: 0.0,
+        gg_effect: 0,
         tool_predicted: None,
         cam_photo_at: None,
         cam_photo_pending: false,
