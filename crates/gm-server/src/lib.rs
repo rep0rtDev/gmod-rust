@@ -13149,6 +13149,13 @@ impl<'w> Server<'w> {
         friction: Option<f32>,
         elasticity: Option<f32>,
     ) -> bool {
+        // a player's friction scales his ground friction (movement.md 3.3 `entityFriction`)
+        if let Some(p) = self.players.get_mut(&id) {
+            if let Some(f) = friction {
+                p.state.entity_friction = f.max(0.0);
+            }
+            return true;
+        }
         let Some(body) = self.body_of(id) else {
             return false;
         };
@@ -23363,6 +23370,12 @@ impl<'w> Server<'w> {
                             (p.state.water_level == 1).then(|| gm_move::WATER_MATERIAL.to_owned()),
                         ));
                     }
+                }
+                // a lateral slam into a wall (movement.md 3.9) plays a landing step
+                if p.state.slam_volume > 0.0 {
+                    let step = p.steps.on_slam(p.state.slam_volume);
+                    p.state.slam_volume = 0.0;
+                    steps.push((*id, p.state.origin, step, None));
                 }
             }
         }

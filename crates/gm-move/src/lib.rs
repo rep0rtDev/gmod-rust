@@ -174,6 +174,13 @@ pub struct PlayerState {
     pub ducked_at_tick_start: bool,
     /// Surface friction multiplier; 1 on the ground, 0.25 after leaving it upwards.
     pub surface_friction: f32,
+    /// `Entity:SetFriction` of the player (GMod's `entityFriction` factor of the ground
+    /// friction, movement.md 3.3; 1 by default).
+    pub entity_friction: f32,
+    /// A lateral slam this tick (movement.md 3.9): the step volume to play (0.85 when the
+    /// horizontal speed dropped by more than 580 u/s against a wall, 1.0 beyond 1160), taken
+    /// by the server.
+    pub slam_volume: f32,
     pub move_type: MoveType,
     /// 0 dry, 1 feet, 2 waist, 3 eyes (the game's WaterLevel), from `check_water`.
     pub water_level: u8,
@@ -211,6 +218,8 @@ impl Default for PlayerState {
             boost_yaw: 0.0,
             ducked_at_tick_start: false,
             surface_friction: 1.0,
+            entity_friction: 1.0,
+            slam_volume: 0.0,
             move_type: MoveType::Walk,
             water_level: 0,
             ladder: 0,
@@ -237,6 +246,19 @@ pub const PUNCH_FALL_SPEED: f32 = 300.0;
 /// Spring that decays the view punch (Source SDK `DecayPunchAngle`: damping 9, constant 65).
 const PUNCH_DAMPING: f32 = 9.0;
 const PUNCH_SPRING: f32 = 65.0;
+
+/// TryPlayerMove's lateral slam (movement.md 3.9): the horizontal speed lost in one move
+/// against the planes; more than 580 u/s plays a 0.85 step, more than 1160 a full one.
+fn slam_volume(before: f32, after: f32) -> f32 {
+    let stop = before - after;
+    if stop > 1160.0 {
+        1.0
+    } else if stop > 580.0 {
+        0.85
+    } else {
+        0.0
+    }
+}
 
 /// One tick of the view punch spring: the angle moves by its velocity, the velocity is damped
 /// and pulled back by the angle; below the dead zone both reset.
@@ -410,6 +432,17 @@ impl<'a> Mover<'a> {
         skin: f32,
     ) -> (Trace, Option<u32>) {
         let (mins, maxs) = self.hull(st.ducked);
+        self.trace_ent_hull(start, end, skin, mins, maxs)
+    }
+
+    fn trace_ent_hull(
+        &self,
+        start: Vec3,
+        end: Vec3,
+        skin: f32,
+        mins: Vec3,
+        maxs: Vec3,
+    ) -> (Trace, Option<u32>) {
         let world = self
             .world
             .trace_box(start, end, mins, maxs, MASK_PLAYERSOLID);
@@ -520,7 +553,9 @@ impl<'a> Mover<'a> {
             // velocity of the hit tick, but the player stays on the ground and loses it
             st.velocity += Vec3::new(st.impulse.x, st.impulse.y, 0.0);
             st.impulse = Vec3::ZERO;
+            let before = st.velocity.truncate().length();
             self.walk_move(st, cmd, dt);
+            st.slam_volume = slam_volume(before, st.velocity.truncate().length());
             // the game's FullWalkMove ends with the second gravity half when the move left the
             // ground (measured `move_prop_setpos` tick 82: the plate slides out from under a
             // standing player, -4.5 on that tick)
@@ -532,7 +567,9 @@ impl<'a> Mover<'a> {
             self.start_gravity(st, dt);
             st.velocity += st.impulse;
             st.impulse = Vec3::ZERO;
+            let before = st.velocity.truncate().length();
             self.air_move(st, cmd, dt);
+            st.slam_volume = slam_volume(before, st.velocity.truncate().length());
             // measured: the air friction multiplier follows the vertical speed before the second half of gravity
             st.surface_friction = if st.velocity.z > 0.0 { 0.25 } else { 1.0 };
             // falling into the water keeps only the first half of the tick's gravity
@@ -779,7 +816,7 @@ impl<'a> Mover<'a> {
             return;
         }
         let control = speed.max(self.cfg.stop_speed);
-        let drop = control * self.cfg.friction * st.surface_friction * dt;
+        let drop = control * self.cfg.friction * st.surface_friction * st.entity_friction * dt;
         let new_speed = (speed - drop).max(0.0) / speed;
         st.velocity *= new_speed;
     }
@@ -835,13 +872,15 @@ impl<'a> Mover<'a> {
 
     /// Keep a walking player glued to the floor: up 2, then down a step, and take the
     /// floor hit if it moved us by more than half the coordinate resolution.
+    /// GMod's StayOnGround (movement.md 3.8): up a step, down two steps (the SDK does 2 u up
+    /// and one step down), snapping to a standable floor.
     fn stay_on_ground(&self, st: &mut PlayerState) {
-        let up = self.trace(st, st.origin, st.origin + Vec3::Z * 2.0);
+        let up = self.trace(st, st.origin, st.origin + Vec3::Z * self.cfg.step_size);
         let start = up.end;
         let down = self.trace(
             st,
             start,
-            Vec3::new(start.x, start.y, st.origin.z - self.cfg.step_size),
+            Vec3::new(start.x, start.y, st.origin.z - 2.0 * self.cfg.step_size),
         );
         if down.fraction > 0.0
             && down.fraction < 1.0
@@ -1236,6 +1275,15 @@ impl Footsteps {
         })
     }
 
+    /// A lateral slam into a wall (movement.md 3.9) plays like a landing at `volume`.
+    pub fn on_slam(&mut self, volume: f32) -> Step {
+        self.right = !self.right;
+        Step {
+            volume,
+            right: self.right,
+        }
+    }
+
     /// A jump plays a step at full volume on the jump tick and takes its turn in the alternation;
     /// landing plays nothing by itself.
     pub fn on_jump(&mut self) -> Step {
@@ -1248,7 +1296,9 @@ impl Footsteps {
 
     /// Landing step (`move_step_fall_*`): a fall of at least `FALL_SAFE_SPEED` (the one that
     /// hurts) lands at 1.0, one of more than half that at 0.85 (342 and 486 u/s), a slower one
-    /// (243 u/s, a standing jump) makes no sound. The timer is left alone.
+    /// (243 u/s, a standing jump) makes no sound. The timer is left alone: the recordings
+    /// step again right after landing (the SDK's 400 ms hold of `PlayerRoughLandingEffects`
+    /// does not show on srcds).
     pub fn on_land(&mut self, fall_speed: f32) -> Option<Step> {
         let volume = if fall_speed >= FALL_SAFE_SPEED {
             1.0
