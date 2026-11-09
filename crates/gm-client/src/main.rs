@@ -7390,19 +7390,22 @@ impl App {
         let ui_items = self.ui_items(o, camera.view_proj(aspect));
         let g = self.gfx.as_ref().unwrap();
         if bloom {
-            g.post.apply(&g.gpu, &view, g.world.tm_bloom);
+            g.post.apply(&g.gpu, &view, g.world.bloom_amount);
         }
         // the auto-exposure probe sees the scene only (Source measures the HDR scene
         // buffer before the HUD / menus are drawn on it)
         if g.world.hdr && self.frames.is_multiple_of(15) {
-            let bright =
+            let (bright, avg) =
                 frame_bright_pixels(&g.gpu, &frame.texture, g.config.width, g.config.height);
             let dt = self.exposure_at.elapsed().as_secs_f32().min(1.0);
             self.exposure_at = Instant::now();
             let g = self.gfx.as_mut().unwrap();
-            g.world.update_exposure(bright, dt);
+            g.world.update_exposure(bright, avg, dt);
             if std::env::var_os("GM_HDR_LOG").is_some() {
-                println!("hdr: bright {bright:.3} exposure {:.3}", g.world.exposure);
+                println!(
+                    "hdr: bright {bright:.3} avg {avg:.3} exposure {:.3}",
+                    g.world.exposure
+                );
             }
         }
         let g = self.gfx.as_ref().unwrap();
@@ -10384,25 +10387,42 @@ fn weapon_select_name(class: &str, vm: Option<&Viewmodel>) -> String {
     .to_string()
 }
 
-/// Brightness the brightest 2 % of the frame's pixels reach (linear, 0..1), sampled on a
-/// 16 px grid of the presented sRGB frame; feeds the HDR auto-exposure.
-fn frame_bright_pixels(gpu: &gm_render::Gpu, frame: &wgpu::Texture, w: u32, h: u32) -> f32 {
+/// The engine's 16-bucket luminance histogram of the frame (render.md §5, gap-report #148),
+/// sampled on a 16 px grid of the presented sRGB frame (linear 0..1): where the brightest 2 %
+/// of pixels start and the 50 % location, each interpolated inside its bucket. The game
+/// measures every frame; the probe runs every 15th frame here (readback cost).
+fn frame_bright_pixels(gpu: &gm_render::Gpu, frame: &wgpu::Texture, w: u32, h: u32) -> (f32, f32) {
     let Ok(px) = gpu.read_texture(frame, w, h) else {
-        return 0.0;
+        return (0.0, 0.0);
     };
-    let mut v: Vec<f32> = Vec::with_capacity(((w / 16 + 1) * (h / 16 + 1)) as usize);
+    const BUCKETS: usize = 16;
+    let mut hist = [0u32; BUCKETS];
+    let mut n = 0u32;
     for y in (0..h).step_by(16) {
         for x in (0..w).step_by(16) {
             let i = ((y * w + x) * 4) as usize;
-            let m = px[i].max(px[i + 1]).max(px[i + 2]) as f32 / 255.0;
-            v.push(m.powf(2.2));
+            let m = (px[i].max(px[i + 1]).max(px[i + 2]) as f32 / 255.0).powf(2.2);
+            hist[((m * BUCKETS as f32) as usize).min(BUCKETS - 1)] += 1;
+            n += 1;
         }
     }
-    if v.is_empty() {
-        return 0.0;
+    if n == 0 {
+        return (0.0, 0.0);
     }
-    v.sort_by(|a, b| a.total_cmp(b));
-    v[((v.len() - 1) as f32 * 0.98) as usize]
+    // the brightness below which `frac` of the pixels lie
+    let location = |frac: f32| -> f32 {
+        let want = frac * n as f32;
+        let mut acc = 0.0f32;
+        for (b, &c) in hist.iter().enumerate() {
+            let c = c as f32;
+            if acc + c >= want && c > 0.0 {
+                return (b as f32 + (want - acc) / c) / BUCKETS as f32;
+            }
+            acc += c;
+        }
+        1.0
+    };
+    (location(0.98), location(0.5))
 }
 
 /// `draw.RoundedBox( r, ... )`: the `gui/corner8` corners (the game's 8 px rounded corner

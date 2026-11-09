@@ -711,6 +711,9 @@ pub struct WorldRenderer {
     pub tm_rate: f32,
     /// The controller's `SetBloomScale` (bloom strength added in the post pass).
     pub tm_bloom: f32,
+    /// The bloom amount actually applied: blends toward `tm_bloom` at `mat_bloomamount_rate`
+    /// (0.05/s, render.md §5 M; gap-report #149).
+    pub bloom_amount: f32,
     /// The local player's `cl_weaponcolor`: `$selfillumtint` of materials with the
     /// PlayerWeaponColor proxy (set before the physgun's model loads).
     pub weapon_color: Vec3,
@@ -3296,6 +3299,7 @@ impl WorldRenderer {
             tm_max,
             tm_rate,
             tm_bloom,
+            bloom_amount: tm_bloom,
             pipeline,
             sky_pipeline,
             skypaint_pipeline,
@@ -4248,16 +4252,23 @@ impl WorldRenderer {
         Some(vp)
     }
 
-    /// Auto-exposure step from a frame probe: `bright` is the brightness (linear, 0..1 of
-    /// the display range) the brightest 2 % of pixels reach, which the tonemap aims at 60 %
-    /// (`mat_tonemap_percent_bright_pixels` / `mat_tonemap_percent_target`); the goal is
-    /// clamped to the controller's min / max and approached at its rate, three times faster
-    /// when going down (`mat_accelerate_adjust_exposure_down`).
-    pub fn update_exposure(&mut self, bright: f32, dt: f32) {
+    /// Auto-exposure step from a frame histogram (render.md §5, `mat_tonemap_algorithm 1`;
+    /// gap-report #148): `bright` is where the brightest 2 % of pixels start
+    /// (`mat_tonemap_percent_bright_pixels`), aimed at 60 % (`mat_tonemap_percent_target`);
+    /// `avg` is the 50 % location, kept at or above 3 % (`mat_tonemap_min_avglum`); the larger
+    /// scale wins, times the current scale, clamped to the controller's min / max and
+    /// approached at its rate, three times faster when going down
+    /// (`mat_accelerate_adjust_exposure_down`). Also blends the bloom amount (#149).
+    pub fn update_exposure(&mut self, bright: f32, avg: f32, dt: f32) {
         if !self.hdr || bright <= 0.0 || !bright.is_finite() || dt <= 0.0 {
             return;
         }
-        let goal = (self.exposure * 0.6 / bright).clamp(self.tm_min, self.tm_max);
+        let step = 0.05 * dt;
+        self.bloom_amount += (self.tm_bloom - self.bloom_amount).clamp(-step, step);
+        let scalar = (0.6 / bright.max(1e-4)).max(0.03 / avg.max(1e-4));
+        let goal = (self.exposure * scalar)
+            .max(0.001)
+            .clamp(self.tm_min, self.tm_max);
         let rate = if goal < self.exposure {
             self.tm_rate * 3.0
         } else {
