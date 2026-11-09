@@ -5122,6 +5122,7 @@ impl App {
             .find(|p| Some(p.id) == me)
             .filter(|p| p.held.is_some())
             .map(|p| p.held_pos);
+        let mut beams: Vec<(Vec3, Vec3, Vec3)> = Vec::new();
         if self.weapon == 0 && self.mouse.contains(&0) {
             let fwd = camera.forward();
             let right = fwd.cross(Vec3::Z).normalize_or_zero();
@@ -5155,6 +5156,26 @@ impl App {
             // `sprites/physbeama`, and 7 `sprites/physbeam` sprites of rand 1..16 u, alpha
             // rand 100..255, at the end
             if let Some(end) = held_pos {
+                beams.push((start, fwd, end));
+            }
+        }
+        // every other player's beam (physgun.md 10: drawn for all players): from beside their
+        // eye to the networked grab point (no world-model physgun attachment yet)
+        for p in &self.sim.client.world.players {
+            if Some(p.id) == me || p.held.is_none() || !p.alive {
+                continue;
+            }
+            let (sp, cp) = p.view_angles.x.to_radians().sin_cos();
+            let (sy, cy) = p.view_angles.y.to_radians().sin_cos();
+            let f = Vec3::new(cp * cy, cp * sy, -sp);
+            let r = Vec3::new(sy, -cy, 0.0);
+            let eye = p.origin + Vec3::Z * if p.ducked { 28.0 } else { 64.0 };
+            beams.push((eye + r * 8.0 - Vec3::Z * 8.0 + f * 16.0, f, p.held_pos));
+        }
+        for (start, fwd, end) in beams {
+            let wc = gm_render::world::DEFAULT_WEAPON_COLOR.clamp(Vec3::ZERO, Vec3::ONE);
+            let color = wc.to_array();
+            {
                 let len = (end - start).length();
                 if len > 1.0 {
                     dlights.push(gm_render::world::DLight {
