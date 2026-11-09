@@ -898,6 +898,11 @@ impl Inventory {
                 self.next_primary = timer;
                 self.soonest_primary = gate;
                 self.pistol_relaxed = false;
+            } else if pressed && w.clip1 > 0 && self.ammo.get(w.ammo1).copied().unwrap_or(0) == 0 {
+                // every clip weapon out of ammo altogether: the base DryFire
+                // (ACT_VM_DRYFIRE, Weapon_X.Empty, next attack +0.2 s; hl2weapons.md, #99)
+                vm_event(&mut self.vm_act, &mut self.vm_serial, VmAct::Dry);
+                self.next_primary = 0.2;
             } else if (f.reload.is_some() || f.shells.is_some())
                 && self.ammo.get(w.ammo1).copied().unwrap_or(0) > 0
             {

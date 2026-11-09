@@ -959,6 +959,10 @@ fn weapon_sound(act: u8, active: u8) -> Option<String> {
         (1, _) => "Reload",
         (4, _) => "Reload",
         (2, _) | (5, _) => "Special1",
+        // the 357 / AR2 / RPG scripts borrow their empty click (hl2weapons.md, #99)
+        (3, "Weapon_357") => return Some("Weapon_Pistol.Empty".into()),
+        (3, "Weapon_AR2") => return Some("Weapon_IRifle.Empty".into()),
+        (3, "Weapon_RPG") => return Some("Weapon_SMG1.Empty".into()),
         (3, _) => "Empty",
         _ => return None,
     };
@@ -3852,6 +3856,10 @@ impl App {
     fn select_weapon(&mut self, weapon: u8) {
         let Some(vm) = self.vm_of(weapon) else { return };
         if self.weapon != weapon {
+            // gmod_camera `Equip`: the zoom starts from fov_desired (toolgun.md F38, #96)
+            if weapon == CAMERA_SLOT && self.weapon != CAMERA_SLOT {
+                self.cam_zoom = self.settings.fov_desired;
+            }
             self.weapon = weapon;
             self.vm_anim = Some((vm.draw, Instant::now()));
         }
@@ -4080,7 +4088,9 @@ impl App {
     }
 
     fn cmd(&self) -> NetCmd {
-        let k = |a: &str| self.down(a);
+        // gmod_camera `FreezeMovement` (toolgun.md F38, #96): no walking while +attack2 zooms
+        let frozen = self.weapon == CAMERA_SLOT && self.down("+attack2");
+        let k = |a: &str| !frozen && self.down(a);
         let mut b = 0;
         let run = k("+speed");
         let speed = if run { 400.0 } else { 200.0 };
@@ -7214,10 +7224,13 @@ impl App {
             // sandbox HUD: health and suit boxes at the bottom left; an element a script's
             // `HUDShouldDraw` answered false for this frame is skipped
             let hidden = |name: &str| {
-                self.sim
-                    .hud_draws
-                    .iter()
-                    .any(|d| matches!(d, gm_script::DrawCmd::HideHud { name: n } if n == name))
+                // gmod_camera's HUDShouldDraw: only the weapon selection and the chat (#96)
+                (self.weapon == CAMERA_SLOT && name != "CHudWeaponSelection" && name != "CHudChat")
+                    || self
+                        .sim
+                        .hud_draws
+                        .iter()
+                        .any(|d| matches!(d, gm_script::DrawCmd::HideHud { name: n } if n == name))
             };
             let me = self.sim.client.player_id;
             if let Some(p) = self
