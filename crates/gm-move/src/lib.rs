@@ -99,7 +99,7 @@ impl Default for MoveConfig {
             slow_walk_speed: 100.0,
             crouched_walk_speed: 0.3,
             duck_time: 0.4,
-            unduck_time: 0.1,
+            unduck_time: 0.2,
             hull_half: 16.0,
             stand_height: 72.0,
             duck_height: 36.0,
@@ -253,6 +253,31 @@ pub fn decay_punch(st: &mut PlayerState, dt: f32) {
         st.punch = Vec3::ZERO;
         st.punch_vel = Vec3::ZERO;
     }
+}
+
+/// `SimpleSpline` of the duck transition: 0 standing, 1 ducked. While ducking it rises over
+/// `TIME_TO_DUCK` (0.4 s), while unducking it falls over `TIME_TO_UNDUCK` (0.2 s).
+pub fn duck_fraction(cfg: &MoveConfig, st: &PlayerState) -> f32 {
+    let spline = |v: f32| {
+        let v = v.clamp(0.0, 1.0);
+        v * v * (3.0 - 2.0 * v)
+    };
+    if st.unducking {
+        spline(1.0 - st.duck_timer / cfg.unduck_time)
+    } else if st.ducking && !st.ducked {
+        spline(st.duck_timer / cfg.duck_time)
+    } else if st.ducked {
+        1.0
+    } else {
+        0.0
+    }
+}
+
+/// `SetDuckedEyeOffset`: the eye height above the origin, `VEC_VIEW` (64) to
+/// `VEC_DUCK_VIEW` (28) by the duck fraction.
+pub fn eye_height(cfg: &MoveConfig, st: &PlayerState) -> f32 {
+    let f = duck_fraction(cfg, st);
+    cfg.stand_eye * (1.0 - f) + cfg.duck_eye * f
 }
 
 /// View roll from the sideways speed (Source `CalcRoll`): `roll_angle` at `roll_speed` and
@@ -1044,9 +1069,16 @@ impl<'a> Mover<'a> {
             }
         } else if st.ducked || st.ducking {
             if st.ducking && !st.ducked {
-                // released before finishing: stand straight away
+                // released before finishing: the eye comes back up along the unduck curve
+                // from where it got to (`m_flDucktime` is remapped by the ducked fraction)
+                let frac = (st.duck_timer / self.cfg.duck_time).clamp(0.0, 1.0);
                 st.ducking = false;
-                st.duck_timer = 0.0;
+                st.unducking = true;
+                st.duck_timer = self.cfg.unduck_time * (1.0 - frac);
+                if !st.on_ground || st.duck_timer >= self.cfg.unduck_time {
+                    st.unducking = false;
+                    st.duck_timer = 0.0;
+                }
                 return;
             }
             if !st.unducking {
@@ -2140,6 +2172,48 @@ mod tests {
             "{}",
             st.origin.z
         );
+    }
+
+    #[test]
+    fn duck_eye_follows_the_spline_and_release_continues_it() {
+        let w = flat_world();
+        let cfg = MoveConfig::default();
+        let m = Mover::new(cfg, &w);
+        let mut st = PlayerState {
+            origin: Vec3::new(100.0, 0.0, 1.0),
+            ..Default::default()
+        };
+        let duck = UserCmd {
+            buttons: buttons::DUCK,
+            ..Default::default()
+        };
+        m.tick(&mut st, &UserCmd::default());
+        assert_eq!(eye_height(&cfg, &st), cfg.stand_eye);
+        // half of TIME_TO_DUCK (0.4 s): SimpleSpline(0.5) = 0.5 -> halfway down
+        let ticks = (0.2 / cfg.tick_interval).round() as usize;
+        for _ in 0..ticks {
+            m.tick(&mut st, &duck);
+        }
+        let mid = eye_height(&cfg, &st);
+        assert!(
+            (mid - (cfg.stand_eye + cfg.duck_eye) * 0.5).abs() < 2.0,
+            "{mid}"
+        );
+        // released halfway: the eye keeps going up from there, no snap
+        m.tick(&mut st, &UserCmd::default());
+        let after = eye_height(&cfg, &st);
+        assert!(
+            after > mid && after < cfg.stand_eye - 1.0,
+            "{mid} -> {after}"
+        );
+        for _ in 0..ticks {
+            m.tick(&mut st, &UserCmd::default());
+        }
+        assert_eq!(eye_height(&cfg, &st), cfg.stand_eye);
+        for _ in 0..40 {
+            m.tick(&mut st, &duck);
+        }
+        assert_eq!(eye_height(&cfg, &st), cfg.duck_eye);
     }
 
     #[test]

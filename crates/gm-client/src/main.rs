@@ -4574,7 +4574,14 @@ impl App {
             .sim
             .prev_origin
             .lerp(self.sim.origin, alpha.clamp(0.0, 1.0));
-        let eye = if self.sim.ducked { 28.0 } else { 64.0 };
+        // the eye follows the duck spline of the predicted state (`SetDuckedEyeOffset`)
+        let eye = self
+            .sim
+            .pred
+            .as_ref()
+            .map_or(if self.sim.ducked { 28.0 } else { 64.0 }, |p| {
+                gm_move::eye_height(&gm_move::MoveConfig::default(), &p.state)
+            });
         // the view punch (landing roll, `move_roll_*`) and the `sv_rollangle` strafe roll
         let punch = self.sim.pred.as_ref().map_or(Vec3::ZERO, |p| {
             p.state.punch
