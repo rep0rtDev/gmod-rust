@@ -11532,6 +11532,52 @@ impl<'w> Server<'w> {
             }
         }
     }
+    /// Breakable constraints (vphysics.md / props.md #63, #66, gap-report #42 / #46): a weld,
+    /// axis or ballsocket with a `forcelimit` / `torquelimit` (0 = unbreakable) breaks when the
+    /// solver's force / torque on it over the step exceeds the limit. The limits are the tools'
+    /// pounds (x0.4536 kg, x9.81 for newtons; torque x0.0254 for inch -> metre). Broken
+    /// constraints are removed like the game's OnBreak.
+    fn break_constraints(&mut self) {
+        let dt = self.physics.tick_interval.max(1e-4);
+        let mut broken = Vec::new();
+        for c in self.sandbox.constraints() {
+            let (fl, tl) = match &c.kind {
+                ConstraintKind::Weld { forcelimit, .. } => (*forcelimit, 0.0),
+                ConstraintKind::Axis {
+                    forcelimit,
+                    torquelimit,
+                    ..
+                }
+                | ConstraintKind::Ballsocket {
+                    forcelimit,
+                    torquelimit,
+                    ..
+                } => (*forcelimit, *torquelimit),
+                _ => (0.0, 0.0),
+            };
+            if fl <= 0.0 && tl <= 0.0 {
+                continue;
+            }
+            let Some(h) = self.constraints.get(&c.id) else {
+                continue;
+            };
+            let (impulse, ang) = self.physics.constraint_impulse(*h);
+            let force = impulse / dt;
+            let torque = ang / dt;
+            if (fl > 0.0 && force > fl * 0.4536 * 9.81)
+                || (tl > 0.0 && torque > tl * 0.4536 * 9.81 * 0.0254)
+            {
+                broken.push(c.id);
+            }
+        }
+        for id in broken {
+            if let Some(h) = self.constraints.remove(&id) {
+                self.physics.remove_constraint(h);
+            }
+            self.sandbox.break_constraint(id);
+        }
+    }
+
     /// `Weapon_PhysCannon.HoldSound` (gravgun.md 7.5): a loop on the carrying player from pickup
     /// (ramping in over 0.5 s) to drop / launch (fading out over 1 s).
     fn cannon_hold_loop(&mut self, player: u32, on: bool) {
@@ -23150,6 +23196,7 @@ impl<'w> Server<'w> {
             self.physics.step();
             self.physics.tick_interval = base;
         }
+        self.break_constraints();
         self.follow_parents();
         self.impact_sounds();
         let contacts = self.physics.take_contacts();

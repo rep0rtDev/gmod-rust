@@ -2754,6 +2754,17 @@ impl Sandbox {
 
     /// `constraint.RemoveAll(ent)`: every constraint in the entity's table goes (a motor's
     /// phys_torque sits there too and takes its Axis along); returns how many went.
+    /// A constraint broken by its force / torque limit (the game removes the entity).
+    pub fn break_constraint(&mut self, id: u32) -> bool {
+        let before = self.constraints.len();
+        self.constraints.retain(|c| c.id != id);
+        let removed = self.constraints.len() != before;
+        if removed {
+            self.drop_parts();
+        }
+        removed
+    }
+
     pub fn remove_all_constraints(&mut self, ent: u32) -> usize {
         let motors: Vec<u32> = self
             .devices

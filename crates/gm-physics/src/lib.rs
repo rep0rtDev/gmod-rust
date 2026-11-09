@@ -50,6 +50,7 @@ extern "C" {
         max_d: f32,
     ) -> *mut std::ffi::c_void;
     fn gmp_remove_constraint(system: *mut JPC_PhysicsSystem, constraint: *mut std::ffi::c_void);
+    fn gmp_constraint_lambda(constraint: *mut std::ffi::c_void, torque: *mut f32) -> f32;
     fn gmp_set_mass(system: *mut JPC_PhysicsSystem, id: u32, mass: f32);
     fn gmp_body_mass(system: *const JPC_PhysicsSystem, id: u32) -> f32;
     fn gmp_set_damping(system: *mut JPC_PhysicsSystem, id: u32, lin: f32, ang: f32);
@@ -1573,6 +1574,15 @@ impl World {
         self.release(body);
         self.frozen.remove(&body.0);
         unsafe { gmp_remove_body(self.system.as_raw(), body.0) }
+    }
+
+    /// The solver's accumulated impulse on a constraint over the last step: linear (N s) and
+    /// angular (N m s) magnitudes; divided by the step they are the force / torque the
+    /// game's breakable constraints test against `forcelimit` / `torquelimit`.
+    pub fn constraint_impulse(&self, c: ConstraintHandle) -> (f32, f32) {
+        let mut torque = 0.0f32;
+        let force = unsafe { gmp_constraint_lambda(c.0, &mut torque) };
+        (force, torque)
     }
 
     pub fn remove_constraint(&mut self, c: ConstraintHandle) {

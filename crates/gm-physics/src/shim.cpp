@@ -325,6 +325,24 @@ void gmp_remove_body(void *system, unsigned int id) {
 	sys->GetBodyInterface().DestroyBody(bid);
 }
 
+// the solver's accumulated impulse on a constraint over the last step: |linear| (N s) and
+// |angular| (N m s), 0 for types without one (a breakable constraint's forcelimit / torquelimit)
+float gmp_constraint_lambda(void *constraint, float *torque) {
+	auto *c = reinterpret_cast<JPH::Constraint *>(constraint);
+	*torque = 0.0f;
+	if (auto *s = dynamic_cast<JPH::SixDOFConstraint *>(c)) {
+		*torque = s->GetTotalLambdaRotation().Length();
+		return s->GetTotalLambdaPosition().Length();
+	}
+	if (auto *h = dynamic_cast<JPH::HingeConstraint *>(c)) {
+		*torque = h->GetTotalLambdaRotation().Length();
+		return h->GetTotalLambdaPosition().Length();
+	}
+	if (auto *p = dynamic_cast<JPH::PointConstraint *>(c)) return p->GetTotalLambdaPosition().Length();
+	if (auto *d = dynamic_cast<JPH::DistanceConstraint *>(c)) return fabsf(d->GetTotalLambdaPosition());
+	return 0.0f;
+}
+
 void gmp_remove_constraint(void *system, void *constraint) {
 	auto it = ropes_by_system.find(system);
 	if (it != ropes_by_system.end())
