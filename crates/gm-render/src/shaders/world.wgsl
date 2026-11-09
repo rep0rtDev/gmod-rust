@@ -65,7 +65,20 @@ fn flashlight_shadow(slot: i32, world: vec3<f32>) -> f32 {
     if any(uv < vec2<f32>(0.0)) || any(uv > vec2<f32>(1.0)) || ndc.z >= 1.0 {
         return 1.0;
     }
-    return textureSampleCompareLevel(flashlight_depth, flashlight_sampler, uv, slot, ndc.z - 0.0005);
+    // shadowed texels keep 0.35 of the light (render.md 3.4, gap-report #138)
+    let lit = textureSampleCompareLevel(flashlight_depth, flashlight_sampler, uv, slot, ndc.z - 0.0005);
+    return 0.35 + 0.65 * lit;
+}
+// The projected flashlight's falloff (render.md 3.4, gap-report #136 / #140): Source's
+// 1 / (constant + linear * d + quadratic * d^2) with 0 / 100 / 0, i.e. 1 / d normalised to
+// full at 100 u, cut off at the light's far plane (its radius)
+fn flashlight_falloff(d: f32, far: f32) -> f32 {
+    if d >= far {
+        return 0.0;
+    }
+    let k = 100.0 / max(d, 100.0);
+    // fade into the far plane over its last quarter so the cutoff has no hard edge
+    return k * clamp((far - d) / (far * 0.25), 0.0, 1.0);
 }
 // Entity shadows (render.md 11): the dynamic models' depth from the light_environment
 // direction in the last layer; a world point is shaded when a caster lies between it and
@@ -226,8 +239,9 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
             let sd = camera.dlight_dir[i];
             let slot = i32(camera.shadow_slot[i / 4u][i % 4u]);
             if slot >= 0 {
-                // a flashlight: the projected texture gives the cone and its edge
-                k *= flashlight_mask(slot, in.world) * flashlight_shadow(slot, in.world);
+                // a flashlight: the projected texture gives the cone and its edge, the
+                // projected-light law its falloff (#136)
+                k = flashlight_falloff(d, lp.w) * flashlight_mask(slot, in.world) * flashlight_shadow(slot, in.world);
             } else if sd.w > 0.0 {
                 // spot: full inside the cone, soft 0.08 (cosine) edge
                 let c = dot(-dv / max(d, 1e-3), sd.xyz);
@@ -329,7 +343,8 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
                 let sd = camera.dlight_dir[i];
                 let slot = i32(camera.shadow_slot[i / 4u][i % 4u]);
                 if slot >= 0 {
-                    k *= flashlight_mask(slot, in.world) * flashlight_shadow(slot, in.world);
+                    // r_flashlightmodels: the same projected law on models (#140)
+                    k = flashlight_falloff(d, lp.w) * flashlight_mask(slot, in.world) * flashlight_shadow(slot, in.world);
                 } else if sd.w > 0.0 {
                     k *= smoothstep(sd.w, min(sd.w + 0.08, 1.0), dot(-ld, sd.xyz));
                 }

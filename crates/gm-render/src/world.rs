@@ -383,7 +383,8 @@ pub const MAX_DLIGHTS: usize = 8;
 /// `(1 - d / radius)^2` times the surface's facing, added to the baked light.
 /// Side of a flashlight's shadow map, and how many flashlights (the local player's first)
 /// get one.
-const SHADOW_SIZE: u32 = 2048;
+/// `r_flashlightdepthres` 1024 (render.md 3.4, gap-report #138).
+const SHADOW_SIZE: u32 = 1024;
 pub const SHADOW_LAYERS: usize = 4;
 /// The last depth layer holds the entity shadows: the dynamic models seen from the
 /// `light_environment` direction (the client shadow manager's render-to-texture shadows,
