@@ -1067,7 +1067,7 @@ impl<'a> Mover<'a> {
                     self.finish_duck(st);
                 }
             }
-        } else if st.ducked || st.ducking {
+        } else if st.ducked || st.ducking || st.unducking {
             if st.ducking && !st.ducked {
                 // released before finishing: the eye comes back up along the unduck curve
                 // from where it got to (`m_flDucktime` is remapped by the ducked fraction)
@@ -2189,17 +2189,20 @@ mod tests {
         };
         m.tick(&mut st, &UserCmd::default());
         assert_eq!(eye_height(&cfg, &st), cfg.stand_eye);
-        // half of TIME_TO_DUCK (0.4 s): SimpleSpline(0.5) = 0.5 -> halfway down
+        // about half of TIME_TO_DUCK (0.4 s); the press tick itself adds no time, as in the
+        // game, so the fraction is SimpleSpline((ticks - 1) * dt / 0.4)
         let ticks = (0.2 / cfg.tick_interval).round() as usize;
         for _ in 0..ticks {
             m.tick(&mut st, &duck);
         }
+        let v = (ticks - 1) as f32 * cfg.tick_interval / cfg.duck_time;
+        let want = cfg.stand_eye + (cfg.duck_eye - cfg.stand_eye) * (v * v * (3.0 - 2.0 * v));
         let mid = eye_height(&cfg, &st);
-        assert!(
-            (mid - (cfg.stand_eye + cfg.duck_eye) * 0.5).abs() < 2.0,
-            "{mid}"
-        );
-        // released halfway: the eye keeps going up from there, no snap
+        assert!((mid - want).abs() < 0.01, "{mid} vs {want}");
+        // released halfway: the release tick remaps the timer onto the unduck curve at the
+        // same height, the next tick goes up from there, no snap
+        m.tick(&mut st, &UserCmd::default());
+        assert!((eye_height(&cfg, &st) - mid).abs() < 0.01);
         m.tick(&mut st, &UserCmd::default());
         let after = eye_height(&cfg, &st);
         assert!(
