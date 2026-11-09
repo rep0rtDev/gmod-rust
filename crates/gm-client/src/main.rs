@@ -18,7 +18,7 @@ mod settings;
 mod ugc;
 mod voice;
 
-use std::collections::{BTreeMap, BTreeSet, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -256,6 +256,12 @@ struct Gfx {
     fx_explo_embers: Vec<wgpu::BindGroup>,
     fx_explo_fire: Option<wgpu::BindGroup>,
     fx_explo_flecks: Vec<wgpu::BindGroup>,
+    /// Impact effects (clientfx.md 3): `fleck_wood1/2`, `particle_noisesphere` dust,
+    /// `yellowflare` spark flare; `muzzleflash1..4` for the 8-sprite muzzle flash (2.1).
+    fx_wood_flecks: Vec<wgpu::BindGroup>,
+    fx_noise: Option<wgpu::BindGroup>,
+    fx_flare: Option<wgpu::BindGroup>,
+    fx_muzzles: Vec<wgpu::BindGroup>,
     fx_spark: Option<wgpu::BindGroup>,
     fx_decal_mats: std::collections::HashMap<String, Option<gm_render::world::Decal>>,
     /// `sprites/redglow1`: the RPG's laser dot.
@@ -1182,6 +1188,12 @@ struct App {
     fx_sound_queue: Vec<(Instant, String)>,
     /// Own muzzle flash shows until then.
     fx_muzzle_until: Option<Instant>,
+    /// The own muzzle flash's 8 sprites (position, half-size, roll, material, born), drawn in
+    /// the viewmodel pass; `fx_muzzle_spawned` is the `fx_muzzle_until` they were made for.
+    fx_vm_muzzle: Vec<(Vec3, f32, f32, usize, Instant)>,
+    fx_muzzle_spawned: Option<Instant>,
+    /// Surface property -> game material letter (`scripts/surfaceproperties*.txt`).
+    gamematerials: HashMap<String, char>,
     tool_screen: ToolScreen,
     /// The server was told our starting weapon once we were in the world.
     weapon_synced: bool,
@@ -1478,6 +1490,17 @@ impl App {
             .filter_map(|m| world.sprite_material(&gpu, &self.mount, m))
             .collect();
         let fx_spark = world.sprite_material(&gpu, &self.mount, "effects/spark");
+        let fx_wood_flecks = ["effects/fleck_wood1", "effects/fleck_wood2"]
+            .iter()
+            .filter_map(|m| world.sprite_material(&gpu, &self.mount, m))
+            .collect();
+        let fx_noise = world.sprite_material(&gpu, &self.mount, "particle/particle_noisesphere");
+        let fx_flare = world.sprite_material(&gpu, &self.mount, "effects/yellowflare");
+        let fx_muzzles = (1..=4)
+            .filter_map(|i| {
+                world.sprite_material(&gpu, &self.mount, &format!("effects/muzzleflash{i}"))
+            })
+            .collect();
         let fx_laserdot = world.sprite_material(&gpu, &self.mount, "sprites/redglow1");
         let fx_ball = world.sprite_material(&gpu, &self.mount, "sprites/sent_ball");
         let fx_sun = world
@@ -1536,6 +1559,10 @@ impl App {
             fx_explo_embers,
             fx_explo_fire,
             fx_explo_flecks,
+            fx_wood_flecks,
+            fx_noise,
+            fx_flare,
+            fx_muzzles,
             fx_spark,
             fx_decal_mats: Default::default(),
             fx_laserdot,
@@ -4170,10 +4197,45 @@ impl App {
                         }
                         self.fx_decals
                             .push_back((pos, normal, impact_decal(&surface, pos), now));
-                        self.fx_bursts.push((pos + normal * 1.5, 5.0, now, false));
+                        self.spawn_impact(pos, normal, &surface, now);
                     }
                     gm_net::msg::EffectEvent::Tracer { player, end } => {
                         self.fx_tracers.push((player, end, now));
+                        // `FX_MuzzleEffect` for every other shooter (clientfx.md 2.1): the
+                        // weapon's world model has no muzzle attachment yet, so from beside
+                        // their eye along the shot
+                        let me = self.sim.client.player_id;
+                        let shooter = self
+                            .sim
+                            .client
+                            .world
+                            .players
+                            .iter()
+                            .find(|p| p.id == player && Some(p.id) != me)
+                            .map(|p| p.origin + Vec3::Z * 60.0);
+                        if let Some(start) = shooter {
+                            let fwd = (end - start).normalize_or_zero();
+                            let right = fwd.cross(Vec3::Z).normalize_or_zero();
+                            let muzzle = start + fwd * 16.0 + right * 6.0 - Vec3::Z * 4.0;
+                            for (pos, size, roll, variant) in
+                                muzzle_sprites(&mut self.fx_seed, muzzle, fwd)
+                            {
+                                self.fx_sprites.push(FxSprite {
+                                    kind: FxKind::Muzzle,
+                                    variant,
+                                    pos,
+                                    vel: Vec3::ZERO,
+                                    born: now,
+                                    life: 0.1,
+                                    size0: size,
+                                    size1: size,
+                                    color: [1.0, 1.0, 1.0],
+                                    roll,
+                                    roll_d: 0.0,
+                                    alpha: 1.0,
+                                });
+                            }
+                        }
                     }
                     // the blast / beam at the gun are drawn from `fx_cannon`; `FX_GaussExplosion`
                     // at the punt point stands in as a spark burst
@@ -4377,8 +4439,7 @@ impl App {
                         if let Some(e) = self.sim.client.world.entities.get(&ent) {
                             let rot = gm_render::props::angle_matrix(e.angles.to_array());
                             let pos = e.pos + rot * lpos;
-                            self.fx_bursts
-                                .push((pos + rot * lnormal * 1.5, 5.0, now, false));
+                            self.spawn_impact(pos, rot * lnormal, &surface, now);
                         }
                         if self.fx_prop_decals.len() >= 256 {
                             self.fx_prop_decals.pop_front();
@@ -5762,12 +5823,21 @@ impl App {
             }
             self.fx_tracers = keep;
             if self.fx_muzzle_until.is_some_and(|t| now < t) {
-                // the sprite is drawn in the viewmodel pass: the gun covers the world pass
+                // the sprites are drawn in the viewmodel pass: the gun covers the world pass
                 vm_flash = Some(own_muzzle);
+                if self.fx_muzzle_spawned != self.fx_muzzle_until {
+                    self.fx_muzzle_spawned = self.fx_muzzle_until;
+                    for (pos, size, roll, variant) in
+                        muzzle_sprites(&mut self.fx_seed, own_muzzle, fwd)
+                    {
+                        self.fx_vm_muzzle.push((pos, size, roll, variant, now));
+                    }
+                }
+                // the muzzle event's entity light: radius randint(32,64), (255,192,64), 0.05 s
                 dlights.push(gm_render::world::DLight {
                     pos: own_muzzle,
-                    radius: 100.0,
-                    color: Vec3::new(1.0, 0.7, 0.4),
+                    radius: 48.0,
+                    color: Vec3::new(1.0, 0.75, 0.25),
                     ..Default::default()
                 });
             }
@@ -5886,11 +5956,32 @@ impl App {
                 let ramp = 1.0 - t;
                 let size = (sp.size0 + (sp.size1 - sp.size0) * t) * 2.0;
                 let c = sp.color;
+                if sp.kind == FxKind::Spark {
+                    if let Some(m) = &g.fx_spark {
+                        let tail = sp.pos - sp.vel * sp.size1;
+                        let (v, i) = g.world.beam_strip(
+                            &[tail, sp.pos],
+                            sp.size0,
+                            [1.0, 1.0, 1.0],
+                            camera.position,
+                            0.0,
+                            1.0 / 16.0,
+                        );
+                        additive.push((m, v, i));
+                    }
+                    continue;
+                }
                 let (m, a, add) = match sp.kind {
                     FxKind::Smoke => (g.fx_explo_smoke.as_ref(), ramp * ramp, false),
                     FxKind::Ember => (g.fx_explo_embers.get(sp.variant), ramp * ramp, true),
                     FxKind::FireCloud => (g.fx_explo_fire.as_ref(), ramp * ramp, true),
                     FxKind::Fleck => (g.fx_explo_flecks.get(sp.variant), ramp, false),
+                    FxKind::WoodFleck => (g.fx_wood_flecks.get(sp.variant), ramp, false),
+                    FxKind::Dust => (g.fx_explo_smoke.as_ref(), ramp * sp.alpha, false),
+                    FxKind::DustNoise => (g.fx_noise.as_ref(), ramp, false),
+                    FxKind::Flare => (g.fx_flare.as_ref(), ramp, true),
+                    FxKind::Muzzle => (g.fx_muzzles.get(sp.variant), 0.5 + 0.5 * ramp, true),
+                    FxKind::Spark => unreachable!(),
                 };
                 if let Some(m) = m {
                     let (v, i) = g.world.sprite_quad_var(
@@ -6152,14 +6243,33 @@ impl App {
                     ..target
                 };
                 g.world.draw_models(&g.gpu, &vm_camera, &target, &vm_items);
-                if let (Some(pos), Some(m)) = (vm_flash, &g.fx_muzzle) {
-                    let (v, i) = g.world.sprite_quad(pos, 12.0, [1.0, 0.85, 0.6], &vm_camera);
-                    let target = ModelTarget {
-                        clear_depth: false,
-                        ..target
-                    };
-                    g.world
-                        .draw_additive(&g.gpu, &vm_camera, &target, &[(m, v, i)]);
+                self.fx_vm_muzzle
+                    .retain(|(_, _, _, _, born)| born.elapsed().as_secs_f32() < 0.1);
+                if vm_flash.is_some() || !self.fx_vm_muzzle.is_empty() {
+                    // 8 sprites along the barrel, white, alpha 255 -> 128 over 0.1 s
+                    let mut quads = Vec::new();
+                    for &(pos, size, roll, variant, born) in &self.fx_vm_muzzle {
+                        let Some(m) = g.fx_muzzles.get(variant) else {
+                            continue;
+                        };
+                        let a = 1.0 - 0.5 * (born.elapsed().as_secs_f32() / 0.1).min(1.0);
+                        let (v, i) = g.world.sprite_quad_var(
+                            pos,
+                            size * 2.0,
+                            [a, a, a, 0.0],
+                            roll,
+                            None,
+                            &vm_camera,
+                        );
+                        quads.push((m, v, i));
+                    }
+                    if !quads.is_empty() {
+                        let target = ModelTarget {
+                            clear_depth: false,
+                            ..target
+                        };
+                        g.world.draw_additive(&g.gpu, &vm_camera, &target, &quads);
+                    }
                 }
             }
         }
@@ -8229,6 +8339,7 @@ fn main() -> Result<()> {
     for f in ["valve", "gameui", "garrysmod"] {
         settings::load_tokens(&mount, &format!("resource/{f}_english.txt"), &mut gameui);
     }
+    let gamematerials = load_gamematerials(&mount);
     let mut app = App {
         notices: std::cell::RefCell::new(Notices::default()),
         wsel: None,
@@ -8282,6 +8393,9 @@ fn main() -> Result<()> {
         fx_seed: 0x9e37_79b9,
         fx_sound_queue: Vec::new(),
         fx_muzzle_until: None,
+        fx_vm_muzzle: Vec::new(),
+        fx_muzzle_spawned: None,
+        gamematerials,
         tool_screen: ToolScreen::default(),
         weapon_synced: false,
         air_since: Default::default(),
@@ -9402,6 +9516,206 @@ impl App {
     /// `CreateCore` (4 big + 8 near smoke puffs, a ring of 8 low puffs, 16 embers, 16 fire
     /// clouds) and `CreateDebris` (16..32 cement flecks). No fireball sprite and no dynamic
     /// light: the 2013 branch draws neither.
+    /// The `Impact` effect's particles (clientfx.md 3.2-3.5, the game's legacy path): by the
+    /// surface's game material letter - C/T concrete flecks + dust, W wood flecks + dust,
+    /// L dust only, D/N/U/J dust impact, M/V/P metal sparks + flare, anything else nothing.
+    /// The game has no impact flash sprite.
+    fn spawn_impact(&mut self, pos: Vec3, normal: Vec3, surface: &str, now: Instant) {
+        let letter = self
+            .gamematerials
+            .get(&surface.to_ascii_lowercase())
+            .copied()
+            .unwrap_or_else(|| gamematerial_guess(surface));
+        let eye = {
+            let me = self.sim.client.player_id;
+            self.sim
+                .client
+                .world
+                .players
+                .iter()
+                .find(|p| Some(p.id) == me)
+                .map_or(pos - normal, |p| p.origin + Vec3::Z * 64.0)
+        };
+        let shot_dir = (pos - eye).normalize_or_zero();
+        let seed = &mut self.fx_seed;
+        let lin = |c: Vec3| c.powf(2.2).to_array();
+        let randint = |seed: &mut u32, a: f32, b: f32| particles::range(seed, a, b + 1.0).floor();
+        let surface_color = match letter {
+            'W' => Vec3::new(0.55, 0.42, 0.28),
+            'D' | 'N' | 'U' | 'J' => Vec3::new(0.45, 0.36, 0.26),
+            _ => Vec3::splat(0.5),
+        };
+        let mut out = Vec::new();
+        // dust puffs shared by the fleck and dust effects: `nId` scales speed and size
+        let dust_puffs = |seed: &mut u32, out: &mut Vec<FxSprite>, n: usize| {
+            for id in 0..n {
+                let dir = (rand_vec(seed, 0.2) + normal * particles::range(seed, 1.0, 6.0))
+                    .normalize_or_zero();
+                let speed = particles::range(seed, 250.0, 500.0) * id as f32;
+                let c = (surface_color * particles::range(seed, 0.75, 1.25))
+                    .clamp(Vec3::ZERO, Vec3::ONE);
+                let size = randint(seed, 3.0, 4.0) * (id as f32 + 1.0);
+                out.push(FxSprite {
+                    kind: FxKind::Dust,
+                    variant: 0,
+                    pos,
+                    vel: dir * speed,
+                    born: now,
+                    life: particles::range(seed, 0.5, 1.0),
+                    size0: size,
+                    size1: size * 4.0,
+                    color: lin(c),
+                    roll: particles::range(seed, 0.0, std::f32::consts::TAU),
+                    roll_d: particles::range(seed, -8.0, 8.0),
+                    alpha: randint(seed, 32.0, 255.0) / 255.0,
+                });
+            }
+        };
+        match letter {
+            'C' | 'T' | 'W' | 'L' => {
+                if letter != 'L' {
+                    // `FX_DebrisFlecks`: randint(4,8) flecks, 3 s, gravity 800
+                    let n = randint(seed, 4.0, 8.0) as usize;
+                    for _ in 0..n {
+                        let d = (normal + rand_vec(seed, 1.0)).normalize_or_zero();
+                        let size = randint(seed, 1.0, 2.0);
+                        let c = (surface_color * particles::range(seed, 0.75, 1.25)).min(Vec3::ONE);
+                        out.push(FxSprite {
+                            kind: if letter == 'W' {
+                                FxKind::WoodFleck
+                            } else {
+                                FxKind::Fleck
+                            },
+                            variant: (particles::rng(seed) * 2.0) as usize,
+                            pos,
+                            vel: d * particles::range(seed, 64.0, 128.0),
+                            born: now,
+                            life: 3.0,
+                            size0: size,
+                            size1: size,
+                            color: lin(c),
+                            roll: particles::range(seed, 0.0, std::f32::consts::TAU),
+                            roll_d: particles::range(seed, -2.0, 2.0),
+                            alpha: 1.0,
+                        });
+                    }
+                }
+                dust_puffs(seed, &mut out, 4);
+                // one drifting puff beside the hit
+                let at = pos + Vec3::new(rand_vec(seed, 8.0).x, rand_vec(seed, 8.0).y, 0.0);
+                let size = randint(seed, 4.0, 8.0);
+                out.push(FxSprite {
+                    kind: FxKind::Dust,
+                    variant: 0,
+                    pos: at,
+                    vel: Vec3::ZERO,
+                    born: now,
+                    life: particles::range(seed, 0.5, 1.0),
+                    size0: size,
+                    size1: size * 4.0,
+                    color: lin(surface_color),
+                    roll: particles::range(seed, 0.0, std::f32::consts::TAU),
+                    roll_d: particles::range(seed, -1.0, 1.0),
+                    alpha: randint(seed, 32.0, 64.0) / 255.0,
+                });
+            }
+            'D' | 'N' | 'U' | 'J' => {
+                // `FX_DustImpact`: 4 smoke puffs, 4 noise-sphere puffs, 4 drifting puffs
+                dust_puffs(seed, &mut out, 4);
+                for id in 0..4 {
+                    let dir = (rand_vec(seed, 0.2) + normal * particles::range(seed, 1.0, 6.0))
+                        .normalize_or_zero();
+                    let speed = particles::range(seed, 250.0, 500.0) * id as f32;
+                    let size = randint(seed, 2.0, 4.0) * (id as f32 + 1.0);
+                    out.push(FxSprite {
+                        kind: FxKind::DustNoise,
+                        variant: 0,
+                        pos,
+                        vel: dir * speed,
+                        born: now,
+                        life: particles::range(seed, 0.25, 0.75),
+                        size0: size,
+                        size1: size * 2.0,
+                        color: lin(surface_color),
+                        roll: particles::range(seed, 0.0, std::f32::consts::TAU),
+                        roll_d: particles::range(seed, -2.0, 2.0),
+                        alpha: 1.0,
+                    });
+                }
+                for _ in 0..4 {
+                    let at = pos + Vec3::new(rand_vec(seed, 8.0).x, rand_vec(seed, 8.0).y, 0.0);
+                    let dir = (rand_vec(seed, 1.0) + normal).normalize_or_zero();
+                    let size = randint(seed, 1.0, 4.0);
+                    out.push(FxSprite {
+                        kind: FxKind::Dust,
+                        variant: 0,
+                        pos: at,
+                        vel: dir * particles::range(seed, 0.0, 50.0),
+                        born: now,
+                        life: particles::range(seed, 0.5, 1.0),
+                        size0: size,
+                        size1: size * 4.0,
+                        color: lin(surface_color),
+                        roll: particles::range(seed, 0.0, std::f32::consts::TAU),
+                        roll_d: particles::range(seed, -16.0, 16.0),
+                        alpha: randint(seed, 32.0, 64.0) / 255.0,
+                    });
+                }
+            }
+            'M' | 'V' | 'P' => {
+                // `FX_MetalSpark`: randint(4,8)*2 streaks off the reflected shot, 400 gravity,
+                // plus a yellowflare quad randint(24,28) for 0.1 s (`P` is the plain `Sparks`
+                // temp effect: half as many, straight off the surface)
+                let reflect = shot_dir - normal * (2.0 * shot_dir.dot(normal));
+                let base = if letter == 'P' {
+                    normal
+                } else {
+                    reflect.normalize_or_zero()
+                };
+                let n = randint(seed, 4.0, 8.0) as usize * if letter == 'P' { 1 } else { 2 };
+                for _ in 0..n {
+                    let spread = particles::range(seed, 0.0, 2.0);
+                    let dir = (base + rand_vec(seed, 0.5 * spread)).normalize_or_zero();
+                    let speed =
+                        particles::range(seed, 128.0 * (2.0 - spread), 512.0 * (2.0 - spread));
+                    out.push(FxSprite {
+                        kind: FxKind::Spark,
+                        variant: 0,
+                        pos: pos + normal * 0.5,
+                        vel: dir * speed,
+                        born: now,
+                        life: particles::range(seed, 0.05, 0.1),
+                        size0: particles::range(seed, 1.0, 4.0),
+                        size1: particles::range(seed, 0.025, 0.1),
+                        color: [1.0, 1.0, 1.0],
+                        roll: 0.0,
+                        roll_d: 0.0,
+                        alpha: 1.0,
+                    });
+                }
+                if letter != 'P' {
+                    let size = randint(seed, 24.0, 28.0);
+                    out.push(FxSprite {
+                        kind: FxKind::Flare,
+                        variant: 0,
+                        pos: pos + normal * 1.0,
+                        vel: Vec3::ZERO,
+                        born: now,
+                        life: 0.1,
+                        size0: size,
+                        size1: size,
+                        color: [1.0, 1.0, 1.0],
+                        roll: particles::range(seed, 0.0, std::f32::consts::TAU),
+                        roll_d: 0.0,
+                        alpha: 1.0,
+                    });
+                }
+            }
+            _ => {}
+        }
+        self.fx_sprites.extend(out);
+    }
+
     fn spawn_explosion(&mut self, pos: Vec3, now: Instant) {
         let seed = &mut self.fx_seed;
         let mut dir = Vec3::ZERO;
@@ -9451,6 +9765,7 @@ impl App {
                 color: lin(light * n),
                 roll: particles::range(seed, 0.0, std::f32::consts::TAU),
                 roll_d: particles::range(seed, -roll_d, roll_d).to_radians(),
+                alpha: 1.0,
             });
         };
         for _ in 0..4 {
@@ -9479,6 +9794,7 @@ impl App {
                 color: lin(light * n),
                 roll: particles::range(seed, 0.0, std::f32::consts::TAU),
                 roll_d: particles::range(seed, -8.0, 8.0).to_radians(),
+                alpha: 1.0,
             });
         }
         for _ in 0..16 {
@@ -9500,6 +9816,7 @@ impl App {
                 color: lin(Vec3::splat(n)),
                 roll: particles::range(seed, 0.0, std::f32::consts::TAU),
                 roll_d: particles::range(seed, -8.0, 8.0).to_radians(),
+                alpha: 1.0,
             });
         }
         for _ in 0..16 {
@@ -9521,6 +9838,7 @@ impl App {
                 color: lin(Vec3::splat(n)),
                 roll: particles::range(seed, 0.0, std::f32::consts::TAU),
                 roll_d: particles::range(seed, -16.0, 16.0).to_radians(),
+                alpha: 1.0,
             });
         }
         let flecks = 16 + (particles::rng(seed) * 17.0) as usize;
@@ -9543,6 +9861,7 @@ impl App {
                 color: lin(Vec3::splat(c)),
                 roll: particles::range(seed, 0.0, std::f32::consts::TAU),
                 roll_d: particles::range(seed, 0.0, 360.0).to_radians(),
+                alpha: 1.0,
             });
         }
         self.fx_sprites.extend(out);
@@ -9559,7 +9878,33 @@ impl App {
         }
         let decay = (1e-4f32.ln() * dt / 0.5).exp();
         for s in &mut self.fx_sprites {
-            if s.kind == FxKind::Fleck {
+            if matches!(
+                s.kind,
+                FxKind::Dust | FxKind::DustNoise | FxKind::Flare | FxKind::Muzzle
+            ) {
+                s.pos += s.vel * dt;
+                s.roll += s.roll_d * dt;
+                continue;
+            }
+            if s.kind == FxKind::Spark {
+                // `FX_MetalSpark`: gravity 400, velocity dampen 8, collision dampen 0.25
+                s.vel.z -= 400.0 * dt;
+                s.vel *= (-8.0 * dt).exp();
+                let next = s.pos + s.vel * dt;
+                let tr = self
+                    .sim
+                    .collision
+                    .trace_ray(s.pos, next, gm_collision::MASK_SOLID);
+                if tr.fraction < 1.0 {
+                    let n = tr.normal;
+                    s.vel = (s.vel - n * (2.0 * s.vel.dot(n))) * 0.25;
+                    s.pos = tr.end + n * 0.5;
+                } else {
+                    s.pos = next;
+                }
+                continue;
+            }
+            if matches!(s.kind, FxKind::Fleck | FxKind::WoodFleck) {
                 s.vel.z -= 800.0 * dt;
                 let next = s.pos + s.vel * dt;
                 let tr = self
@@ -9607,6 +9952,8 @@ struct FxSprite {
     color: [f32; 3],
     roll: f32,
     roll_d: f32,
+    /// Start opacity (the explosion's sprites are 1; dust puffs start at randint(32,255)/255).
+    alpha: f32,
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -9615,6 +9962,88 @@ enum FxKind {
     Ember,
     FireCloud,
     Fleck,
+    WoodFleck,
+    /// `particle_smokegrenade` / `particle_noisesphere` impact dust (no drag, straight flight).
+    Dust,
+    DustNoise,
+    /// `effects/spark` streak: `size0` its width, `size1` its length in seconds of velocity.
+    Spark,
+    Flare,
+    /// One of the 8 `muzzleflash1..4` sprites of another player's shot.
+    Muzzle,
+}
+
+/// `FX_MuzzleEffect` (clientfx.md 2.1.2): 8 sprites along `forward` at 2*i u, half-size
+/// rand(6,9) * (12 - i) / 9, a random `muzzleflash1..4` and roll each (scale 1).
+fn muzzle_sprites(seed: &mut u32, origin: Vec3, forward: Vec3) -> Vec<(Vec3, f32, f32, usize)> {
+    (1..=8)
+        .map(|i| {
+            let size = particles::range(seed, 6.0, 9.0) * (12.0 - i as f32) / 9.0;
+            (
+                origin + forward * (2.0 * i as f32),
+                size,
+                particles::range(seed, 0.0, std::f32::consts::TAU),
+                (particles::rng(seed) * 4.0) as usize,
+            )
+        })
+        .collect()
+}
+
+/// `scripts/surfaceproperties_manifest.txt` -> every surface property's `gamematerial` letter.
+fn load_gamematerials(mount: &gm_content::Mount) -> HashMap<String, char> {
+    let mut out = HashMap::new();
+    let Ok(manifest) = mount.read_string("scripts/surfaceproperties_manifest.txt") else {
+        return out;
+    };
+    let Ok(doc) = gm_formats::keyvalues::parse(&manifest) else {
+        return out;
+    };
+    let files: Vec<String> = doc
+        .nodes
+        .iter()
+        .flat_map(|n| n.children())
+        .filter(|n| n.key.eq_ignore_ascii_case("file"))
+        .filter_map(|n| n.as_str().map(str::to_string))
+        .collect();
+    for f in files {
+        let Ok(src) = mount.read_string(&f) else {
+            continue;
+        };
+        let Ok(doc) = gm_formats::keyvalues::parse(&src) else {
+            continue;
+        };
+        for n in &doc.nodes {
+            if let Some(c) = n.get_str("gamematerial").and_then(|g| g.chars().next()) {
+                out.insert(n.key.to_ascii_lowercase(), c.to_ascii_uppercase());
+            }
+        }
+    }
+    out
+}
+
+/// The game material of a surface property the scripts did not list.
+fn gamematerial_guess(surface: &str) -> char {
+    let s = surface.to_ascii_lowercase();
+    if s.contains("wood") {
+        'W'
+    } else if s.contains("metal") || s.contains("grate") || s.contains("chain") {
+        'M'
+    } else if s.contains("dirt")
+        || s.contains("sand")
+        || s.contains("grass")
+        || s.contains("snow")
+        || s.contains("mud")
+    {
+        'D'
+    } else if s.contains("tile") {
+        'T'
+    } else if s.contains("plastic") {
+        'L'
+    } else if s.contains("flesh") || s.contains("glass") || s.contains("water") {
+        'F'
+    } else {
+        'C'
+    }
 }
 
 /// `random->RandomFloat(-r, r)` on each axis.
