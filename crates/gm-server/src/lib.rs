@@ -25712,8 +25712,10 @@ impl<'w> Server<'w> {
                 weapons::Launch::Bolt => "models/crossbow_bolt.mdl",
                 weapons::Launch::Grenade => projectile::GRENADE_MODEL,
                 weapons::Launch::Smg1Grenade => "models/items/ar2_grenade.mdl",
-                // C_PropCombineBall: the core is an additive glow sprite the size of the ball
-                weapons::Launch::Ball => "sprites/blueflare1",
+                // C_PropCombineBall draws no model in flight: its body is the oriented
+                // `effects/ar2_altfire1` halo (clientfx.md 8.2); the client keys the ball's
+                // flicker and motion-blur halos on this material
+                weapons::Launch::Ball => "effects/ar2_altfire1",
             };
             let angles = pr.angles.unwrap_or_else(|| velocity_angles(pr.velocity));
             (pr.id, model, pr.origin, angles)

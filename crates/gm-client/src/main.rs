@@ -281,6 +281,11 @@ struct Gfx {
     /// (`effects/combinemuzzle2`) of the pulse rifle (hl2weapons.md, gap-report #103).
     fx_ar2_tracer: Option<wgpu::BindGroup>,
     fx_ar2_impact: Option<wgpu::BindGroup>,
+    /// Combine ball motion-blur (`effects/ar2_altfire1b`) and flicker (`effects/combinemuzzle1`)
+    /// halos (clientfx.md 8.2, gap-report #134), and each ball's last origin for the blur.
+    fx_cball_blur: Option<wgpu::BindGroup>,
+    fx_cball_flicker: Option<wgpu::BindGroup>,
+    ball_last: HashMap<u32, Vec3>,
     /// The crossbow's charger sprite `sprites/blueflare1` (hl2weapons.md, gap-report #105).
     fx_blueflare: Option<wgpu::BindGroup>,
     fx_decal_mats: std::collections::HashMap<String, Option<gm_render::world::Decal>>,
@@ -1599,6 +1604,8 @@ impl App {
         let fx_spark = world.sprite_material(&gpu, &self.mount, "effects/spark");
         let fx_ar2_tracer = world.sprite_material(&gpu, &self.mount, "effects/gunshiptracer");
         let fx_ar2_impact = world.sprite_material(&gpu, &self.mount, "effects/combinemuzzle2");
+        let fx_cball_blur = world.sprite_material(&gpu, &self.mount, "effects/ar2_altfire1b");
+        let fx_cball_flicker = world.sprite_material(&gpu, &self.mount, "effects/combinemuzzle1");
         let fx_blueflare = world.sprite_material(&gpu, &self.mount, "sprites/blueflare1");
         let fx_wood_flecks = ["effects/fleck_wood1", "effects/fleck_wood2"]
             .iter()
@@ -1685,6 +1692,9 @@ impl App {
             fx_spark,
             fx_ar2_tracer,
             fx_ar2_impact,
+            fx_cball_blur,
+            fx_cball_flicker,
+            ball_last: HashMap::new(),
             fx_blueflare,
             fx_decal_mats: Default::default(),
             fx_laserdot,
@@ -5276,7 +5286,7 @@ impl App {
             .chain(ghost_models)
         {
             // env_sprite entities carry a sprite material, not a model
-            if model.starts_with("sprites/") {
+            if is_sprite_ent(model) {
                 continue;
             }
             if !g.models.contains_key(model) {
@@ -6589,16 +6599,62 @@ impl App {
             }
             // env_sprite: a billboard of its material at the entity, texels times `scale`
             // across, in its colour; additive for the additive / glow render modes
-            for e in ents.values().filter(|e| e.model.starts_with("sprites/")) {
+            for e in ents.values().filter(|e| is_sprite_ent(&e.model)) {
                 if !g.fx_sprite_mats.contains_key(&e.model) {
                     let m = g.world.sprite_material_sized(&g.gpu, &self.mount, &e.model);
                     g.fx_sprite_mats.insert(e.model.clone(), m);
                 }
             }
-            for e in ents.values().filter(|e| e.model.starts_with("sprites/")) {
+            g.ball_last.retain(|id, _| ents.contains_key(id));
+            for e in ents.values().filter(|e| is_sprite_ent(&e.model)) {
                 let Some(Some((bm, w, mat_additive))) = g.fx_sprite_mats.get(&e.model) else {
                     continue;
                 };
+                if e.model == CBALL_BODY {
+                    // C_PropCombineBall in flight (clientfx.md 8.2): flicker halo grey
+                    // rand(0.2,0.3) at radius*rand(1.5,2.5); 8 motion-blur halos stepping back
+                    // along -moveDir by min(speed/2, 4) u, grey base*(1 - i/12) with base =
+                    // remap(speed, 4..32 -> 0..1); the oriented body halo radius + sin(25 t)
+                    // rolled by its spawn time. Sizes are DrawHalo widths; everything additive.
+                    const RADIUS: f32 = 10.0;
+                    let last = g.ball_last.insert(e.id, e.pos).unwrap_or(e.pos);
+                    let moved = e.pos - last;
+                    let speed = moved.length().min(32.0);
+                    let dir = moved.normalize_or_zero();
+                    let r = &mut g.fx_rng;
+                    let grey = fx_range(r, 0.2, 0.3);
+                    let flicker = RADIUS * fx_range(r, 1.5, 2.5);
+                    if let Some(m) = &g.fx_cball_flicker {
+                        let (v, i) = g.world.sprite_quad(e.pos, flicker, [grey; 3], &camera);
+                        additive.push((m, v, i));
+                    }
+                    if let (Some(m), true) = (&g.fx_cball_blur, speed > 0.0) {
+                        let base = ((speed - 4.0) / 28.0).clamp(0.0, 1.0);
+                        let step = (speed * 0.5).min(4.0);
+                        for i in 0..8 {
+                            let k = base * (1.0 - i as f32 / 12.0);
+                            let (v, idx) = g.world.sprite_quad(
+                                e.pos - dir * step * i as f32,
+                                RADIUS,
+                                [k; 3],
+                                &camera,
+                            );
+                            additive.push((m, v, idx));
+                        }
+                    }
+                    let t = now.duration_since(self.epoch).as_secs_f32();
+                    let roll = (e.id as f32 * 37.0) % 360.0;
+                    let (v, i) = g.world.sprite_quad_var(
+                        e.pos,
+                        RADIUS + (t * 25.0).sin(),
+                        [1.0; 4],
+                        roll,
+                        None,
+                        &camera,
+                    );
+                    additive.push((bm, v, i));
+                    continue;
+                }
                 let c = |v: u8| v as f32 / 255.0;
                 let (v, i) = g.world.sprite_quad_var(
                     e.pos,
@@ -10352,6 +10408,15 @@ impl App {
 
 /// gmod_thruster.lua `matHeatWave`: the `Refract` beam over the fire effect.
 const HEATWAVE: &str = "sprites/heatwave";
+/// The combine ball's body material, which is also what the server sends as its "model".
+const CBALL_BODY: &str = "effects/ar2_altfire1";
+
+/// Entities drawn as a billboard of a material instead of a model (env_sprite, the combine
+/// ball).
+fn is_sprite_ent(model: &str) -> bool {
+    model.starts_with("sprites/") || model == CBALL_BODY
+}
+
 /// TE_WaterSplash: the ring opening on the surface and the droplets thrown up.
 const SPLASH_RIPPLE: &str = "effects/splashwake1";
 const SPLASH_DROP: &str = "effects/splash2";
