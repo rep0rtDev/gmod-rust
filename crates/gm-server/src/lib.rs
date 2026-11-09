@@ -11533,7 +11533,8 @@ impl<'w> Server<'w> {
         self.cannon_trace(eye, forward, reach).map(|(e, _)| e)
     }
 
-    /// The prop the gravity gun's trace hits within `reach` and the hit point.
+    /// The entity the gravity gun's trace hits within `reach` and the hit point: any entity
+    /// with a physics body (a prop, a ragdoll, a vehicle; gravgun.md 6.2, gap-report #80).
     fn cannon_trace(&self, eye: Vec3, forward: Vec3, reach: f32) -> Option<(u32, Vec3)> {
         let bodies = self.trace_bodies();
         let h = gm_sandbox::tool_trace(self.collision, &bodies, eye, forward)?;
@@ -11541,10 +11542,7 @@ impl<'w> Server<'w> {
         if (h.pos - eye).length() > reach {
             return None;
         }
-        self.sandbox
-            .props()
-            .iter()
-            .any(|p| p.id == ent)
+        (self.bodies.contains_key(&ent) || self.ragdoll_bodies.contains_key(&ent))
             .then_some((ent, h.pos))
     }
 
@@ -11624,7 +11622,9 @@ impl<'w> Server<'w> {
                         (h.map(|(e, _)| e), h.map(|(_, p)| p))
                     }
                 };
-                let Some((ent, b)) = target.and_then(|e| self.bodies.get(&e).map(|b| (e, *b)))
+                // a ragdoll is punted through its first part (the hit bone is not carried by
+                // the trace here)
+                let Some((ent, b)) = target.and_then(|e| self.part_body(e, 0).map(|b| (e, b)))
                 else {
                     snd(self, "DryFire");
                     return;
