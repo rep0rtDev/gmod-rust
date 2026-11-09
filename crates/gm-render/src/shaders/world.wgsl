@@ -33,6 +33,24 @@ struct Camera {
 @group(0) @binding(3) var cubes: texture_cube_array<f32>;
 @group(0) @binding(4) var flashlight_depth: texture_depth_2d_array;
 @group(0) @binding(5) var flashlight_sampler: sampler_comparison;
+// effects/flashlight001: the flashlight is a projected texture (render.md 3.1 / 3.4)
+@group(0) @binding(6) var flashlight_tex: texture_2d<f32>;
+@group(0) @binding(7) var flashlight_tex_sampler: sampler;
+
+// the projected texture seen from the light: 0 outside its frustum
+fn flashlight_mask(slot: i32, world: vec3<f32>) -> f32 {
+    let p = camera.flashlight_vp[slot] * vec4<f32>(world, 1.0);
+    if p.w <= 0.0 {
+        return 0.0;
+    }
+    let ndc = p.xyz / p.w;
+    let uv = vec2<f32>(ndc.x * 0.5 + 0.5, 0.5 - ndc.y * 0.5);
+    if uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0 {
+        return 0.0;
+    }
+    let c = textureSampleLevel(flashlight_tex, flashlight_tex_sampler, uv, 0.0).rgb;
+    return dot(c, vec3<f32>(0.299, 0.587, 0.114));
+}
 
 // the flashlight's shadow: 1 lit, 0 in the shadow of the world seen from the light
 fn flashlight_shadow(slot: i32, world: vec3<f32>) -> f32 {
@@ -183,14 +201,14 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
             let d = length(dv);
             var k = clamp(1.0 - d / lp.w, 0.0, 1.0);
             let sd = camera.dlight_dir[i];
-            if sd.w > 0.0 {
+            let slot = i32(camera.shadow_slot[i / 4u][i % 4u]);
+            if slot >= 0 {
+                // a flashlight: the projected texture gives the cone and its edge
+                k *= flashlight_mask(slot, in.world) * flashlight_shadow(slot, in.world);
+            } else if sd.w > 0.0 {
                 // spot: full inside the cone, soft 0.08 (cosine) edge
                 let c = dot(-dv / max(d, 1e-3), sd.xyz);
                 k *= smoothstep(sd.w, min(sd.w + 0.08, 1.0), c);
-            }
-            let slot = i32(camera.shadow_slot[i / 4u][i % 4u]);
-            if slot >= 0 {
-                k *= flashlight_shadow(slot, in.world);
             }
             // R_AddDynamicLights: world surfaces take a dynamic light by distance alone,
             // only the side of the plane matters (a light sitting on the wall lights it fully)
@@ -282,12 +300,11 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
                 let ld = dv / max(d, 1e-3);
                 var k = clamp(1.0 - d / lp.w, 0.0, 1.0);
                 let sd = camera.dlight_dir[i];
-                if sd.w > 0.0 {
-                    k *= smoothstep(sd.w, min(sd.w + 0.08, 1.0), dot(-ld, sd.xyz));
-                }
                 let slot = i32(camera.shadow_slot[i / 4u][i % 4u]);
                 if slot >= 0 {
-                    k *= flashlight_shadow(slot, in.world);
+                    k *= flashlight_mask(slot, in.world) * flashlight_shadow(slot, in.world);
+                } else if sd.w > 0.0 {
+                    k *= smoothstep(sd.w, min(sd.w + 0.08, 1.0), dot(-ld, sd.xyz));
                 }
                 let h = pow(max(dot(nw, normalize(ld + v)), 0.0), exponent);
                 local += camera.dlight_color[i].rgb * (k * k * max(dot(nw, ld), 0.0) * h);

@@ -2329,6 +2329,22 @@ impl WorldRenderer {
                     ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Comparison),
                     count: None,
                 },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 6,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 7,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
             ],
         });
         let material_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -2457,6 +2473,29 @@ impl WorldRenderer {
                 })
             })
             .collect();
+        // the flashlight's projected texture (effects/flashlight001; white when absent)
+        let (fl_pixels, fl_w, fl_h) =
+            match crate::material::load_texture(mount, "effects/flashlight001", 512) {
+                Ok(t) => (t.pixels, t.width, t.height),
+                Err(_) => (vec![255u8; 4], 1, 1),
+            };
+        let flashlight_tex = upload_rgba(
+            gpu,
+            &fl_pixels,
+            fl_w,
+            fl_h,
+            wgpu::TextureFormat::Rgba8UnormSrgb,
+            "flashlight001",
+        );
+        let flashlight_tex_view = flashlight_tex.create_view(&Default::default());
+        let flashlight_tex_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("flashlight texture"),
+            address_mode_u: wgpu::AddressMode::ClampToEdge,
+            address_mode_v: wgpu::AddressMode::ClampToEdge,
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            ..Default::default()
+        });
         let shadow_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("flashlight depth"),
             address_mode_u: wgpu::AddressMode::ClampToEdge,
@@ -2495,6 +2534,14 @@ impl WorldRenderer {
                 wgpu::BindGroupEntry {
                     binding: 5,
                     resource: wgpu::BindingResource::Sampler(&shadow_sampler),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 6,
+                    resource: wgpu::BindingResource::TextureView(&flashlight_tex_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 7,
+                    resource: wgpu::BindingResource::Sampler(&flashlight_tex_sampler),
                 },
             ],
         });
@@ -2548,6 +2595,14 @@ impl WorldRenderer {
                 wgpu::BindGroupEntry {
                     binding: 5,
                     resource: wgpu::BindingResource::Sampler(&shadow_sampler),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 6,
+                    resource: wgpu::BindingResource::TextureView(&flashlight_tex_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 7,
+                    resource: wgpu::BindingResource::Sampler(&flashlight_tex_sampler),
                 },
             ],
         });
