@@ -726,6 +726,9 @@ impl Inventory {
         self.reloading = false;
         self.reload_stage = 0;
         self.fire_on_empty = false;
+        // a switch away from the AR2 mid-charge drops the ball (the game's Holster
+        // stops the alt fire; a pending charge would otherwise fire from the next weapon)
+        self.ball_pending = false;
         self.busy = true;
     }
 

@@ -69,3 +69,64 @@ fn spawned_weapon_is_picked_up_by_touch() {
     server.undo(1);
     assert!(server.sandbox.undos(1).is_empty());
 }
+
+#[test]
+fn ar2_fires_automatically_and_a_weapon_switch_drops_its_charge() {
+    let Some(inst) = gm_content::find_install() else {
+        eprintln!("skipped: no Garry's Mod install");
+        return;
+    };
+    let mount = gm_content::Mount::for_install(&inst).unwrap();
+    let world = gm_dedicated::load_world(&mount, "gm_construct").unwrap();
+    let mut server = gm_server::Server::new(&world.collision, world.physics, world.world_body);
+    server.add_player(
+        1,
+        Vec3::new(823.235, -500.0, -143.0),
+        Vec3::new(20.0, 0.0, 0.0),
+    );
+    server.set_weapons(1, &["weapon_pistol", "weapon_ar2"]);
+    let idle = std::collections::BTreeMap::from([(1, gm_server::PlayerCmd::default())]);
+    let mut fire = gm_server::PlayerCmd::default();
+    fire.cmd.buttons = gm_server::IN_ATTACK;
+    let fire = std::collections::BTreeMap::from([(1, fire)]);
+    let mut alt = gm_server::PlayerCmd::default();
+    alt.cmd.buttons = gm_server::IN_ATTACK2;
+    let alt = std::collections::BTreeMap::from([(1, alt)]);
+    assert!(server.select_weapon(1, "weapon_ar2"));
+    for _ in 0..30 {
+        server.tick(&idle);
+    }
+    for _ in 0..20 {
+        server.tick(&fire);
+    }
+    let clip = server.players[&1].inventory.clips["weapon_ar2"][0];
+    assert!(
+        (26..30).contains(&clip),
+        "pulse rifle held for 20 ticks: clip {clip}"
+    );
+    for _ in 0..30 {
+        server.tick(&idle);
+    }
+    // alt fire starts the 0.5 s charge; switching to the pistol before it ends must not
+    // launch the ball from the pistol
+    let balls = server.players[&1].inventory.ammo["AR2AltFire"];
+    server.tick(&alt);
+    assert!(server.select_weapon(1, "weapon_pistol"));
+    for _ in 0..60 {
+        server.tick(&idle);
+    }
+    assert!(
+        !server
+            .sandbox
+            .props()
+            .iter()
+            .any(|p| p.model.contains("combine_ball"))
+            && server.players[&1].inventory.ammo["AR2AltFire"] == balls,
+        "no ball after the switch: {} of {balls} left",
+        server.players[&1].inventory.ammo["AR2AltFire"]
+    );
+    for _ in 0..3 {
+        server.tick(&fire);
+    }
+    assert_eq!(server.players[&1].inventory.clips["weapon_pistol"][0], 17);
+}
