@@ -1190,6 +1190,8 @@ struct App {
     wsel_at: Option<Instant>,
     /// HUD_PRINTCENTER text (CHudMessage) and when it arrived.
     center_print: Option<(String, Instant)>,
+    /// CHudZoom: when the FOV dropped below fov_desired / came back (0.4 s fades).
+    zoom_at: std::cell::RefCell<(Option<Instant>, Option<Instant>)>,
     /// When the bucket menu was opened: OpenWeaponSelectionMenu fades Alpha in over 0.1 s.
     wsel_opened: Option<Instant>,
     epoch: Instant,
@@ -7912,6 +7914,57 @@ impl App {
                         });
                     }
                 }
+                // CHudZoom (ui.md 7.5, gap-report #158): shown while the camera FOV is below
+                // fov_desired; alpha t/0.4 in, (1 - t/0.4) * 0.25 out with the circles shrinking
+                // by 1 - scale * 0.5; everything x 64/255; two dashed circles r 66 / 74 (dash
+                // every 16 px, 4 high) in ZoomReticleColor 255 220 0, the dark vgui/zoom quad
+                // around them. Dashes are axis-aligned 2x4 rects (approximation).
+                {
+                    let cur_fov = self.fov_blend.map_or(self.settings.fov_desired, |b| b.3);
+                    let zoomed = cur_fov < self.settings.fov_desired - 0.5;
+                    let mut za = self.zoom_at.borrow_mut();
+                    if zoomed && za.0.is_none() {
+                        *za = (Some(Instant::now()), None);
+                    } else if !zoomed && za.0.is_some() {
+                        *za = (None, Some(Instant::now()));
+                    }
+                    let (alpha, scale) = match *za {
+                        (Some(t), _) => ((t.elapsed().as_secs_f32() / 0.4).min(1.0), 1.0),
+                        (None, Some(t)) => {
+                            let k = (t.elapsed().as_secs_f32() / 0.4).min(1.0);
+                            ((1.0 - k) * 0.25, 1.0 - k * 0.5)
+                        }
+                        _ => (0.0, 1.0),
+                    };
+                    if alpha > 0.0 && !hidden("CHudZoom") {
+                        let a = alpha * 64.0 / 255.0;
+                        let ratio = w / h;
+                        items.push(UiItem::Slice {
+                            x: 0.0,
+                            y: 0.0,
+                            w,
+                            h,
+                            material: "vgui/zoom".to_string(),
+                            color: [1.0, 1.0, 1.0, alpha],
+                            uv: [0.5 - ratio / 2.0, 0.0, 0.5 + ratio / 2.0, 1.0],
+                        });
+                        let col = [1.0, 220.0 / 255.0, 0.0, a];
+                        for r in [66.0_f32, 74.0] {
+                            let r = r * s * scale;
+                            let n = (std::f32::consts::TAU * r / (16.0 * s)).round().max(4.0);
+                            for k in 0..n as usize {
+                                let ang = std::f32::consts::TAU * k as f32 / n;
+                                items.push(UiItem::Rect {
+                                    x: w / 2.0 + ang.cos() * r - s,
+                                    y: h / 2.0 + ang.sin() * r - 2.0 * s,
+                                    w: 2.0 * s,
+                                    h: 4.0 * s,
+                                    color: col,
+                                });
+                            }
+                        }
+                    }
+                }
                 // HUD_PRINTCENTER through CHudMessage: centred lines in the Default font at
                 // 65 % of the height, effect 0 (fade in 0.01 s, hold ~3 s, fade out 1.5 s).
                 // The position/timing are the SDK custom-message defaults as recalled, not
@@ -9467,6 +9520,7 @@ fn main() -> Result<()> {
         wsel: None,
         wsel_at: None,
         center_print: None,
+        zoom_at: Default::default(),
         wsel_opened: None,
         epoch: Instant::now(),
         // cl_hints.lua: GM:AddHint( "OpeningMenu", 30 ), Annoy1 5, Annoy2 7
