@@ -174,8 +174,9 @@ const PISTOL: Fire = Fire {
     cycle: 0.5,
     refire_min: Some(0.1),
     pellets: 1,
-    spread: 0.00873,
-    spread_max: Some(0.05234),
+    // 1 deg -> 6 deg by the accuracy penalty (hl2weapons.md, gap-report #101)
+    spread: 0.01745,
+    spread_max: Some(0.10453),
     pump: None,
     reload: Some(1.4333),
     dry_fire: Some((0.4, 0.2)),
@@ -562,6 +563,8 @@ pub struct Inventory {
     /// Ticks since the last shot while an `auto_reload` is due.
     pub since_shot: Option<u32>,
     pub ball_pending: bool,
+    /// The owner's eyes are under water this tick (WL_Eyes): launchers refuse to fire.
+    pub underwater: bool,
     /// Frag: ticks since the pull-back press; ticks left until the grenade leaves; a redraw due.
     pub throw_press: Option<u32>,
     pub throw_in: Option<u32>,
@@ -811,8 +814,15 @@ impl Inventory {
                     return None;
                 }
                 if self.next_primary <= 0.0 {
+                    // under water the launcher refuses (dry fire, hl2weapons.md #102)
+                    if self.underwater {
+                        vm_event(&mut self.vm_act, &mut self.vm_serial, VmAct::Dry);
+                        self.next_secondary = cycle;
+                        return None;
+                    }
                     *have -= 1;
                     self.launched = Some(Launch::Smg1Grenade);
+                    vm_event(&mut self.vm_act, &mut self.vm_serial, VmAct::AltFire);
                     self.next_primary = SMG1_GRENADE_PRIMARY;
                     self.next_secondary = SMG1_GRENADE_SECONDARY;
                     return None;

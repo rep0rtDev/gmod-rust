@@ -960,6 +960,9 @@ fn weapon_sound(act: u8, active: u8) -> Option<String> {
         (4, _) => "Reload",
         (2, _) | (5, _) => "Special1",
         // the 357 / AR2 / RPG scripts borrow their empty click (hl2weapons.md, #99)
+        // secondary fires: SMG1 grenade `Double`, AR2 ball `Weapon_IRifle.Single` (#102, #104)
+        (8, "Weapon_SMG1") => "Double",
+        (8, "Weapon_AR2") => return Some("Weapon_IRifle.Single".into()),
         (3, "Weapon_357") => return Some("Weapon_Pistol.Empty".into()),
         (3, "Weapon_AR2") => return Some("Weapon_IRifle.Empty".into()),
         (3, "Weapon_RPG") => return Some("Weapon_SMG1.Empty".into()),

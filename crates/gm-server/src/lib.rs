@@ -23415,6 +23415,7 @@ impl<'w> Server<'w> {
                     sweps.push((*id, pc.cmd.buttons));
                     continue;
                 }
+                p.inventory.underwater = p.state.water_level >= 3;
                 let shot = p.inventory.command(&p.active_weapon, pc.cmd.buttons);
                 let eye = p.state.origin
                     + Vec3::new(
