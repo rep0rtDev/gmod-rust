@@ -608,6 +608,9 @@ pub enum VmAct {
     Fire = 6,
     /// The weapon comes back out (the frag's redraw after a throw).
     Draw = 7,
+    /// The secondary attack's viewmodel activity (the gravity gun's punt / launch,
+    /// gravgun.md 2).
+    AltFire = 8,
 }
 
 fn vm_event(slot: &mut VmAct, serial: &mut u8, act: VmAct) {
@@ -735,6 +738,8 @@ impl Inventory {
             if edge2 && self.next_secondary <= 0.0 {
                 self.cannon = Some(CannonIntent::Grab);
                 self.next_secondary = PHYSCANNON_SECONDARY;
+                // pickup / drop / dry fire all play ACT_VM_PRIMARYATTACK (gravgun.md 2)
+                vm_event(&mut self.vm_act, &mut self.vm_serial, VmAct::Fire);
             } else if pressed2 {
                 self.cannon = Some(CannonIntent::Pull);
             }
@@ -742,7 +747,8 @@ impl Inventory {
             if pressed && self.next_primary <= 0.0 {
                 self.next_primary = f.cycle;
                 self.cannon = Some(CannonIntent::Punt);
-                vm_event(&mut self.vm_act, &mut self.vm_serial, VmAct::Fire);
+                // the punt / launch is ACT_VM_SECONDARYATTACK (gravgun.md 2, gap-report #89)
+                vm_event(&mut self.vm_act, &mut self.vm_serial, VmAct::AltFire);
             }
             return None;
         }

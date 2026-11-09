@@ -3873,6 +3873,7 @@ impl App {
                     5 => vm.reload_end,
                     6 => Some(vm.fire),
                     7 => Some(vm.draw),
+                    8 => vm.alt,
                     _ => None,
                 };
                 if let Some(seq) = seq {
