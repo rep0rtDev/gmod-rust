@@ -542,6 +542,9 @@ pub struct ModelInfo {
     pub attachments: Vec<ModelAttachment>,
     /// The `break` sound script of the surface property (`Wood_Crate.Break`).
     pub break_sound: Option<String>,
+    /// The gib models of the prop's `breakable_model` break list (`BreakableModels` in
+    /// scripts/propdata.txt), spawned when it breaks.
+    pub gib_models: Vec<String>,
     /// `Entity:SkinCount`: skin families in the MDL (1 when unknown).
     pub skins: u8,
     /// `Entity:GetBodygroupCount` per body part (empty when unknown).
@@ -559,6 +562,13 @@ pub struct PropData {
     pub dmg_bullets: f32,
     pub dmg_club: f32,
     pub dmg_explosive: f32,
+    /// `explosive_damage` / `explosive_radius`: the prop explodes when it breaks (props.md #31).
+    pub explosive_damage: f32,
+    pub explosive_radius: f32,
+    /// `breakable_count`: how many gibs (0 = every model of the break list).
+    pub breakable_count: u8,
+    /// `multiplayer_break` lets the server spawn the gibs (`both` / `server`; not `client` / `none`).
+    pub server_gibs: bool,
 }
 
 impl Default for PropData {
@@ -568,6 +578,10 @@ impl Default for PropData {
             dmg_bullets: 1.0,
             dmg_club: 1.0,
             dmg_explosive: 1.0,
+            explosive_damage: 0.0,
+            explosive_radius: 0.0,
+            breakable_count: 0,
+            server_gibs: true,
         }
     }
 }
@@ -8622,6 +8636,8 @@ pub struct Server<'w> {
     pub static_convexes: Vec<gm_collision::Convex>,
     /// The map's brush / logic entities (`mapio`).
     pub map_io: mapio::MapIo,
+    /// Gibs and the tick they fade (`random(5,10)` s after the break).
+    pub gib_fade: Vec<(u32, u64)>,
     pub step_loader: Option<StepLoader>,
     /// Host hook: the `$surfaceprop` of a brush material (impact decals); cached below.
     pub surfaceprop_loader: Option<SurfacepropLoader>,
@@ -8840,6 +8856,7 @@ impl<'w> Server<'w> {
             model_loader: None,
             static_convexes: Vec::new(),
             map_io: Default::default(),
+            gib_fade: Vec::new(),
             step_loader: None,
             surfaceprop_loader: None,
             brush_surfaceprops: BTreeMap::new(),
@@ -9318,8 +9335,67 @@ impl<'w> Server<'w> {
             });
         }
         self.game_events.push(GameEvent::PropBreak { ent });
+        let vel = self.prop_state(ent).map_or(Vec3::ZERO, |s| s.velocity);
+        let gibs = self
+            .models
+            .get(&prop.model)
+            .map(|m| m.gib_models.clone())
+            .unwrap_or_default();
         self.remove_prop(ent);
+        // an explosive prop (the gas can, propane tank) blows up as it breaks (props.md #31)
+        if data.explosive_damage > 0.0 {
+            self.explode(
+                pos,
+                0,
+                data.explosive_damage,
+                data.explosive_radius.max(1.0),
+                "prop_physics",
+            );
+        }
+        // the break list's gibs (props.md #33-36): a 100 u/s burst plus the parent's velocity,
+        // gone after random(5,10) s
+        if data.server_gibs && !gibs.is_empty() {
+            let tick = self.tick_count;
+            let count = if data.breakable_count > 0 {
+                data.breakable_count as usize
+            } else {
+                gibs.len()
+            };
+            for k in 0..count {
+                let model = &gibs[k % gibs.len()];
+                let r = |i: u64| tick_rand(tick, u64::from(ent), k as u64 * 8 + i);
+                let dir = Vec3::new(r(1), r(2), r(3).abs()).normalize_or_zero();
+                let at = pos + Vec3::new(r(4) * 4.0, r(5) * 4.0, 4.0 + r(6).abs() * 4.0);
+                let angles = Vec3::new(r(7) * 180.0, r(1) * 180.0, 0.0);
+                if let Some(gib) = self.script_spawn_prop(0, model, at, angles, false) {
+                    if let Some(&body) = self.bodies.get(&gib) {
+                        self.physics
+                            .set_velocity(body, vel + dir * 100.0, Vec3::ZERO);
+                    }
+                    let fade = ((7.5 + 2.5 * r(2)) * 66.67) as u64;
+                    self.gib_fade.push((gib, tick + fade));
+                }
+            }
+        }
         true
+    }
+
+    /// Gibs past their fade time are removed.
+    fn fade_gibs(&mut self) {
+        let tick = self.tick_count;
+        let due: Vec<u32> = self
+            .gib_fade
+            .iter()
+            .filter(|(_, at)| *at <= tick)
+            .map(|(id, _)| *id)
+            .collect();
+        if due.is_empty() {
+            return;
+        }
+        self.gib_fade.retain(|(_, at)| *at > tick);
+        for id in due {
+            self.remove_prop(id);
+        }
     }
 
     fn fire_tick(&mut self) {
@@ -23268,6 +23344,7 @@ impl<'w> Server<'w> {
             self.physics.tick_interval = base;
         }
         self.break_constraints();
+        self.fade_gibs();
         self.follow_parents();
         self.impact_sounds();
         let contacts = self.physics.take_contacts();

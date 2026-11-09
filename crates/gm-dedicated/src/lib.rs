@@ -604,6 +604,7 @@ pub fn model_info(mount: &gm_content::Mount, model: &str) -> Result<gm_server::M
             .or_else(|| table.sound("default", "impactsoft")),
         scrape_rough: table.sound(&props.surfaceprop, "scraperough"),
         prop_data: prop_data(mount, &mdl.key_values),
+        gib_models: prop_data_full(mount, &mdl.key_values).1,
         break_sound: table.sound(&props.surfaceprop, "break"),
         skins: mdl.skins.len().clamp(1, 255) as u8,
         body_groups: mdl
@@ -618,12 +619,21 @@ pub fn model_info(mount: &gm_content::Mount, model: &str) -> Result<gm_server::M
 /// the crate is `Wooden.Medium`, health 30 (measured, `lua_fire`), the gas can says 20 itself;
 /// each key is the first found walking up the chain. No `prop_data` is unbreakable.
 pub fn prop_data(mount: &gm_content::Mount, key_values: &str) -> gm_server::PropData {
+    prop_data_full(mount, key_values).0
+}
+
+/// `prop_data` plus the gib models of the prop's `breakable_model` break list
+/// (`BreakableModels` in scripts/propdata.txt, props.md #33).
+pub fn prop_data_full(
+    mount: &gm_content::Mount,
+    key_values: &str,
+) -> (gm_server::PropData, Vec<String>) {
     let mut out = gm_server::PropData::default();
     let Ok(doc) = gm_formats::keyvalues::parse(key_values) else {
-        return out;
+        return (out, Vec::new());
     };
     let Some(pd) = doc.root().and_then(|r| r.get("prop_data")) else {
-        return out;
+        return (out, Vec::new());
     };
     let table = mount
         .read("scripts/propdata.txt")
@@ -646,7 +656,25 @@ pub fn prop_data(mount: &gm_content::Mount, key_values: &str) -> gm_server::Prop
     out.dmg_bullets = first("dmg.bullets").unwrap_or(1.0);
     out.dmg_club = first("dmg.club").unwrap_or(1.0);
     out.dmg_explosive = first("dmg.explosive").unwrap_or(1.0);
-    out
+    out.explosive_damage = first("explosive_damage").unwrap_or(0.0);
+    out.explosive_radius = first("explosive_radius").unwrap_or(0.0);
+    out.breakable_count = first("breakable_count").unwrap_or(0.0).clamp(0.0, 255.0) as u8;
+    let first_str = |key: &str| chain.iter().find_map(|n| n.get_str(key)).map(|v| v.trim());
+    out.server_gibs = !matches!(
+        first_str("multiplayer_break"),
+        Some("client") | Some("none")
+    );
+    let gibs = first_str("breakable_model")
+        .and_then(|name| classes?.get("BreakableModels")?.get(name))
+        .map(|list| {
+            list.children()
+                .iter()
+                .filter(|n| n.key.ends_with(".mdl"))
+                .map(|n| n.key.clone())
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    (out, gibs)
 }
 
 /// `gm-dedicated --config server.toml`: the command line's fields as a file, plus `[cvars]`.
