@@ -1190,6 +1190,8 @@ struct App {
     wsel_at: Option<Instant>,
     /// HUD_PRINTCENTER text (CHudMessage) and when it arrived.
     center_print: Option<(String, Instant)>,
+    /// CHudSuitPower: when the last active device went off (SuitAuxPowerMax 0.4 s fade).
+    aux_off_at: std::cell::RefCell<Option<Instant>>,
     /// CHudZoom: when the FOV dropped below fov_desired / came back (0.4 s fades).
     zoom_at: std::cell::RefCell<(Option<Instant>, Option<Instant>)>,
     /// When the bucket menu was opened: OpenWeaponSelectionMenu fades Alpha in over 0.1 s.
@@ -7832,13 +7834,7 @@ impl App {
                              label: &str,
                              fg: [f32; 4],
                              bg: [f32; 4]| {
-                    items.push(UiItem::Rect {
-                        x,
-                        y,
-                        w: wide,
-                        h: tall,
-                        color: bg,
-                    });
+                    hud_corner_box(items, x, y, wide, tall, s, bg);
                     items.push(UiItem::Text {
                         font: label_font.clone(),
                         x: x + 8.0 * s,
@@ -8457,6 +8453,64 @@ impl App {
                                     color: bg,
                                 });
                             }
+                        }
+                    }
+                }
+                // CHudSuitPower (ui.md §6, gap-report #155): with gmod_suit 0 the power never
+                // drains (player.md D6), so the panel only shows while a device is active -
+                // sprint (moving with the speed key), flashlight, oxygen (eyes under water) -
+                // and fades out over 0.4 s when none is. x 16 y 396, 102x26 plus 10 px per
+                // device label (the growth per label is an approximation), AUX POWER label at
+                // (8,4), the 92x4 bar at (8,15) in 6 px chunks with 3 px gaps, all lit at 100.
+                {
+                    let under = self.sim.collision.point_contents(o)
+                        & gm_formats::bsp::lumps::contents::WATER
+                        != 0;
+                    let devices: Vec<&str> = [
+                        (self.shift_held && p.velocity.length() > 0.5, "SPRINT"),
+                        (p.flashlight, "FLASHLIGHT"),
+                        (under, "OXYGEN"),
+                    ]
+                    .into_iter()
+                    .filter_map(|(on, l)| on.then_some(l))
+                    .collect();
+                    let mut off = self.aux_off_at.borrow_mut();
+                    let alpha = if devices.is_empty() {
+                        let at = *off.get_or_insert_with(Instant::now);
+                        1.0 - (at.elapsed().as_secs_f32() / 0.4).min(1.0)
+                    } else {
+                        *off = None;
+                        1.0
+                    };
+                    if alpha > 0.0 && !hidden("CHudSuitPower") {
+                        let a = |c: [f32; 4]| [c[0], c[1], c[2], c[3] * alpha];
+                        let (ax, ay) = (16.0 * s, 396.0 * s);
+                        let ah = 26.0 * s + 10.0 * s * devices.len() as f32;
+                        hud_corner_box(&mut items, ax, ay, 102.0 * s, ah, s, a(BG_COLOR_HUD));
+                        items.push(UiItem::Text {
+                            font: label_font.clone(),
+                            x: ax + 8.0 * s,
+                            y: ay + 4.0 * s,
+                            text: "AUX POWER".to_string(),
+                            color: a(FG_COLOR_HUD),
+                        });
+                        for k in 0..10 {
+                            items.push(UiItem::Rect {
+                                x: ax + 8.0 * s + k as f32 * 9.0 * s,
+                                y: ay + 15.0 * s,
+                                w: 6.0 * s,
+                                h: 4.0 * s,
+                                color: a(FG_COLOR_HUD),
+                            });
+                        }
+                        for (k, l) in devices.iter().enumerate() {
+                            items.push(UiItem::Text {
+                                font: label_font.clone(),
+                                x: ax + 8.0 * s,
+                                y: ay + 22.0 * s + 10.0 * s * k as f32,
+                                text: l.to_string(),
+                                color: a(FG_COLOR_HUD),
+                            });
                         }
                     }
                 }
@@ -9531,6 +9585,7 @@ fn main() -> Result<()> {
         wsel_at: None,
         center_print: None,
         zoom_at: Default::default(),
+        aux_off_at: Default::default(),
         wsel_opened: None,
         epoch: Instant::now(),
         // cl_hints.lua: GM:AddHint( "OpeningMenu", 30 ), Annoy1 5, Annoy2 7
@@ -11546,6 +11601,52 @@ struct HudPanelLook {
     alpha: f32,
 }
 
+/// `PaintBackgroundType 2` (ui.md 1.7, gap-report #153): the HUD panel box from the four
+/// `vgui/hud/800corner1..4` sprites (top-left, top-right, bottom-right, bottom-left) in the
+/// panel colour and flat strips between them. The 8 px corner size scales with the layout
+/// (an approximation of the scheme's proportional corner size).
+fn hud_corner_box(
+    items: &mut Vec<UiItem>,
+    x: f32,
+    y: f32,
+    w: f32,
+    h: f32,
+    s: f32,
+    color: [f32; 4],
+) {
+    let c = (8.0 * s).min(w / 2.0).min(h / 2.0);
+    let corners = [
+        ("vgui/hud/800corner1", x, y),
+        ("vgui/hud/800corner2", x + w - c, y),
+        ("vgui/hud/800corner3", x + w - c, y + h - c),
+        ("vgui/hud/800corner4", x, y + h - c),
+    ];
+    for (m, cx, cy) in corners {
+        items.push(UiItem::Slice {
+            x: cx,
+            y: cy,
+            w: c,
+            h: c,
+            material: m.to_string(),
+            color,
+            uv: [0.0, 0.0, 1.0, 1.0],
+        });
+    }
+    for (rx, ry, rw, rh) in [
+        (x + c, y, w - 2.0 * c, c),
+        (x, y + c, w, h - 2.0 * c),
+        (x + c, y + h - c, w - 2.0 * c, c),
+    ] {
+        items.push(UiItem::Rect {
+            x: rx,
+            y: ry,
+            w: rw,
+            h: rh,
+            color,
+        });
+    }
+}
+
 /// `CHudAmmo` HudAnimations (ui.md §5.3, gap-report #154): `WeaponChanged` flashes the panel
 /// background 250 220 0 80 (0.1 s in, Deaccel back over 1.0 s); `AmmoDecreased` blurs 7 ->
 /// 0 (Deaccel 1.5 s) with the digits BrightFg for 0.1 s then Deaccel back over 0.75 s;
@@ -11832,6 +11933,18 @@ fn register_ui_fonts(mount: &gm_content::Mount, ui: &mut UiRenderer, gpu: &Gpu, 
     // the HL2 HUD fonts of resource/ClientScheme.res: `tall` is absolute pixels (the layout
     // scales with the screen, the glyphs do not); only the `yres` blocks step at 600 lines
     let tall = height >= 600;
+    // the HUD's `Slice` materials: the default crosshair sheet, the zoom overlay and the
+    // rounded-box corners of PaintBackgroundType 2 (ui.md 1.7)
+    for m in [
+        "sprites/crosshairs",
+        "vgui/zoom",
+        "vgui/hud/800corner1",
+        "vgui/hud/800corner2",
+        "vgui/hud/800corner3",
+        "vgui/hud/800corner4",
+    ] {
+        ui.load_image(gpu, mount, m);
+    }
     ui.register_font(gpu, mount, "HudNumbers", "HalfLife2", 32.0);
     let glow = |blur| gm_render::ui::FontFx { blur, scanlines: 2 };
     ui.register_font_fx(gpu, mount, "HudNumbersGlow", "HalfLife2", 32.0, glow(4));
