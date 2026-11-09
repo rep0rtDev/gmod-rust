@@ -658,6 +658,10 @@ pub enum WorldEffect {
         pos: Vec3,
         normal: Vec3,
     },
+    /// The combine ball bounced at `pos` (`cball_bounce`).
+    BallBounce { pos: Vec3 },
+    /// The combine ball's `DoExplosion` at `pos`: three `lgtning` rings, `cball_explode`.
+    BallExplosion { pos: Vec3 },
     /// `WaterSplash` at `pos`: a player entering or leaving the water.
     Splash { pos: Vec3 },
     /// A bullet hit on a prop: a decal in the entity's frame (`lpos` / `lnormal`), `surface`
@@ -5734,6 +5738,8 @@ pub struct Player {
     pub claw_debounce: u64,
     pub claw_suppress: u64,
     pub punt_guard: Option<(u32, u64)>,
+    /// Ticks +attack has been held (the machine-gun view kick's fire duration).
+    pub attack_held: u32,
     pub alive: bool,
     pub health: i32,
     pub armor: i32,
@@ -7481,6 +7487,7 @@ impl Player {
             claw_debounce: 0,
             claw_suppress: 0,
             punt_guard: None,
+            attack_held: 0,
             alive: true,
             health: PLAYER_HEALTH,
             armor: 0,
@@ -7536,6 +7543,15 @@ pub const PLAYER_HEALTH: i32 = 100;
 pub const PLAYER_MODEL: &str = "models/player/kleiner.mdl";
 /// Sandbox `PlayerLoadout` gives the physgun last and `SwitchToDefaultWeapon` keeps it while
 /// `cl_defaultweapon` is unset (binary study player.md F45).
+/// A tick-seeded pseudo-random in -1..1 for `salt` (a player) and stream `k`: the game's
+/// `SharedRandomFloat` streams, which prediction needs to be reproducible per tick.
+pub fn tick_rand(tick: u64, salt: u64, k: u64) -> f32 {
+    let h = (tick ^ (salt << 20))
+        .wrapping_add(k.wrapping_mul(0x9E37_79B9_7F4A_7C15))
+        .wrapping_mul(0xD6E8_FEB8_6659_FD93);
+    ((h >> 40) as f32 / 16_777_216.0) * 2.0 - 1.0
+}
+
 /// Mass the physgun gives whatever it holds (`CWeaponPhysGun`, physgun.md 5.1).
 pub const HELD_MASS: f32 = 45678.0;
 pub const SPAWN_WEAPON: &str = "weapon_physgun";
@@ -9919,6 +9935,45 @@ impl<'w> Server<'w> {
         self.resolve_shot_with(attacker, eye, forward, shot, class, seen_tick, None);
     }
 
+    /// The HL2 weapons' view punch on a shot (hl2weapons.md 0.5 and per weapon, bin:H):
+    /// pistol (-rand(0.25,0.5), rand(-0.6,0.6)), .357 (-8, rand(-2,2)), shotgun (rand(-2,-1),
+    /// rand(-2,2)), SMG1 / AR2 the machine-gun kick: punch (-(0.2 + v*perc), -(0.2 + v*perc/3),
+    /// 0.1 + v*perc/8) with random yaw/roll signs, perc = min(held, slide) / slide, the total
+    /// clipped to (24, 3, 1) and halved; SMG1 v 1.0 slide 2.0, AR2 v 2.0 slide 1.0.
+    fn weapon_punch(&mut self, id: u32, class: &str) {
+        let tick = self.tick_count;
+        let rnd = |k: u64| tick_rand(tick, u64::from(id), k);
+        let held = self
+            .players
+            .get(&id)
+            .map_or(0.0, |p| p.attack_held as f32 / 66.67);
+        let current = self.players.get(&id).map_or(Vec3::ZERO, |p| p.state.punch);
+        let punch = match class {
+            "weapon_pistol" => Vec3::new(-(0.25 + 0.25 * rnd(1).abs()), 0.6 * rnd(2), 0.0),
+            "weapon_357" => Vec3::new(-8.0, 2.0 * rnd(1), 0.0),
+            "weapon_shotgun" => Vec3::new(-1.5 + 0.5 * rnd(1), 2.0 * rnd(2), 0.0),
+            "weapon_smg1" | "weapon_ar2" => {
+                let (v, slide) = if class == "weapon_smg1" {
+                    (1.0, 2.0)
+                } else {
+                    (2.0, 1.0)
+                };
+                let perc = held.min(slide) / slide;
+                let sign = |k: u64| if rnd(k) < 0.0 { -1.0 } else { 1.0 };
+                let kick = Vec3::new(
+                    -(0.2 + v * perc),
+                    -(0.2 + v * perc / 3.0) * sign(3),
+                    (0.1 + v * perc / 8.0) * sign(4),
+                );
+                let limit = Vec3::new(24.0, 3.0, 1.0);
+                let clipped = (current + kick).clamp(-limit, limit) - current;
+                clipped * 0.5
+            }
+            _ => return,
+        };
+        self.view_punch(id, Some(punch), None, true);
+    }
+
     #[allow(clippy::too_many_arguments)]
     fn resolve_shot_with(
         &mut self,
@@ -9950,6 +10005,7 @@ impl<'w> Server<'w> {
             pellets: shot.pellets,
             ammo: shot.ammo,
         });
+        self.weapon_punch(attacker, class);
         const MAX_TRACE: f32 = 56755.84;
         let end = eye + forward * MAX_TRACE;
         let world = self
@@ -10326,6 +10382,14 @@ impl<'w> Server<'w> {
             t.state.impulse += push;
             t.last_damage = (attacker, "weapon_crowbar");
         }
+        // crowbar hit view kick: pitch rand(1,2), yaw rand(-2,-1) (hl2weapons.md 1)
+        let tick = self.tick_count;
+        let punch = Vec3::new(
+            1.5 + 0.5 * tick_rand(tick, u64::from(attacker), 7),
+            -1.5 + 0.5 * tick_rand(tick, u64::from(attacker), 8),
+            0.0,
+        );
+        self.view_punch(attacker, Some(punch), None, true);
         self.damage_player(target, damage, weapons::DMG_CLUB);
     }
 
@@ -10632,6 +10696,15 @@ impl<'w> Server<'w> {
         let mut keep = Vec::with_capacity(self.projectiles.len());
         for (i, (prev, ev)) in steps.into_iter().enumerate() {
             let pr = &self.projectiles[i];
+            if let projectile::Event::Bounced(at) = ev {
+                self.sounds.push(WorldSound {
+                    name: "NPC_CombineBall.Impact".to_string(),
+                    pos: at,
+                    volume: 1.0,
+                    ..Default::default()
+                });
+                self.effects.push(WorldEffect::BallBounce { pos: at });
+            }
             match ev {
                 projectile::Event::Removed(at) => {
                     died.push((pr.kind, pr.owner, at));
@@ -10647,7 +10720,7 @@ impl<'w> Server<'w> {
                     });
                     keep.push(true);
                 }
-                projectile::Event::None => {
+                projectile::Event::None | projectile::Event::Bounced(_) => {
                     let (kind, owner, end) = (pr.kind, pr.owner, pr.origin);
                     let touch = match kind {
                         weapons::Launch::Rocket if pr.ignited() => {
@@ -10838,6 +10911,7 @@ impl<'w> Server<'w> {
                     volume: 1.0,
                     ..Default::default()
                 });
+                self.effects.push(WorldEffect::BallExplosion { pos: at });
             }
             if kind == weapons::Launch::Rocket {
                 if let Some(p) = self.players.get_mut(&owner) {
@@ -22817,6 +22891,8 @@ impl<'w> Server<'w> {
         let mut sweps = Vec::new();
         let mut cannons = Vec::new();
         let mut feelers = Vec::new();
+        let mut zooms = Vec::new();
+        let tick = self.tick_count;
         for (id, p) in self.players.iter_mut() {
             if !p.alive {
                 continue;
@@ -22850,8 +22926,31 @@ impl<'w> Server<'w> {
                 } else if p.claws_open {
                     p.claws_open = false;
                 }
+                if pc.cmd.buttons & weapons::IN_ATTACK != 0 {
+                    p.attack_held += 1;
+                } else {
+                    p.attack_held = 0;
+                }
                 if let Some(kind) = p.inventory.launched.take() {
+                    // crossbow (-2, 0, 0); AR2 alt-fire (-rand(8,12), rand(1,2), 0)
+                    match kind {
+                        weapons::Launch::Bolt => p.state.punch += Vec3::new(-2.0, 0.0, 0.0),
+                        weapons::Launch::Ball => {
+                            p.state.punch += Vec3::new(
+                                -(10.0 + 2.0 * tick_rand(tick, u64::from(*id), 5)),
+                                1.5 + 0.5 * tick_rand(tick, u64::from(*id), 6),
+                                0.0,
+                            );
+                        }
+                        _ => {}
+                    }
                     launches.push((*id, kind, eye, pc.cmd.view_angles, p.inventory.lob));
+                }
+                if std::mem::take(&mut p.inventory.zoom_toggle) {
+                    zooms.push(*id);
+                }
+                if p.active_weapon != "weapon_crossbow" && p.fov.is_some_and(|f| f.0 == 20.0) {
+                    zooms.push(*id);
                 }
                 if let Some(intent) = p.inventory.cannon.take() {
                     cannons.push((*id, intent, eye, pc.cmd.view_angles));
@@ -22870,6 +22969,18 @@ impl<'w> Server<'w> {
         }
         for (id, eye, ang) in feelers {
             self.cannon_feeler(id, eye, ang);
+        }
+        // crossbow zoom: FOV 20 in 0.1 s, back to the default in 0.2 s (also on holster)
+        for id in zooms {
+            let zoomed = self
+                .players
+                .get(&id)
+                .is_some_and(|p| p.fov.is_some_and(|f| f.0 == 20.0));
+            if zoomed {
+                self.set_player_fov(id, 0.0, 0.2);
+            } else {
+                self.set_player_fov(id, 20.0, 0.1);
+            }
         }
         for (id, intent, eye, ang) in cannons {
             self.physcannon(id, intent, eye, ang);

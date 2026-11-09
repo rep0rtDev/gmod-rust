@@ -1051,6 +1051,8 @@ impl ServerNet {
                     pos,
                     normal,
                 },
+                gm_server::WorldEffect::BallBounce { pos } => EffectEvent::BallBounce { pos },
+                gm_server::WorldEffect::BallExplosion { pos } => EffectEvent::BallExplosion { pos },
                 gm_server::WorldEffect::PropImpact {
                     ent,
                     lpos,

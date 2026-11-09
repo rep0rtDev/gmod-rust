@@ -130,6 +130,8 @@ pub enum Event {
     Removed(Vec3),
     /// Stuck into the world this tick at the point (bolt).
     Stuck(Vec3),
+    /// The combine ball bounced this tick at the point (`cball_bounce` + `NPC_CombineBall.Impact`).
+    Bounced(Vec3),
 }
 
 /// The ignited rocket's turn this tick (degrees of pitch, yaw) from last tick's turn, its
@@ -448,7 +450,8 @@ impl Projectile {
     /// Move along the velocity, reflecting off whatever is hit and finishing the tick with the
     /// reflected velocity (the ball is a physics object: its bounce happens inside the step).
     /// The ball is a sphere: its centre turns `BALL_RADIUS` along the normal before the plane.
-    fn fly_bounce(&mut self, world: &World) {
+    fn fly_bounce(&mut self, world: &World) -> Option<Vec3> {
+        let mut bounced = None;
         let mut left = DT;
         for _ in 0..4 {
             let dir = self.velocity.normalize_or_zero();
@@ -462,16 +465,18 @@ impl Projectile {
             };
             if travel >= want {
                 self.origin += dir * want;
-                return;
+                return bounced;
             }
             self.origin += dir * travel.max(0.0);
             left *= 1.0 - travel.max(0.0) / want;
             let n = tr.normal;
             self.velocity -= 2.0 * self.velocity.dot(n) * n;
+            bounced.get_or_insert(self.origin);
             if left <= 1e-6 {
-                return;
+                return bounced;
             }
         }
+        bounced
     }
 
     /// A rocket past its free-fall ticks, flying at `ROCKET_SPEED`.
@@ -558,8 +563,10 @@ impl Projectile {
             self.movetype = MoveType::None;
             return Event::None;
         }
-        self.fly_bounce(world);
-        Event::None
+        match self.fly_bounce(world) {
+            Some(at) => Event::Bounced(at),
+            None => Event::None,
+        }
     }
 }
 

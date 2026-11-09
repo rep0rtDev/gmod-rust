@@ -569,6 +569,14 @@ pub enum EffectEvent {
         pos: Vec3,
         normal: Vec3,
     },
+    /// The combine ball bounced at `pos`.
+    BallBounce {
+        pos: Vec3,
+    },
+    /// The combine ball exploded at `pos`: three `lgtning` rings.
+    BallExplosion {
+        pos: Vec3,
+    },
     /// Bullet hit on a prop: a decal in the entity's frame, `surface` its surface property.
     PropImpact {
         ent: u32,
@@ -1543,6 +1551,14 @@ impl ServerMsg {
                             w.vec3(*pos);
                             w.vec3(*normal);
                         }
+                        EffectEvent::BallBounce { pos } => {
+                            w.u8(9);
+                            w.vec3(*pos);
+                        }
+                        EffectEvent::BallExplosion { pos } => {
+                            w.u8(10);
+                            w.vec3(*pos);
+                        }
                         EffectEvent::PropImpact {
                             ent,
                             lpos,
@@ -1931,6 +1947,8 @@ impl ServerMsg {
                             pos: r.vec3()?,
                             normal: r.vec3()?,
                         },
+                        9 => EffectEvent::BallBounce { pos: r.vec3()? },
+                        10 => EffectEvent::BallExplosion { pos: r.vec3()? },
                         4 => EffectEvent::PropImpact {
                             ent: r.u32()?,
                             lpos: r.vec3()?,

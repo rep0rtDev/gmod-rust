@@ -570,6 +570,8 @@ pub struct Inventory {
     pub launched: Option<Launch>,
     /// A melee swing happened in this command (`Fire::melee`).
     pub swung: bool,
+    /// The crossbow's secondary toggled its zoom this command (FOV 20, hl2weapons.md).
+    pub zoom_toggle: bool,
     pub cannon: Option<CannonIntent>,
     pub prev_attack2: bool,
     /// A `rearm_after_reload` refill happened last tick.
@@ -700,6 +702,7 @@ impl Inventory {
     pub fn command(&mut self, class: &str, buttons: u32) -> Option<Shot> {
         self.launched = None;
         self.swung = false;
+        self.zoom_toggle = false;
         self.cannon = None;
         let pressed = buttons & IN_ATTACK != 0;
         let edge = pressed && !self.prev_attack;
@@ -742,6 +745,15 @@ impl Inventory {
         }
         if let Some(th) = f.throw {
             return self.throw_command(w, th, pressed, pressed2);
+        }
+        // crossbow alt-fire: a press toggles the zoom, both timers 0.75 (hl2weapons.md)
+        if w.class == "weapon_crossbow" {
+            let edge2 = pressed2 && !self.prev_attack2;
+            self.prev_attack2 = pressed2;
+            if edge2 && self.next_secondary <= 0.0 {
+                self.zoom_toggle = true;
+                self.next_secondary = 0.75;
+            }
         }
         if let Some(n) = self.since_shot.as_mut() {
             *n += 1;

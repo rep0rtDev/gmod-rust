@@ -269,6 +269,8 @@ struct Gfx {
     fx_tool_tracer: Option<wgpu::BindGroup>,
     fx_select_dot: Option<wgpu::BindGroup>,
     fx_select_ring: Option<wgpu::BindGroup>,
+    /// `sprites/lgtning`: the combine ball explosion's rings.
+    fx_lgtning: Option<wgpu::BindGroup>,
     fx_spark: Option<wgpu::BindGroup>,
     fx_decal_mats: std::collections::HashMap<String, Option<gm_render::world::Decal>>,
     /// `sprites/redglow1`: the RPG's laser dot.
@@ -1183,6 +1185,8 @@ struct App {
     fx_bursts: Vec<(Vec3, f32, Instant, bool)>,
     /// `PhyscannonImpact` effects: the punting player, the punt point and when.
     fx_cannon: Vec<(u32, Vec3, Instant)>,
+    /// Combine ball explosions: where and when (three growing `lgtning` rings).
+    fx_rings: Vec<(Vec3, Instant)>,
     /// Tool gun click effects: player, hit, normal, when, the six rings' speeds (0.5..1.5).
     fx_tool: Vec<(u32, Vec3, Vec3, Instant, [f32; 6])>,
     /// `gmod_camera`: its `Zoom` (fov, degrees) and `Roll`, and the last mouse step time.
@@ -1519,6 +1523,7 @@ impl App {
         let fx_tool_tracer = world.sprite_material(&gpu, &self.mount, "effects/tool_tracer");
         let fx_select_dot = world.sprite_material(&gpu, &self.mount, "effects/select_dot");
         let fx_select_ring = world.sprite_material(&gpu, &self.mount, "effects/select_ring");
+        let fx_lgtning = world.sprite_material(&gpu, &self.mount, "sprites/lgtning");
         let fx_laserdot = world.sprite_material(&gpu, &self.mount, "sprites/redglow1");
         let fx_ball = world.sprite_material(&gpu, &self.mount, "sprites/sent_ball");
         let fx_sun = world
@@ -1584,6 +1589,7 @@ impl App {
             fx_tool_tracer,
             fx_select_dot,
             fx_select_ring,
+            fx_lgtning,
             fx_spark,
             fx_decal_mats: Default::default(),
             fx_laserdot,
@@ -4271,6 +4277,26 @@ impl App {
                         self.fx_cannon.push((player, pos, now));
                         self.fx_bursts.push((pos, 5.0, now, false));
                     }
+                    // `cball_bounce`: a short blue-white flare at the bounce
+                    gm_net::msg::EffectEvent::BallBounce { pos } => {
+                        self.fx_sprites.push(FxSprite {
+                            kind: FxKind::Flare,
+                            variant: 0,
+                            pos,
+                            vel: Vec3::ZERO,
+                            born: now,
+                            life: 0.15,
+                            size0: 10.0,
+                            size1: 10.0,
+                            color: [0.6, 0.8, 1.0],
+                            roll: 0.0,
+                            roll_d: 0.0,
+                            alpha: 1.0,
+                        });
+                    }
+                    gm_net::msg::EffectEvent::BallExplosion { pos } => {
+                        self.fx_rings.push((pos, now));
+                    }
                     gm_net::msg::EffectEvent::ToolTracer {
                         player,
                         pos,
@@ -5918,6 +5944,41 @@ impl App {
                         );
                         additive.push((m, v, i));
                     }
+                }
+            }
+        }
+        // combine ball explosion (hl2weapons.md 8): three `sprites/lgtning` beam rings from the
+        // ball's radius - to 128 u in 0.25 s width 48, to 384 u in 0.2 s and 0.5 s width 64,
+        // colour (255,255,225) alpha 64 fading out
+        self.fx_rings
+            .retain(|(_, at)| at.elapsed().as_secs_f32() < 0.5);
+        if let (Some(m), false) = (&g.fx_lgtning, self.fx_rings.is_empty()) {
+            for &(pos, at) in &self.fx_rings {
+                let age = at.elapsed().as_secs_f32();
+                for (end, life, width) in
+                    [(128.0, 0.25, 48.0), (384.0, 0.2, 64.0), (384.0, 0.5, 64.0)]
+                {
+                    let t = age / life;
+                    if t >= 1.0 {
+                        continue;
+                    }
+                    let r = 12.0 + (end - 12.0) * t;
+                    let a = 64.0 / 255.0 * (1.0 - t);
+                    let points: Vec<Vec3> = (0..=32)
+                        .map(|k| {
+                            let ang = k as f32 / 32.0 * std::f32::consts::TAU;
+                            pos + Vec3::new(ang.cos() * r, ang.sin() * r, 0.0)
+                        })
+                        .collect();
+                    let (v, i) = g.world.beam_strip(
+                        &points,
+                        width,
+                        [a, a, a * 225.0 / 255.0],
+                        camera.position,
+                        0.0,
+                        1.0 / 64.0,
+                    );
+                    additive.push((m, v, i));
                 }
             }
         }
@@ -8570,6 +8631,7 @@ fn main() -> Result<()> {
         fx_bursts: Vec::new(),
         fx_cannon: Vec::new(),
         fx_tool: Vec::new(),
+        fx_rings: Vec::new(),
         cam_zoom: 0.0,
         cam_roll: 0.0,
         cam_at: Instant::now(),
