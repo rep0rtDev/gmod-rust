@@ -1393,6 +1393,8 @@ struct App {
     menu_cache: std::cell::RefCell<MenuCache>,
     /// C held: the cursor is free and a right-click asks a prop for its properties.
     context_held: bool,
+    /// The context menu's Player Model window (`editor_player.lua`) is open.
+    player_editor: bool,
     /// `+showscores` held (TAB): the sandbox scoreboard.
     scoreboard: bool,
     /// When each remote player's last voice packet arrived (the voice panels).
@@ -2249,6 +2251,87 @@ impl App {
             .get(&self.tool)
             .and_then(|m| m.get(name))
             .cloned()
+    }
+
+    /// The game's player model table, sorted by name: (name, model path).
+    fn player_model_list() -> Vec<(&'static str, &'static str)> {
+        let mut v: Vec<(&str, &str)> = gm_server::player_models::PLAYER_MODELS
+            .iter()
+            .map(|m| (m.0, m.1))
+            .collect();
+        v.sort_unstable();
+        v.dedup_by(|a, b| a.1 == b.1);
+        v
+    }
+
+    /// The local player's model name (`cl_playermodel`), from the snapshot.
+    fn current_player_model(&self) -> String {
+        let me = self.sim.client.player_id;
+        self.sim
+            .client
+            .world
+            .players
+            .iter()
+            .find(|p| Some(p.id) == me)
+            .map(|p| gm_server::player_models::path_of_index(p.model))
+            .and_then(gm_server::player_models::name_of)
+            .unwrap_or("kleiner")
+            .to_string()
+    }
+
+    /// A left click in the context menu on the desktop icons or inside the Player Model
+    /// window: true when it was taken.
+    fn player_editor_click(&mut self) -> bool {
+        let (ix, iy, iw, ih) = derma::desktop_icon_rect(0);
+        let (cx, cy) = self.cursor;
+        if !self.player_editor && cx >= ix && cx < ix + iw && cy >= iy && cy < iy + ih {
+            self.player_editor = true;
+            return true;
+        }
+        if !self.player_editor {
+            return false;
+        }
+        let Some(g) = self.gfx.as_ref() else {
+            return false;
+        };
+        let (w, h) = (g.config.width as f32, g.config.height as f32);
+        let font = g.ui.font_metrics(Some(derma::FONT));
+        let bold = g.ui.font_metrics(Some(derma::FONT_BOLD));
+        let header = g.ui.font_metrics(Some(derma::HEADER_FONT));
+        let has_image = |name: &str| g.ui.has_image(name);
+        let pp_on = |_: &str| false;
+        let ctx = derma::Ctx {
+            w,
+            h,
+            cursor: self.cursor,
+            font: &font,
+            bold: &bold,
+            header: &header,
+            lists: &self.spawnlists,
+            content: [&[], &[], &[], &[], &[]],
+            results: &self.search_results,
+            tool: &self.tool,
+            has_image: &has_image,
+            pp_on: &pp_on,
+            lang: &self.lang,
+            ugc: None,
+        };
+        let mut layout = derma::Layout::default();
+        let models = Self::player_model_list();
+        derma::player_editor(&mut layout, &ctx, &models, &self.current_player_model());
+        match layout.hit(self.cursor).cloned() {
+            Some(derma::Action::PlayerModel(name)) => {
+                self.console.log(format!("cl_playermodel {name}"));
+                self.sim.client.command(Command::PlayerModel { name });
+                true
+            }
+            Some(derma::Action::ClosePlayerEditor) => {
+                self.player_editor = false;
+                true
+            }
+            Some(_) => true,
+            None => false,
+        }
     }
 
     /// The panel row under the cursor and the cursor's 0..1 position across its control.
@@ -3890,9 +3973,11 @@ impl App {
                 self.console.log(format!("pp_{key} {}", u8::from(on)));
             }
             Some(derma::Action::DesktopWindow(id)) => {
-                self.console
-                    .log(format!("{id}: this desktop window is not implemented yet"));
+                if id == "PlayerEditor" {
+                    self.player_editor = true;
+                }
             }
+            Some(derma::Action::PlayerModel(_) | derma::Action::ClosePlayerEditor) => {}
             Some(derma::Action::SpawnNpc(key)) => {
                 self.console.log(format!("gmod_spawnnpc {key}"));
                 self.sim.client.command(Command::SpawnNpc {
@@ -4552,6 +4637,7 @@ impl App {
                 }
                 "+menu_context" if self.context_held => {
                     self.context_held = false;
+                    self.player_editor = false;
                     self.edit_sheet = None;
                     self.context = None;
                     if self.menu.is_none() {
@@ -5507,6 +5593,13 @@ impl App {
         if self.menu.is_some() {
             let visible = self.menu_cache.borrow().visible.clone();
             Self::render_spawn_icons(&visible, &self.mount, g);
+        }
+        if self.player_editor {
+            let paths: Vec<String> = Self::player_model_list()
+                .iter()
+                .map(|(_, p)| (*p).to_string())
+                .collect();
+            Self::render_spawn_icons(&paths, &self.mount, g);
         }
         let frame = match g.surface.get_current_texture() {
             wgpu::CurrentSurfaceTexture::Success(f)
@@ -7948,6 +8041,10 @@ impl App {
                     &dctx,
                     &[("PlayerEditor", "icon64/playermodel.png", title)],
                 );
+                if self.player_editor {
+                    let models = Self::player_model_list();
+                    derma::player_editor(&mut layout, &dctx, &models, &self.current_player_model());
+                }
                 let rect = derma::context_canvas(&mut layout, &dctx, &schema);
                 let sheet_vals = self
                     .edit_sheet
@@ -9781,6 +9878,9 @@ impl ApplicationHandler for App {
                                 self.sim.client.command(Command::PropertyList);
                             }
                             MouseButton::Left => {
+                                if self.player_editor_click() {
+                                    return;
+                                }
                                 if self.panel_click() {
                                     return;
                                 }
@@ -10270,6 +10370,7 @@ fn main() -> Result<()> {
         qm_dupes: ugc::UgcState::new("dupes", &lang),
         qm_saves: ugc::UgcState::new("saves", &lang),
         qm_ugc_dirty: 0,
+        player_editor: false,
         lang,
         menu_cache: Default::default(),
         context_held: false,

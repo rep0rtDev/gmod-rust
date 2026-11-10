@@ -504,6 +504,9 @@ pub struct MenuState {
 #[derive(Clone, Debug, PartialEq)]
 pub enum Action {
     CreationTab(usize),
+    /// The Player Model editor: a model icon clicked (`cl_playermodel <name>`), its close button.
+    PlayerModel(String),
+    ClosePlayerEditor,
     ToolTab(usize),
     Node(usize),
     Browse,
@@ -3294,4 +3297,138 @@ fn ugc_tab(
         w,
         h - bar_h - 4.0,
     )
+}
+
+/// Where the context menu's desktop icon `i` sits (`desktop_icons`: 80x82 from (8, 8), 8 apart).
+pub fn desktop_icon_rect(i: usize) -> (f32, f32, f32, f32) {
+    (8.0 + i as f32 * 88.0, 8.0, 80.0, 82.0)
+}
+
+/// `editor_player.lua`'s Player Model window: a frame of 80% of the screen, centred, the
+/// chosen model's icon large on the left (the DModelPanel preview), the model list on the
+/// right as 64 px spawn icons (`player_manager.GetAllPlayerModels()`), the selected one
+/// framed. `models` are (name, model path); icons are the `icon:<path>` images.
+pub fn player_editor(out: &mut Layout, ctx: &Ctx, models: &[(&str, &str)], current: &str) {
+    let (w, h) = (
+        (ctx.w * 0.8).max(400.0).round(),
+        (ctx.h * 0.8).max(250.0).round(),
+    );
+    let (x, y) = (((ctx.w - w) * 0.5).round(), ((ctx.h - h) * 0.5).round());
+    out.hits.push(Hit {
+        x,
+        y,
+        w,
+        h,
+        action: Action::Nothing,
+    });
+    crate::ugc::rect(&mut out.items, x, y, w, h, rgba(108, 111, 114, 250));
+    crate::ugc::rect(&mut out.items, x, y, w, 24.0, rgba(60, 62, 66, 255));
+    let title = crate::ugc::say(ctx.lang, "smwidget.playermodel_title", "Player Model");
+    text(
+        &mut out.items,
+        FONT_BOLD,
+        ctx.bold,
+        x + 8.0,
+        y,
+        24.0,
+        &title,
+        [1.0; 4],
+    );
+    // close button
+    let (bx, by) = (x + w - 28.0, y + 2.0);
+    let hovered = inside(ctx.cursor, bx, by, 20.0, 20.0);
+    crate::ugc::rect(
+        &mut out.items,
+        bx,
+        by,
+        20.0,
+        20.0,
+        if hovered {
+            rgba(220, 60, 60, 255)
+        } else {
+            rgba(160, 50, 50, 255)
+        },
+    );
+    text(
+        &mut out.items,
+        FONT_BOLD,
+        ctx.bold,
+        bx + 5.0,
+        by,
+        20.0,
+        "x",
+        [1.0; 4],
+    );
+    out.hits.push(Hit {
+        x: bx,
+        y: by,
+        w: 20.0,
+        h: 20.0,
+        action: Action::ClosePlayerEditor,
+    });
+    // preview: the current model's icon filling the left half
+    let (px, py, pw, ph) = (x + 8.0, y + 32.0, (w * 0.5 - 12.0).round(), h - 40.0);
+    crate::ugc::rect(&mut out.items, px, py, pw, ph, rgba(40, 40, 44, 255));
+    if let Some((_, path)) = models.iter().find(|(n, _)| *n == current) {
+        let img = format!("icon:{path}");
+        if (ctx.has_image)(&img) {
+            let side = pw.min(ph);
+            image(
+                &mut out.items,
+                &img,
+                px + ((pw - side) * 0.5).round(),
+                py + ((ph - side) * 0.5).round(),
+                side,
+                side,
+            );
+        }
+    }
+    // the model list: 64 px icons, 8 apart, in the right half
+    let (lx, ly, lw, lh) = (
+        x + (w * 0.5).round() + 4.0,
+        y + 32.0,
+        (w * 0.5 - 12.0).round(),
+        h - 40.0,
+    );
+    crate::ugc::rect(&mut out.items, lx, ly, lw, lh, rgba(230, 230, 230, 255));
+    let per_row = (((lw - 8.0) / 72.0).floor() as usize).max(1);
+    for (i, (name, path)) in models.iter().enumerate() {
+        let (col, row) = ((i % per_row) as f32, (i / per_row) as f32);
+        let (ix, iy) = (lx + 8.0 + col * 72.0, ly + 8.0 + row * 72.0);
+        if iy + 64.0 > ly + lh {
+            break;
+        }
+        let selected = *name == current;
+        let hovered = inside(ctx.cursor, ix, iy, 64.0, 64.0);
+        if selected || hovered {
+            crate::ugc::rect(
+                &mut out.items,
+                ix - 2.0,
+                iy - 2.0,
+                68.0,
+                68.0,
+                if selected {
+                    rgba(0, 110, 230, 255)
+                } else {
+                    rgba(255, 255, 255, 255)
+                },
+            );
+        }
+        let img = format!("icon:{path}");
+        if (ctx.has_image)(&img) {
+            image(&mut out.items, &img, ix, iy, 64.0, 64.0);
+        } else {
+            crate::ugc::rect(&mut out.items, ix, iy, 64.0, 64.0, rgba(90, 90, 90, 255));
+        }
+        if hovered {
+            out.tips.push((ix, iy, 64.0, 64.0, (*name).to_string()));
+        }
+        out.hits.push(Hit {
+            x: ix,
+            y: iy,
+            w: 64.0,
+            h: 64.0,
+            action: Action::PlayerModel((*name).to_string()),
+        });
+    }
 }
