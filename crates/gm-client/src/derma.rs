@@ -498,6 +498,8 @@ pub enum Action {
     SpawnSent(String),
     /// `gmod_spawnnpc <key>` of an NPCs tab icon (default weapon).
     SpawnNpc(String),
+    /// `gmod_spawnvehicle <key>` of a Vehicles tab icon.
+    SpawnVehicle(String),
     Category(usize),
     Tool(&'static str),
     /// A `properties.Add` entry of the right-click menu, by its name.
@@ -558,7 +560,7 @@ pub struct Ctx<'a> {
     pub bold: &'a FontMetrics,
     pub lists: &'a [SpawnList],
     /// Weapons and Entities tab categories.
-    pub content: [&'a [ContentList]; 3],
+    pub content: [&'a [ContentList]; 4],
     /// Results of the current search (`MenuState::search`), shown instead of the node.
     pub results: &'a SearchResults,
     pub tool: &'a str,
@@ -592,7 +594,7 @@ pub fn build(ctx: &Ctx, st: &MenuState) -> Layout {
     );
     if st.creation_tab == 0 {
         spawnlists(&mut out, ctx, st, cx, cy, cw, ch);
-    } else if (1..=3).contains(&st.creation_tab) {
+    } else if (1..=4).contains(&st.creation_tab) {
         content(&mut out, ctx, st, st.creation_tab - 1, cx, cy, cw, ch);
     }
     let (tx, ty, tw, th) = sheet(
@@ -1048,7 +1050,7 @@ fn content(
     const DIV: f32 = 6.0;
     const NODE_H: f32 = 17.0;
     const ICON: f32 = 128.0;
-    let lists = ctx.content[tab.min(2)];
+    let lists = ctx.content[tab.min(3)];
     search_box(out, ctx, st, x, y, TREE_W);
     let (ty, th) = (y + 24.0, h - 24.0);
     nine(&mut out.items, &TREE, x, ty, TREE_W, th, WHITE);
@@ -1224,7 +1226,8 @@ fn content(
             action: match tab {
                 0 => Action::GiveWeapon(class.clone()),
                 1 => Action::SpawnSent(class.clone()),
-                _ => Action::SpawnNpc(class.clone()),
+                2 => Action::SpawnNpc(class.clone()),
+                _ => Action::SpawnVehicle(class.clone()),
             },
         });
     }

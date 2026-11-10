@@ -1230,6 +1230,9 @@ impl ServerNet {
                     Command::SpawnNpc { key, weapon } => {
                         server.spawn_npc(slot.player, &key, &weapon);
                     }
+                    Command::SpawnVehicle { key } => {
+                        server.spawn_vehicle(slot.player, &key);
+                    }
                     Command::SpawnWeapon { class } => {
                         server.spawn_weapon(slot.player, &class);
                     }
@@ -1818,13 +1821,14 @@ impl ServerNet {
                 slot.spawn_lists_sent = server.spawn_lists_version;
             }
             if slot.content_lists_sent != server.content_version {
-                let (weapons, entities, npcs) = server.content_lists();
+                let (weapons, entities, npcs, vehicles) = server.content_lists();
                 let mut w = Writer::default();
                 ServerMsg::ContentLists {
                     version: server.content_version,
                     weapons,
                     entities,
                     npcs,
+                    vehicles,
                 }
                 .write(&mut w);
                 slot.channel.send_reliable(w.buf);

@@ -1363,7 +1363,7 @@ struct App {
     pending_input: Vec<(String, bool)>,
     spawn_lists_seen: usize,
     /// Weapons / Entities tab categories built from the server's content lists.
-    content: [Vec<derma::ContentList>; 3],
+    content: [Vec<derma::ContentList>; 4],
     content_seen: usize,
     content_lang: Option<std::collections::BTreeMap<String, String>>,
     /// Spawn menu search: every mounted model (lazily listed) and the current results.
@@ -1918,6 +1918,7 @@ impl App {
         let world = &self.sim.client.world;
         let seen = world.content_weapons.len() * 4096 * 4096
             + world.content_npcs.len() * 4096
+            + world.content_vehicles.len() * 64
             + world.content_entities.len()
             + 1;
         if seen == self.content_seen {
@@ -2005,6 +2006,7 @@ impl App {
                 }
             }),
             build(&world.content_npcs, "icon16/monkey.png", &|_| ""),
+            build(&world.content_vehicles, "icon16/car.png", &|_| ""),
         ];
     }
 
@@ -2572,7 +2574,12 @@ impl App {
             bold: &bold,
             header: &header,
             lists: &self.spawnlists,
-            content: [&self.content[0], &self.content[1], &self.content[2]],
+            content: [
+                &self.content[0],
+                &self.content[1],
+                &self.content[2],
+                &self.content[3],
+            ],
             results: &self.search_results,
             tool: &self.tool,
             has_image: &has_image,
@@ -3075,7 +3082,12 @@ impl App {
             bold: &bold,
             header: &header,
             lists: &self.spawnlists,
-            content: [&self.content[0], &self.content[1], &self.content[2]],
+            content: [
+                &self.content[0],
+                &self.content[1],
+                &self.content[2],
+                &self.content[3],
+            ],
             results: &self.search_results,
             tool: &self.tool,
             has_image: &has_image,
@@ -3327,7 +3339,12 @@ impl App {
             bold: &bold,
             header: &header,
             lists: &self.spawnlists,
-            content: [&self.content[0], &self.content[1], &self.content[2]],
+            content: [
+                &self.content[0],
+                &self.content[1],
+                &self.content[2],
+                &self.content[3],
+            ],
             results: &self.search_results,
             tool: &self.tool,
             has_image: &has_image,
@@ -3429,7 +3446,12 @@ impl App {
             bold: &bold,
             header: &header,
             lists: &self.spawnlists,
-            content: [&self.content[0], &self.content[1], &self.content[2]],
+            content: [
+                &self.content[0],
+                &self.content[1],
+                &self.content[2],
+                &self.content[3],
+            ],
             results: &self.search_results,
             tool: &self.tool,
             has_image: &has_image,
@@ -3478,7 +3500,12 @@ impl App {
             bold: &bold,
             header: &header,
             lists: &self.spawnlists,
-            content: [&self.content[0], &self.content[1], &self.content[2]],
+            content: [
+                &self.content[0],
+                &self.content[1],
+                &self.content[2],
+                &self.content[3],
+            ],
             results: &self.search_results,
             tool: &self.tool,
             has_image: &has_image,
@@ -3618,6 +3645,10 @@ impl App {
             Some(derma::Action::SpawnSent(class)) => {
                 self.console.log(format!("gm_spawnsent {class}"));
                 self.sim.client.command(Command::SpawnSent { class });
+            }
+            Some(derma::Action::SpawnVehicle(key)) => {
+                self.console.log(format!("gmod_spawnvehicle {key}"));
+                self.sim.client.command(Command::SpawnVehicle { key });
             }
             Some(derma::Action::SpawnNpc(key)) => {
                 self.console.log(format!("gmod_spawnnpc {key}"));
@@ -5856,7 +5887,7 @@ impl App {
             .find(|p| Some(p.id) == me)
             .filter(|p| p.held.is_some())
             .map(|p| p.held_pos);
-        let mut beams: Vec<(Vec3, Vec3, Vec3)> = Vec::new();
+        let mut beams: Vec<(Vec3, Vec3, Vec3, bool)> = Vec::new();
         if self.weapon == 0 && self.mouse.contains(&0) {
             let fwd = camera.forward();
             let right = fwd.cross(Vec3::Z).normalize_or_zero();
@@ -5901,7 +5932,7 @@ impl App {
                     )
                     .end
             });
-            beams.push((start, fwd, end));
+            beams.push((start, fwd, end, held_pos.is_some()));
         }
         // every other player's beam (physgun.md 10: drawn for all players): from beside their
         // eye to the networked grab point (no world-model physgun attachment yet)
@@ -5914,9 +5945,14 @@ impl App {
             let f = Vec3::new(cp * cy, cp * sy, -sp);
             let r = Vec3::new(sy, -cy, 0.0);
             let eye = p.origin + Vec3::Z * if p.ducked { 28.0 } else { 64.0 };
-            beams.push((eye + r * 8.0 - Vec3::Z * 8.0 + f * 16.0, f, p.held_pos));
+            beams.push((
+                eye + r * 8.0 - Vec3::Z * 8.0 + f * 16.0,
+                f,
+                p.held_pos,
+                true,
+            ));
         }
-        for (start, fwd, end) in beams {
+        for (start, fwd, end, holding) in beams {
             let wc = gm_render::world::DEFAULT_WEAPON_COLOR.clamp(Vec3::ZERO, Vec3::ONE);
             let color = wc.to_array();
             {
@@ -5945,7 +5981,13 @@ impl App {
                         (particles::range(seed, 2.0, 5.0), -t * 3.0, true),
                         (particles::range(seed, 2.0, 6.0), -t * 1.5, true),
                     ];
-                    if let Some(bm) = g.beam_active_mat.as_ref().or(g.beam_mat.as_ref()) {
+                    // `sprites/physbeama` while something is held, `sprites/physbeam` else
+                    let mat = if holding {
+                        g.beam_active_mat.as_ref().or(g.beam_mat.as_ref())
+                    } else {
+                        g.beam_mat.as_ref()
+                    };
+                    if let Some(bm) = mat {
                         for (w, scroll, rev) in widths {
                             let pts = if rev { &reversed } else { &points };
                             let (v, i) = g.world.beam_strip(
@@ -5960,7 +6002,7 @@ impl App {
                         }
                     }
                     if let Some(bm) = &g.beam_mat {
-                        for _ in 0..7 {
+                        for _ in 0..if holding { 7 } else { 2 } {
                             let size = particles::range(seed, 1.0, 16.0);
                             let a = particles::range(seed, 100.0, 255.0) / 255.0;
                             let (v, i) = g.world.sprite_quad_var(
@@ -7578,7 +7620,12 @@ impl App {
                 bold: &bold,
                 header: &header,
                 lists: &self.spawnlists,
-                content: [&self.content[0], &self.content[1], &self.content[2]],
+                content: [
+                    &self.content[0],
+                    &self.content[1],
+                    &self.content[2],
+                    &self.content[3],
+                ],
                 results: &self.search_results,
                 tool: title,
                 has_image: &has_image,
@@ -7634,7 +7681,12 @@ impl App {
                 bold: &bold,
                 header: &header,
                 lists: &self.spawnlists,
-                content: [&self.content[0], &self.content[1], &self.content[2]],
+                content: [
+                    &self.content[0],
+                    &self.content[1],
+                    &self.content[2],
+                    &self.content[3],
+                ],
                 results: &self.search_results,
                 tool: &self.tool,
                 has_image: &has_image,
@@ -9824,7 +9876,7 @@ fn main() -> Result<()> {
         scripted_world: Vec::new(),
         pending_input: Vec::new(),
         spawn_lists_seen: usize::MAX,
-        content: [Vec::new(), Vec::new(), Vec::new()],
+        content: [Vec::new(), Vec::new(), Vec::new(), Vec::new()],
         content_seen: usize::MAX,
         content_lang: None,
         search_models: None,
@@ -11362,10 +11414,19 @@ impl App {
         }
         let decay = (1e-4f32.ln() * dt / 0.5).exp();
         for s in &mut self.fx_sprites {
-            if matches!(
-                s.kind,
-                FxKind::Dust | FxKind::DustNoise | FxKind::Flare | FxKind::Muzzle
-            ) {
+            if matches!(s.kind, FxKind::Dust | FxKind::DustNoise) {
+                // `CDustParticle::UpdateVelocity`: the explosion law, 1e-4 over 0.5 s with a
+                // 32 u/s floor (undecayed, the 250..1500 u/s puffs spread metres from the hit)
+                let v = s.vel;
+                s.vel *= decay;
+                if s.vel.length_squared() < 32.0 * 32.0 {
+                    s.vel = v.normalize_or_zero() * 32.0;
+                }
+                s.pos += s.vel * dt;
+                s.roll += s.roll_d * dt;
+                continue;
+            }
+            if matches!(s.kind, FxKind::Flare | FxKind::Muzzle) {
                 s.pos += s.vel * dt;
                 s.roll += s.roll_d * dt;
                 continue;

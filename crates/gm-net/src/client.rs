@@ -39,6 +39,7 @@ pub struct ClientWorld {
     pub content_weapons: Vec<gm_server::ContentEntry>,
     pub content_entities: Vec<gm_server::ContentEntry>,
     pub content_npcs: Vec<gm_server::ContentEntry>,
+    pub content_vehicles: Vec<gm_server::ContentEntry>,
     /// Scripted entities' world tips (`SetOverlayText`) by entity id, latest version whole.
     pub overlays: Vec<(u32, String)>,
     /// Scripted / sandbox entity classes by entity id (`ServerMsg::EntityClasses`), whole.
@@ -608,6 +609,7 @@ impl ClientNet {
                             content_weapons: std::mem::take(&mut self.world.content_weapons),
                             content_entities: std::mem::take(&mut self.world.content_entities),
                             content_npcs: std::mem::take(&mut self.world.content_npcs),
+                            content_vehicles: std::mem::take(&mut self.world.content_vehicles),
                             overlays: std::mem::take(&mut self.world.overlays),
                             classes: std::mem::take(&mut self.world.classes),
                             edits: std::mem::take(&mut self.world.edits),
@@ -629,11 +631,13 @@ impl ClientNet {
                         weapons,
                         entities,
                         npcs,
+                        vehicles,
                         ..
                     } => {
                         self.world.content_weapons = weapons;
                         self.world.content_entities = entities;
                         self.world.content_npcs = npcs;
+                        self.world.content_vehicles = vehicles;
                     }
                     ServerMsg::EntityOverlays { items, .. } => self.world.overlays = items,
                     ServerMsg::EntityClasses { items } => self.world.classes = items,

@@ -13211,7 +13211,46 @@ impl<'w> Server<'w> {
             .collect()
     }
 
-    pub fn content_lists(&self) -> (Vec<ContentEntry>, Vec<ContentEntry>, Vec<ContentEntry>) {
+    /// `base_vehicles.lua`'s `list.Set("Vehicles")` rows the Vehicles tab shows: the HL2
+    /// vehicles under "Half-Life 2", the seats under `#spawnmenu.category.chairs`.
+    pub fn content_vehicles() -> Vec<ContentEntry> {
+        VEHICLE_LIST
+            .iter()
+            .map(|d| ContentEntry {
+                class: d.key.to_string(),
+                name: match d.key {
+                    "Jeep" => "#spawnmenu.vehicle.jeep",
+                    "Airboat" => "#spawnmenu.vehicle.airboat",
+                    "Pod" => "#spawnmenu.vehicle.prisoner_pod",
+                    "Jalopy" => "#spawnmenu.vehicle.jalopy",
+                    "Chair_Wood" => "#spawnmenu.chair.wooden",
+                    "Chair_Plastic" => "#spawnmenu.chair.plastic",
+                    "Chair_Office1" => "#spawnmenu.chair.office",
+                    "Chair_Office2" => "#spawnmenu.chair.office_big",
+                    "Seat_Jeep" => "#spawnmenu.seat.jeep",
+                    "Seat_Airboat" => "#spawnmenu.seat.airboat",
+                    "Seat_Jalopy" => "#spawnmenu.seat.jalopy",
+                    other => other,
+                }
+                .to_string(),
+                category: if d.key.starts_with("Chair_") || d.key.starts_with("Seat_") {
+                    "#spawnmenu.category.chairs"
+                } else {
+                    "Half-Life 2"
+                }
+                .to_string(),
+            })
+            .collect()
+    }
+
+    pub fn content_lists(
+        &self,
+    ) -> (
+        Vec<ContentEntry>,
+        Vec<ContentEntry>,
+        Vec<ContentEntry>,
+        Vec<ContentEntry>,
+    ) {
         let mut weapons: Vec<ContentEntry> = HL2_SPAWNABLE_WEAPONS
             .iter()
             .filter(|c| weapons::def(c).is_some())
@@ -13253,7 +13292,12 @@ impl<'w> Server<'w> {
                     .unwrap_or_else(|| "#spawnmenu.category.other".into()),
             }
         }));
-        (weapons, entities, Self::content_npcs())
+        (
+            weapons,
+            entities,
+            Self::content_npcs(),
+            Self::content_vehicles(),
+        )
     }
 
     /// `gm_giveswep`: a live player gets a spawnable weapon (given if not carried) and
