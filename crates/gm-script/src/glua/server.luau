@@ -1820,7 +1820,19 @@ end
 events.on("game.restore_failed", function(p) hook.Run("LoadGModSaveFailed", p.error or "") end)
 -- @hook GM:OnLuaError
 -- every actor error the runtime logged last tick (the addon's label as the script name)
-events.on("lua.error", function(p) hook.Run("OnLuaError", p.error or "", "server", "", p.name or "", 0) end)
+-- the stack is the game's {Function, File, Line} rows, innermost first (the runtime encodes
+-- it as tab-separated lines); the addon's id stands in for the title, the workshop id is 0
+local function lua_error_stack(encoded)
+    local stack = {}
+    for line in string.gmatch(encoded or "", "[^\n]+") do
+        local func, file, ln = string.match(line, "^([^\t]*)\t([^\t]*)\t([^\t]*)$")
+        if func then
+            stack[#stack + 1] = { Function = func, File = file, Line = tonumber(ln) or -1 }
+        end
+    end
+    return stack
+end
+events.on("lua.error", function(p) hook.Run("OnLuaError", p.error or "", "server", lua_error_stack(p.stack), p.name or "", 0) end)
 events.on("game.restore", function(p)
     saverestore.PreRestore()
     hook.Run("LoadGModSave", p.data or "", p.map or "", p.timestamp or 0)

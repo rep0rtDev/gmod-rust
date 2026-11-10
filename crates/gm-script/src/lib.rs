@@ -94,7 +94,7 @@ pub struct Runtime {
     pub tick: u64,
     pub log: Vec<String>,
     /// Actor errors since the last tick, for `lua.error` (`GM:OnLuaError`).
-    pending_errors: Vec<(String, String)>,
+    pending_errors: Vec<(String, String, String)>,
     /// How many of `server.cvar_changes` were already dispatched as `cvar.changed`.
     cvar_seen: usize,
     /// Client realm: the replicated variables as last seen, for `cvar.changed`.
@@ -742,17 +742,29 @@ impl Runtime {
 
     /// Before the server tick: `tick.pre`.
     fn actor_failed(&mut self, label: String, error: String) {
-        self.log.push(format!("[{label}] {error}"));
-        self.pending_errors.push((label, error));
+        let (message, stack) = parse_lua_error(&error);
+        // the game's console block: the message, then the numbered stack
+        let mut block = format!("[{label}] {message}");
+        for (i, (func, file, line)) in stack.iter().enumerate() {
+            block.push_str(&format!("\n  {}. {func} - {file}:{line}", i + 1));
+        }
+        self.log.push(block);
+        let encoded = stack
+            .iter()
+            .map(|(f, file, line)| format!("{f}\t{file}\t{line}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        self.pending_errors.push((label, message, encoded));
     }
 
     /// `lua.error {name, error}` for every actor error since the last tick (`GM:OnLuaError`);
     /// an error inside the handler itself waits for the next tick.
     fn dispatch_errors(&mut self, server: &mut Server<'_>) {
-        for (name, error) in std::mem::take(&mut self.pending_errors) {
+        for (name, error, stack) in std::mem::take(&mut self.pending_errors) {
             let mut p = api::Payload::default();
             p.strs.push(("name", name));
             p.strs.push(("error", error));
+            p.strs.push(("stack", stack));
             self.run_event(server, "lua.error", p);
         }
     }
@@ -1577,15 +1589,17 @@ impl Runtime {
                 .collect();
             self.pool.run(jobs);
         }
+        let mut failed = Vec::new();
         for (a, r) in self.actors.iter_mut().zip(results) {
             if let Err(e) = r {
-                let label = a.label();
-                self.log.push(format!("[{label}] {e}"));
-                self.pending_errors.push((label, format!("{e}")));
+                failed.push((a.label(), format!("{e}")));
             }
             for line in a.take_prints() {
                 self.log.push(format!("[{}] {line}", a.label()));
             }
+        }
+        for (label, error) in failed {
+            self.actor_failed(label, error);
         }
     }
 
@@ -2459,4 +2473,54 @@ impl gm_server::ServerHooks for SharedRuntime {
     fn drain_published(&mut self) -> Vec<gm_server::PublishedPackage> {
         gm_server::ServerHooks::drain_published(&mut *self.0.lock().unwrap())
     }
+}
+
+/// Splits an actor error as mlua renders it (`runtime error: <chunk>:<line>: <msg>` and a
+/// `stack traceback:` of `\t<chunk>:<line>: in function '<name>'` lines) into the message
+/// and the stack the game hands `GM:OnLuaError` as `{Function, File, Line}` rows, innermost
+/// first: chunk names `[string "addon/actor"]` become `addon/actor`, C frames keep `[C]`
+/// and line -1, anonymous functions are `unknown`; the runtime's own prelude frames and the
+/// handler's `[C]: in ?` are left out.
+pub fn parse_lua_error(error: &str) -> (String, Vec<(String, String, i64)>) {
+    let text = error.strip_prefix("runtime error: ").unwrap_or(error);
+    let (message, trace) = match text.split_once("\nstack traceback:\n") {
+        Some((m, t)) => (m, t),
+        None => (text, ""),
+    };
+    let chunk = |s: &str| -> String {
+        s.strip_prefix("[string \"")
+            .and_then(|r| r.strip_suffix("\"]"))
+            .unwrap_or(s)
+            .to_string()
+    };
+    let message = {
+        // `[string "a/b"]:3: boom` -> `a/b:3: boom`
+        match message.split_once("]:") {
+            Some((head, rest)) if head.starts_with("[string \"") => {
+                format!("{}:{rest}", chunk(&format!("{head}]")))
+            }
+            _ => message.to_string(),
+        }
+    };
+    let mut stack = Vec::new();
+    for line in trace.lines() {
+        let line = line.trim();
+        let Some((loc, what)) = line.split_once(": in ") else {
+            continue;
+        };
+        if loc.contains("[string \"prelude\"]") || (loc == "[C]" && what == "?") {
+            continue;
+        }
+        let (file, lineno) = match loc.rsplit_once(':') {
+            Some((f, n)) if n.parse::<i64>().is_ok() => (chunk(f), n.parse::<i64>().unwrap()),
+            _ => (chunk(loc), -1),
+        };
+        let func = what
+            .strip_prefix("function ")
+            .map(|f| f.trim_matches('\'').to_string())
+            .filter(|f| !f.starts_with('<') && !f.is_empty())
+            .unwrap_or_else(|| "unknown".to_string());
+        stack.push((func, file, lineno));
+    }
+    (message.to_string(), stack)
 }

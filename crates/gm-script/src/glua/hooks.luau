@@ -732,7 +732,18 @@ if CLIENT then
             end
         end
     end))
-    events.on("lua.error", function(p) hook.Run("OnClientLuaError", p.message or p.error or "", "client", p.stack or "", p.addon or "", 0) end)
+    -- the stack as the game's {Function, File, Line} rows (tab-separated lines from the runtime)
+    local function lua_error_stack(encoded)
+        local stack = {}
+        for line in string.gmatch(encoded or "", "[^\n]+") do
+            local func, file, ln = string.match(line, "^([^\t]*)\t([^\t]*)\t([^\t]*)$")
+            if func then
+                stack[#stack + 1] = { Function = func, File = file, Line = tonumber(ln) or -1 }
+            end
+        end
+        return stack
+    end
+    events.on("lua.error", function(p) hook.Run("OnClientLuaError", p.message or p.error or "", "client", lua_error_stack(p.stack), p.addon or "", 0) end)
     events.on("entity.created", safe(function(p)
         local e = Entity(p.entity or 0)
         hook.Run("NetworkEntityCreated", e)

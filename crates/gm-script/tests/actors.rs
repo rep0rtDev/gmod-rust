@@ -1963,3 +1963,42 @@ fn glua_client_chat_line_reaches_the_chat_box_through_onplayerchat() {
         "ChatText sees the whole line with the player's name: {t:?}"
     );
 }
+
+#[test]
+fn lua_error_carries_the_games_stack_rows() {
+    let mut rt = Runtime::new();
+    rt.load(spec(
+        "crash",
+        0,
+        "local function inner() error('boom') end\nlocal function outer() inner() end\nevents.on('tick.pre', function() outer() end)",
+    ))
+    .unwrap();
+    let a = &mut rt.actors_mut()[0];
+    let r = a.dispatch(
+        &Arc::new(Snapshot::default()),
+        "tick.pre",
+        &Payload::default(),
+        1,
+    );
+    let text = r.unwrap_err().to_string();
+    let (message, stack) = gm_script::parse_lua_error(&text);
+    assert_eq!(message, "test/crash:1: boom");
+    let rows: Vec<(&str, &str, i64)> = stack
+        .iter()
+        .map(|(f, file, l)| (f.as_str(), file.as_str(), *l))
+        .collect();
+    assert_eq!(
+        rows,
+        vec![
+            ("error", "[C]", -1),
+            ("inner", "test/crash", 1),
+            ("outer", "test/crash", 2),
+            ("unknown", "test/crash", 3),
+        ],
+        "{text}"
+    );
+    assert_eq!(
+        gm_script::parse_lua_error("runtime error: plain message").0,
+        "plain message"
+    );
+}
