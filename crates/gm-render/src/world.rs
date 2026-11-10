@@ -2202,10 +2202,12 @@ impl WorldRenderer {
                 if face.side != 0 {
                     n = -n;
                 }
+                // func_reflective_glass is a brush entity: its faces sit relative to its origin
+                let off = face_offset.get(&fi).map_or(Vec3::ZERO, |o| Vec3::from(*o));
                 let poly: Vec<Vec3> = bsp
                     .face_vertices(face)
                     .into_iter()
-                    .map(Vec3::from)
+                    .map(|v| Vec3::from(v) + off)
                     .collect();
                 if let Some(first) = poly.first().copied() {
                     let (lo, hi) = poly
@@ -3495,6 +3497,17 @@ impl WorldRenderer {
     /// it, drawn by a real camera below the plane (pitch and roll negated, so the winding
     /// stays and the image is read upside down); everything below the plane is clipped.
     fn draw_reflection(&self, gpu: &Gpu, camera: &Camera, aspect: f32, items: &[DrawItem<'_>]) {
+        if std::env::var_os("GM_RENDER_LOG").is_some() {
+            eprintln!(
+                "reflection: eye {:?} plane {:?} mirrors {:?}",
+                camera.position,
+                self.reflected_plane(camera.position),
+                self.mirrors
+                    .iter()
+                    .map(|m| (m.normal, m.d, m.min, m.max))
+                    .collect::<Vec<_>>()
+            );
+        }
         let Some((n, zs)) = self.reflected_plane(camera.position) else {
             self.reflect.lock().unwrap().valid = false;
             return;
