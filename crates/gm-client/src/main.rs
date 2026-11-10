@@ -2663,6 +2663,7 @@ impl App {
                 alpha: 1.0,
             };
             let item = DrawItem {
+                look: None,
                 dissolve: 0.0,
                 tint: Vec3::ONE,
                 model: m,
@@ -6110,6 +6111,8 @@ impl App {
             .collect();
         let classes = &self.sim.client.world.classes;
         let is_ball = |id: u32| classes.iter().any(|(i, c)| *i == id && c == "sent_ball");
+        // NPCs within 600 u watch the local player's eyes (the game's head / eye tracking)
+        let look_at = self.sim.origin + Vec3::Z * 64.0;
         let mut items: Vec<_> = ents
             .values()
             .filter_map(|e| {
@@ -6135,6 +6138,7 @@ impl App {
                 };
                 if let Some((_, skin)) = rag_poses.iter().find(|(id, _)| *id == e.id) {
                     return Some(DrawItem {
+                        look: None,
                         dissolve,
                         tint: Vec3::ONE,
                         model,
@@ -6142,7 +6146,11 @@ impl App {
                         bones: Some(skin.as_slice()),
                     });
                 }
+                let look =
+                    (!e.sequence.is_empty() && e.dissolve == 0 && pos.distance(look_at) < 600.0)
+                        .then_some(look_at);
                 Some(DrawItem {
+                    look,
                     dissolve,
                     tint: Vec3::ONE,
                     model,
@@ -6254,6 +6262,7 @@ impl App {
                 None => {
                     let h = if p.ducked { 36.0 } else { 72.0 };
                     items.push(DrawItem {
+                        look: None,
                         dissolve: 0.0,
                         tint: Vec3::ONE,
                         model: &g.player_box,
@@ -6270,6 +6279,7 @@ impl App {
                 let transform =
                     gm_render::world::model_transform(*origin, Vec3::new(0.0, *yaw, 0.0));
                 items.push(DrawItem {
+                    look: None,
                     dissolve: 0.0,
                     tint: *tint,
                     model: m,
@@ -6279,6 +6289,7 @@ impl App {
                 if let Some((path, bones)) = held {
                     if let Some(wm) = g.models.get(*path).and_then(|w| w.as_ref()) {
                         items.push(DrawItem {
+                            look: None,
                             dissolve: 0.0,
                             tint: Vec3::ONE,
                             model: wm,
@@ -6292,6 +6303,7 @@ impl App {
         for sh in &self.fx_shells {
             if let Some(m) = g.models.get(sh.model).and_then(|m| m.as_ref()) {
                 items.push(DrawItem {
+                    look: None,
                     dissolve: 0.0,
                     tint: Vec3::ONE,
                     model: m,
@@ -7715,6 +7727,7 @@ impl App {
             };
             if let Some(m) = g.models.get(model.as_str()).and_then(|m| m.as_ref()) {
                 let ghost = [DrawItem {
+                    look: None,
                     dissolve: 0.0,
                     tint: Vec3::ONE,
                     model: m,
@@ -7802,6 +7815,7 @@ impl App {
                 let (vm_pos, vm_ang) = self.vm_view.view(speed, camera.position, self.view);
                 let transform = gm_render::world::model_transform(vm_pos, vm_ang);
                 let mut vm_items = vec![DrawItem {
+                    look: None,
                     dissolve: 0.0,
                     tint: Vec3::ONE,
                     model: m,
@@ -7810,6 +7824,7 @@ impl App {
                 }];
                 if let (Some(h), Some(hp)) = (hands, &hands_pose) {
                     vm_items.push(DrawItem {
+                        look: None,
                         dissolve: 0.0,
                         tint: Vec3::ONE,
                         model: h,

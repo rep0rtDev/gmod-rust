@@ -341,6 +341,38 @@ pub fn collect_static_props(
 /// eye bone's space (`pose_to_bone`), the iris uv is its offset from the eye centre along
 /// right / up over the eye's diameter, scaled by `iris_scale` (studiorender's eyeball
 /// projection at rest, the eye looking down `forward`).
+/// An eyeball in rest-pose space (see [`EyeFrame::eye_info`]).
+#[derive(Clone, Copy, Debug)]
+pub struct EyeInfo {
+    pub bone: usize,
+    pub org: Vec3,
+    pub up: Vec3,
+    pub fwd: Vec3,
+    pub k: f32,
+}
+
+impl EyeInfo {
+    /// Iris uv of the rest-pose vertex `position` with the eye turned towards `target` (rest
+    /// pose space); the eye deflects at most 45 degrees from its forward.
+    pub fn iris_uv_towards(&self, position: Vec3, target: Vec3) -> [f32; 2] {
+        let mut fwd = (target - self.org).normalize_or_zero();
+        if fwd == Vec3::ZERO {
+            fwd = self.fwd;
+        }
+        let max_cos = std::f32::consts::FRAC_1_SQRT_2;
+        let c = fwd.dot(self.fwd);
+        if c < max_cos {
+            // slide the direction back onto the 45 degree cone
+            let side = (fwd - self.fwd * c).normalize_or_zero();
+            fwd = (self.fwd * max_cos + side * (1.0 - max_cos * max_cos).sqrt()).normalize();
+        }
+        let right = fwd.cross(self.up).normalize_or_zero();
+        let up = right.cross(fwd).normalize_or_zero();
+        let d = position - self.org;
+        [0.5 + d.dot(right) * self.k, 0.5 - d.dot(up) * self.k]
+    }
+}
+
 pub struct EyeFrame {
     pose_to_bone: Mat4,
     org: Vec3,
@@ -367,6 +399,25 @@ impl EyeFrame {
             up,
             radius: e.radius,
             iris_scale: e.iris_scale,
+        }
+    }
+
+    /// The eyeball in the model's rest-pose space, for re-aiming the iris at a look target
+    /// per frame (studiorender's `R_StudioEyeballPosition`): centre, up and forward and the
+    /// uv scale per unit.
+    pub fn eye_info(&self, bone: usize) -> EyeInfo {
+        let b2p = self.pose_to_bone.inverse();
+        let fwd = self.up.cross(self.right).normalize_or_zero();
+        EyeInfo {
+            bone,
+            org: b2p.transform_point3(self.org),
+            up: b2p.transform_vector3(self.up).normalize_or_zero(),
+            fwd: b2p.transform_vector3(fwd).normalize_or_zero(),
+            k: if self.radius > 0.0 {
+                self.iris_scale.max(0.01) / (2.0 * self.radius)
+            } else {
+                0.0
+            },
         }
     }
 

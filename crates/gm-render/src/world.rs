@@ -1098,7 +1098,15 @@ impl DynVertex {
 /// A drawable piece of a [`DynModel`]: material bind group, vertices, indices, `$halflambert`,
 /// and whether the material's shader is unlit (`UnlitGeneric`: the toolgun screen) - such parts
 /// skip the model's origin lighting instead of only the shader's per-pixel light.
-type DynPart = (wgpu::BindGroup, Vec<DynVertex>, Vec<u32>, bool, bool, bool);
+type DynPart = (
+    wgpu::BindGroup,
+    Vec<DynVertex>,
+    Vec<u32>,
+    bool,
+    bool,
+    bool,
+    Option<crate::props::EyeInfo>,
+);
 
 /// The bones of a `DynModel` and where its animations come from.
 struct Skeleton {
@@ -1476,6 +1484,8 @@ pub struct DrawItem<'a> {
     pub tint: Vec3,
     /// Dissolve progress 0..1 (combine ball kill), 0 for none.
     pub dissolve: f32,
+    /// World point the model's eyes look at (an NPC watching the player), if any.
+    pub look: Option<Vec3>,
 }
 
 impl DynModel {
@@ -4559,6 +4569,7 @@ impl WorldRenderer {
                 mat.half_lambert,
                 is_unlit(&mat.shader),
                 mat.player_color_tint,
+                None,
             ));
         }
         Some(DynModel {
@@ -4643,6 +4654,9 @@ impl WorldRenderer {
                     let b = mdl.bones.get(e.bone.max(0) as usize)?;
                     Some(crate::props::EyeFrame::new(e, &b.pose_to_bone))
                 });
+                let eye_info = eye
+                    .zip(eye_frame.as_ref())
+                    .map(|(e, f)| f.eye_info(e.bone.max(0) as usize));
                 let mut remap: HashMap<u32, u32> = HashMap::new();
                 let mut verts = Vec::new();
                 let mut idx = Vec::with_capacity(mesh.indices.len());
@@ -4678,6 +4692,7 @@ impl WorldRenderer {
                     mat.half_lambert,
                     is_unlit(&mat.shader),
                     mat.player_color_tint,
+                    eye_info,
                 ));
             }
         }
@@ -4688,7 +4703,7 @@ impl WorldRenderer {
             anims: AnimSource::for_model(mount, bytes, &mdl),
         });
         let mut bounds = (Vec3::splat(f32::MAX), Vec3::splat(f32::MIN));
-        for (_, verts, _, _, _, _) in &parts {
+        for (_, verts, _, _, _, _, _) in &parts {
             for v in verts {
                 let p = Vec3::from(v.position);
                 bounds.0 = bounds.0.min(p);
@@ -5603,7 +5618,7 @@ impl WorldRenderer {
         DynModel {
             part_textures: Vec::new(),
             bounds: (Vec3::splat(-0.5), Vec3::splat(0.5)),
-            parts: vec![(bg, verts, idx, false, false, false)],
+            parts: vec![(bg, verts, idx, false, false, false, None)],
             unlit,
             skeleton: None,
             bodygroups: Vec::new(),
@@ -5656,9 +5671,16 @@ impl WorldRenderer {
                     .unwrap_or((Vec3::Z, Vec3::ZERO)),
                 None => (Vec3::ZERO, Vec3::ZERO),
             };
-            for (bg, pv, pi, half_lambert, part_unlit, player_tint) in &m.parts {
+            for (bg, pv, pi, half_lambert, part_unlit, player_tint, eye) in &m.parts {
                 let tint = if *player_tint { item.tint } else { Vec3::ONE };
                 let tint = tint.extend(item.dissolve);
+                // an eyeball looking at the item's target: the iris re-projected per frame
+                // towards the target brought into the model's rest pose space
+                let look = eye.zip(item.look).and_then(|(e, target)| {
+                    let skin = item.bones.or(m.rest_skin.as_deref())?.get(e.bone)?;
+                    let to_rest = (*xf * *skin).inverse();
+                    Some((e, to_rest.transform_point3(target)))
+                });
                 let base = verts.len() as u32;
                 for v in pv {
                     let (p, n) = match item.bones.or(m.rest_skin.as_deref()) {
@@ -5675,7 +5697,12 @@ impl WorldRenderer {
                         position: xf.transform_point3(p).to_array(),
                         uv: v.uv,
                         lm_uv: if v.iris_uv[0] > -0.5 {
-                            v.iris_uv
+                            match look {
+                                Some((e, target)) => {
+                                    e.iris_uv_towards(Vec3::from(v.position), target)
+                                }
+                                None => v.iris_uv,
+                            }
                         } else {
                             self.white_uv
                         },
