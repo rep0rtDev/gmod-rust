@@ -2399,7 +2399,7 @@ impl App {
                 break;
             }
             let key = format!("icon:{model}");
-            if g.ui.has_image(&key) {
+            if model.is_empty() || g.ui.has_image(&key) {
                 continue;
             }
             if !g.models.contains_key(model.as_str()) {

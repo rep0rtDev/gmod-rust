@@ -4569,6 +4569,9 @@ impl WorldRenderer {
         skin: u8,
         body: &str,
     ) -> Option<DynModel> {
+        if path.is_empty() {
+            return None;
+        }
         let (mdl, vvd, vtx, lod_index) =
             crate::props::load_model(mount, path, self.quality.root_lod as usize)
                 .map_err(|e| eprintln!("model {path}: {e}"))
