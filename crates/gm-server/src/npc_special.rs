@@ -61,6 +61,13 @@ const BARNACLE_BITE: f32 = 15.0;
 const BARNACLE_MOUTH: f32 = 24.0;
 
 const ROLLER_RANGE: f32 = 1500.0;
+/// `special.phase` of a mine set off by a blast or fire: it detonates at `special.until`
+/// (`PreDetonate`, 0.1..0.5 s later), then the explosion itself (`ROLLER_EXPLODING_PHASE`).
+pub(crate) const ROLLER_DETONATE_PHASE: u8 = 9;
+pub(crate) const ROLLER_EXPLODING_PHASE: u8 = 10;
+/// The mine's explosion (ExplosionCreate magnitude / radius).
+const ROLLER_EXPLODE_DAMAGE: f32 = 25.0;
+const ROLLER_EXPLODE_RADIUS: f32 = 150.0;
 const ROLLER_SPEED: f32 = 300.0;
 /// Rolling resistance of the mine on the floor (u/s^2: the hacked mine's coast 41 -> 9 u/s
 /// over 48 ticks in server_npc_tick_rollermine_hacked 261107).
@@ -662,6 +669,32 @@ impl Server<'_> {
 
     fn tick_rollermine(&mut self, id: u32, now: u64) {
         self.register_class_sched_block(id);
+        if let Some(n) = self
+            .npcs
+            .get(&id)
+            .filter(|n| n.special.phase == ROLLER_DETONATE_PHASE)
+        {
+            if now < n.special.until {
+                if now + 1 == n.special.until {
+                    self.emit_sound(id, "NPC_RollerMine.ExplodeChirp".to_string(), 1.0);
+                }
+                return;
+            }
+            let (pos, attacker) = (n.pos, n.special.target.unwrap_or(0));
+            if let Some(n) = self.npcs.get_mut(&id) {
+                n.special.phase = ROLLER_EXPLODING_PHASE;
+                n.dissolved = true;
+            }
+            self.explode(
+                pos,
+                attacker,
+                ROLLER_EXPLODE_DAMAGE,
+                ROLLER_EXPLODE_RADIUS,
+                "npc_rollermine",
+            );
+            self.damage_npc_typed(id, attacker, 1.0, 0, false);
+            return;
+        }
         // idle stand in NPC_STATE_IDLE from the first think, as the probe reads it
         if let Some(n) = self.npcs.get_mut(&id) {
             if n.ai.state == crate::ai::NPC_STATE_NONE {

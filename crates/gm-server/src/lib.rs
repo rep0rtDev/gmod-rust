@@ -5920,6 +5920,9 @@ pub struct Player {
     pub view_angles: Vec3,
     /// The prop held by the physgun and how it was grabbed.
     pub held: Option<(u32, Grab)>,
+    /// The right button froze the held object: the physgun grabs nothing more until the left
+    /// button is released (the game's physgun needs a new press to pick up again).
+    pub physgun_latched: bool,
     /// The prop carried with +use (`gm_physics::pickup`).
     pub carry: Option<(u32, gm_physics::pickup::Carry)>,
     /// The prop driven with the `drive` property.
@@ -7697,6 +7700,7 @@ impl Player {
             },
             view_angles,
             held: None,
+            physgun_latched: false,
             driving: None,
             seat: None,
             swep: BTreeMap::new(),
@@ -10979,6 +10983,37 @@ impl<'w> Server<'w> {
             }
             self.push_player(id, at, damage);
             self.hurt(id, damage, weapons::DMG_BLAST, RESPAWN_TICKS - 1);
+        }
+        let npcs: Vec<(u32, Vec3, Vec3, Vec3)> = self
+            .npcs
+            .iter()
+            .filter(|(_, n)| n.dead_at.is_none())
+            .map(|(id, n)| (*id, n.pos, n.mins, n.maxs))
+            .collect();
+        for (id, pos, mins, maxs) in npcs {
+            let (lo, hi) = (pos + mins, pos + maxs);
+            let centre = (lo + hi) * 0.5;
+            let to = centre - src;
+            let len = to.length();
+            if len < 1e-3 {
+                continue;
+            }
+            let dir = to / len;
+            let Some(dist) = ray_box_entry(src, dir, lo, hi).map(|d| (d - 1.0 / 32.0).max(0.0))
+            else {
+                continue;
+            };
+            if dist >= radius {
+                continue;
+            }
+            let world = self
+                .collision
+                .trace_ray(src, centre, gm_collision::MASK_SOLID);
+            if world.fraction * len < dist {
+                continue;
+            }
+            let damage = base * (1.0 - dist / radius);
+            self.damage_npc_typed(id, attacker, damage, 0, false);
         }
     }
 
@@ -15766,6 +15801,30 @@ impl<'w> Server<'w> {
         if n.target == Some(attacker) {
             n.last_enemy_damage = tick;
         }
+        // the rollermine has no health to lose: a bullet spins it (its shell rings), a blast
+        // or fire sets it off a moment later (`npc_special::ROLLER_DETONATE_PHASE`)
+        if n.class == "npc_rollermine" && n.special.phase != npc_special::ROLLER_EXPLODING_PHASE {
+            let body = n.body.and_then(|p| self.bodies.get(&p).copied());
+            if bullet {
+                if let Some(b) = body {
+                    let st = self.physics.state(b);
+                    let salt = tick ^ u64::from(id) << 8;
+                    let spin = Vec3::new(
+                        (salt % 801) as f32 - 400.0,
+                        ((salt >> 10) % 801) as f32 - 400.0,
+                        ((salt >> 20) % 801) as f32 - 400.0,
+                    );
+                    self.physics
+                        .set_velocity(b, st.velocity, st.angular_velocity + spin);
+                }
+                self.emit_sound(id, "NPC_RollerMine.Hurt".to_string(), 1.0);
+            } else if n.special.phase != npc_special::ROLLER_DETONATE_PHASE {
+                n.special.phase = npc_special::ROLLER_DETONATE_PHASE;
+                n.special.until = tick + 7 + (tick ^ u64::from(id)) % 27;
+                n.special.target = Some(attacker);
+            }
+            return false;
+        }
         if n.dead_at.is_some() {
             return false;
         }
@@ -17191,20 +17250,23 @@ impl<'w> Server<'w> {
             .npcs
             .iter()
             .filter(|(_, n)| {
-                n.dead_at.is_none()
-                    && n.body.is_none()
-                    && matches!(
-                        n.class.as_str(),
-                        "npc_strider" | "npc_rollermine" | "npc_rollermine_hacked"
-                    )
+                n.dead_at.is_none() && n.body.is_none() && !n.held && npc_flyer(&n.class).is_none()
             })
             .map(|(id, _)| *id)
             .collect();
         for id in ids {
-            let (class, pos, think) = {
+            let (class, pos, think, falling) = {
                 let n = &self.npcs[&id];
-                (n.class.clone(), n.pos, now >= n.next_think)
+                (
+                    n.class.clone(),
+                    n.pos,
+                    now >= n.next_think,
+                    n.fall_vel > 0.0,
+                )
             };
+            // a walker only falls once dropped in the air (a physgun release): on the ground
+            // its own step keeps it on the floor
+            let dropped = !matches!(class.as_str(), "npc_strider" | "npc_rollermine");
             if class == "npc_strider" {
                 if !think {
                     continue;
@@ -17241,9 +17303,17 @@ impl<'w> Server<'w> {
                     continue;
                 };
                 if frac >= 1.0 {
+                    if dropped || falling {
+                        // no floor within reach: free fall
+                        n.fall_vel += 600.0 * gm_sandbox::SERVER_TICK;
+                        n.pos.z -= n.fall_vel * gm_sandbox::SERVER_TICK;
+                    }
                     continue;
                 }
-                let rest = pos.z - probe * frac + ROLLERMINE_REST;
+                if dropped && !falling {
+                    continue;
+                }
+                let rest = pos.z - probe * frac + if dropped { 0.0 } else { ROLLERMINE_REST };
                 if pos.z > rest + 0.01 {
                     n.fall_vel += 600.0 * gm_sandbox::SERVER_TICK;
                     n.pos.z = (pos.z - n.fall_vel * gm_sandbox::SERVER_TICK).max(rest);
@@ -23277,6 +23347,12 @@ impl<'w> Server<'w> {
         let attack = pc.cmd.buttons & IN_ATTACK != 0;
         let use_key = pc.cmd.buttons & IN_USE != 0;
         let attack2 = pc.cmd.buttons & IN_ATTACK2 != 0;
+        if !attack {
+            if let Some(p) = self.players.get_mut(&player) {
+                p.physgun_latched = false;
+            }
+        }
+        let latched = self.players.get(&player).is_some_and(|p| p.physgun_latched);
         let use_pressed = use_key
             && self
                 .players
@@ -23436,7 +23512,7 @@ impl<'w> Server<'w> {
         let held = self.players.get(&player).and_then(|p| p.held);
         let had = held.is_some();
         let held = match held {
-            None if attack && pc.physgun => {
+            None if attack && pc.physgun && !latched => {
                 let bodies = self.trace_bodies();
                 let hit = gm_sandbox::physgun_trace(self.collision, &bodies, eye, forward);
                 match hit.and_then(|h| h.ent.map(|e| (e, h))) {
@@ -23543,6 +23619,7 @@ impl<'w> Server<'w> {
                     .push(GameEvent::PhysgunFreeze { player, ent });
                 if let Some(p) = self.players.get_mut(&player) {
                     p.inventory.physgun_secondary();
+                    p.physgun_latched = true;
                 }
                 None
             }
