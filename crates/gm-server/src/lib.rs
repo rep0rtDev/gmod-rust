@@ -7921,6 +7921,13 @@ fn death_pose(
         (false, false, true) => "walk_all",
         _ => "idle_all_01",
     };
+    sequence_pose(rd, name, tick)
+}
+
+/// The local bone poses of `sequence` at the cycle tick `tick` reads (frames interpolated),
+/// when the model's death poses carry it: an NPC's ragdoll starts from the frame of the
+/// animation it died in.
+fn sequence_pose(rd: &RagdollInfo, name: &str, tick: u64) -> Option<Vec<(Vec3, Quat)>> {
     let dp = rd
         .death_poses
         .iter()
@@ -15883,6 +15890,7 @@ impl<'w> Server<'w> {
             let (pos, yaw) = (n.pos, n.angles.y);
             let (model, angles, dissolved) = (n.model.clone(), n.angles, n.dissolved);
             let crouched = npc_sequence_crouched(&n.sequence);
+            let sequence = n.sequence.clone();
             self.game_events.push(GameEvent::NpcKilled {
                 npc: id,
                 attacker,
@@ -15898,6 +15906,15 @@ impl<'w> Server<'w> {
             };
             if !dissolved && !model.is_empty() {
                 let rag = self.sandbox.restore_prop(owner, &model, pos, angles, false);
+                // the ragdoll starts from the frame of the animation the NPC died in
+                if let Some(pose) = self
+                    .models
+                    .get(&model)
+                    .and_then(|m| m.ragdoll.as_ref())
+                    .and_then(|rd| sequence_pose(rd, &sequence, tick))
+                {
+                    self.ragdoll_spawn_pose.insert(rag, pose);
+                }
                 self.sync_physics();
                 self.sandbox.add_cleanup(owner, "ragdolls", rag);
             }

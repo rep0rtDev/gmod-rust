@@ -383,10 +383,54 @@ const DEATH_POSE_SEQUENCES: [&str; 5] = [
     "cwalk_all",
 ];
 
-/// Every frame of the death-pose sequences the model or its include models (a player model
-/// animates through `m_anm`) carry, as local poses of the model's bones matched by name; bones
-/// the animation lacks keep `reference`. A blended sequence plays its forward cell (`move_x`
-/// 1, other parameters 0).
+/// Activities an NPC can be playing when it dies (see `gm_server`'s NPC thinks): its ragdoll
+/// starts from the current frame of that sequence, like the game's `BecomeRagdoll`.
+const NPC_DEATH_POSE_ACTS: [&str; 38] = [
+    "ACT_IDLE",
+    "ACT_IDLE_ANGRY",
+    "ACT_IDLE_RELAXED",
+    "ACT_IDLE_SMG1",
+    "ACT_IDLE_SMG1_RELAXED",
+    "ACT_IDLE_ANGRY_SMG1",
+    "ACT_IDLE_PISTOL",
+    "ACT_IDLE_SHOTGUN_RELAXED",
+    "ACT_CROUCHIDLE",
+    "ACT_WALK",
+    "ACT_RUN",
+    "ACT_WALK_AIM",
+    "ACT_RUN_AIM",
+    "ACT_WALK_RIFLE",
+    "ACT_RUN_RIFLE",
+    "ACT_WALK_AIM_RIFLE",
+    "ACT_RUN_AIM_RIFLE",
+    "ACT_WALK_PISTOL",
+    "ACT_RUN_PISTOL",
+    "ACT_WALK_AIM_PISTOL",
+    "ACT_RUN_AIM_PISTOL",
+    "ACT_WALK_AIM_SHOTGUN",
+    "ACT_RUN_AIM_SHOTGUN",
+    "ACT_RANGE_ATTACK1",
+    "ACT_RANGE_ATTACK1_LOW",
+    "ACT_RANGE_ATTACK_SMG1",
+    "ACT_RANGE_ATTACK_SMG1_LOW",
+    "ACT_RANGE_ATTACK_AR2",
+    "ACT_RANGE_ATTACK_AR2_LOW",
+    "ACT_RANGE_ATTACK_SHOTGUN",
+    "ACT_RANGE_ATTACK_SHOTGUN_LOW",
+    "ACT_RANGE_ATTACK_PISTOL",
+    "ACT_RANGE_ATTACK_PISTOL_LOW",
+    "ACT_COVER_SMG1_LOW",
+    "ACT_MELEE_ATTACK1",
+    "ACT_RELOAD",
+    "ACT_RELOAD_SMG1",
+    "ACT_RELOAD_PISTOL",
+];
+
+/// Every frame of the death-pose sequences (the player's movement sequences and the NPC
+/// activities above) the model or its include models (a player model animates through
+/// `m_anm`) carry, as local poses of the model's bones matched by name; bones the animation
+/// lacks keep `reference`. A blended sequence plays its forward cell (`move_x` 1, other
+/// parameters 0).
 fn death_poses(
     mount: &gm_content::Mount,
     data: &[u8],
@@ -405,8 +449,18 @@ fn death_poses(
     let sources: Vec<(&[u8], &mdl::Mdl)> = std::iter::once((data, mdl))
         .chain(includes.iter().map(|(b, m)| (b.as_slice(), m)))
         .collect();
+    let mut names: Vec<String> = DEATH_POSE_SEQUENCES.iter().map(|s| s.to_string()).collect();
+    for &(bytes, m) in &sources {
+        for seq in mdl::sequences(bytes, &m.header) {
+            if NPC_DEATH_POSE_ACTS.contains(&seq.activity_name.as_str())
+                && !names.iter().any(|n| n.eq_ignore_ascii_case(&seq.name))
+            {
+                names.push(seq.name);
+            }
+        }
+    }
     let mut out = Vec::new();
-    for name in DEATH_POSE_SEQUENCES {
+    for name in &names {
         let found = sources.iter().find_map(|&(bytes, m)| {
             let seq = mdl::sequences(bytes, &m.header)
                 .into_iter()
