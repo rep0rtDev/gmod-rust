@@ -23878,7 +23878,12 @@ impl<'w> Server<'w> {
                 let p = self.players.get(id)?;
                 let pressed = pc.cmd.buttons & gm_move::buttons::SPEED != 0
                     && p.prev_buttons & gm_move::buttons::SPEED == 0;
-                (pressed && p.alive && p.move_override.effective(&self.mover.cfg).sprint_enabled)
+                // the sprint breath is the HEV suit's (`CHL2_Player::StartSprinting`): a
+                // sandbox player without a suit (gmod_suit 0) runs silently
+                (pressed
+                    && p.alive
+                    && p.suit
+                    && p.move_override.effective(&self.mover.cfg).sprint_enabled)
                     .then_some(p.state.origin)
             })
             .collect();
@@ -26516,6 +26521,15 @@ impl<'w> Server<'w> {
         }
         for (id, pid, velocity, angular, mass, n, point) in hits {
             if mass < PROP_HIT_MIN_MASS {
+                continue;
+            }
+            // a bouncy ball (sent_ball) shoves but never hurts: its body is the helibomb
+            // model's, far heavier than the game's small sphere
+            if self
+                .sandbox_sents
+                .get(&id)
+                .is_some_and(|c| c == "sent_ball")
+            {
                 continue;
             }
             let speed = velocity.length();
