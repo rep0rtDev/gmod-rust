@@ -158,6 +158,7 @@ impl Sim {
                     (
                         p.id,
                         gm_net::msg::EntityState {
+                            dissolve: 0,
                             id: p.id,
                             model: String::new(),
                             model_id: 0,
@@ -2662,6 +2663,7 @@ impl App {
                 alpha: 1.0,
             };
             let item = DrawItem {
+                dissolve: 0.0,
                 tint: Vec3::ONE,
                 model: m,
                 transform: glam::Mat4::IDENTITY,
@@ -6125,8 +6127,15 @@ impl App {
                         .get(&format!("{}#{}#{}", e.model, e.skin, e.body))?
                         .as_ref()?
                 };
+                // C_EntityDissolve: the body burns away over 2 s (steps of 1/50 s)
+                let dissolve = if e.dissolve > 0 {
+                    (f32::from(e.dissolve) / 50.0 / 2.0).clamp(0.01, 1.0)
+                } else {
+                    0.0
+                };
                 if let Some((_, skin)) = rag_poses.iter().find(|(id, _)| *id == e.id) {
                     return Some(DrawItem {
+                        dissolve,
                         tint: Vec3::ONE,
                         model,
                         transform: glam::Mat4::IDENTITY,
@@ -6134,6 +6143,7 @@ impl App {
                     });
                 }
                 Some(DrawItem {
+                    dissolve,
                     tint: Vec3::ONE,
                     model,
                     transform: gm_render::world::model_transform(pos, ang)
@@ -6244,6 +6254,7 @@ impl App {
                 None => {
                     let h = if p.ducked { 36.0 } else { 72.0 };
                     items.push(DrawItem {
+                        dissolve: 0.0,
                         tint: Vec3::ONE,
                         model: &g.player_box,
                         transform: glam::Mat4::from_translation(p.origin + Vec3::Z * (h / 2.0))
@@ -6259,6 +6270,7 @@ impl App {
                 let transform =
                     gm_render::world::model_transform(*origin, Vec3::new(0.0, *yaw, 0.0));
                 items.push(DrawItem {
+                    dissolve: 0.0,
                     tint: *tint,
                     model: m,
                     transform,
@@ -6267,6 +6279,7 @@ impl App {
                 if let Some((path, bones)) = held {
                     if let Some(wm) = g.models.get(*path).and_then(|w| w.as_ref()) {
                         items.push(DrawItem {
+                            dissolve: 0.0,
                             tint: Vec3::ONE,
                             model: wm,
                             transform,
@@ -6279,6 +6292,7 @@ impl App {
         for sh in &self.fx_shells {
             if let Some(m) = g.models.get(sh.model).and_then(|m| m.as_ref()) {
                 items.push(DrawItem {
+                    dissolve: 0.0,
                     tint: Vec3::ONE,
                     model: m,
                     transform: gm_render::world::model_transform(sh.pos, sh.ang),
@@ -7701,6 +7715,7 @@ impl App {
             };
             if let Some(m) = g.models.get(model.as_str()).and_then(|m| m.as_ref()) {
                 let ghost = [DrawItem {
+                    dissolve: 0.0,
                     tint: Vec3::ONE,
                     model: m,
                     transform: gm_render::world::model_transform(*pos, *angles),
@@ -7787,6 +7802,7 @@ impl App {
                 let (vm_pos, vm_ang) = self.vm_view.view(speed, camera.position, self.view);
                 let transform = gm_render::world::model_transform(vm_pos, vm_ang);
                 let mut vm_items = vec![DrawItem {
+                    dissolve: 0.0,
                     tint: Vec3::ONE,
                     model: m,
                     transform,
@@ -7794,6 +7810,7 @@ impl App {
                 }];
                 if let (Some(h), Some(hp)) = (hands, &hands_pose) {
                     vm_items.push(DrawItem {
+                        dissolve: 0.0,
                         tint: Vec3::ONE,
                         model: h,
                         transform,

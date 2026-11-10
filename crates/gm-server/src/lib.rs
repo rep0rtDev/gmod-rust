@@ -7956,6 +7956,9 @@ fn sequence_pose(rd: &RagdollInfo, name: &str, tick: u64) -> Option<Vec<(Vec3, Q
 
 pub const RAGDOLL_CLASS: &str = "hl2mp_ragdoll";
 
+/// `C_EntityDissolve`: the model is fully gone 2.5 s after the dissolve starts.
+pub const DISSOLVE_TICKS: u64 = 125;
+
 /// `info_player_start`: where players (re)spawn, picked at random.
 #[derive(Clone, Debug)]
 pub struct SpawnPoint {
@@ -15904,7 +15907,7 @@ impl<'w> Server<'w> {
             } else {
                 0
             };
-            if !dissolved && !model.is_empty() {
+            if !model.is_empty() {
                 let rag = self.sandbox.restore_prop(owner, &model, pos, angles, false);
                 // the ragdoll starts from the frame of the animation the NPC died in
                 if let Some(pose) = self
@@ -15917,6 +15920,17 @@ impl<'w> Server<'w> {
                 }
                 self.sync_physics();
                 self.sandbox.add_cleanup(owner, "ragdolls", rag);
+                // DMG_DISSOLVE: the ragdoll dissolves (env_entity_dissolver): no gravity, a
+                // drift upwards, gone after DISSOLVE_TICKS
+                if dissolved {
+                    self.sandbox.set_dissolve_at(rag, Some(tick));
+                    if let Some(r) = self.ragdoll_bodies.get(&rag) {
+                        for &b in &r.bodies.clone() {
+                            self.physics.set_gravity(b, false);
+                            self.physics.set_velocity(b, Vec3::Z * 40.0, Vec3::ZERO);
+                        }
+                    }
+                }
             }
             if let Some(n) = self.npcs.get_mut(&id) {
                 n.remove_at = Some(tick);
@@ -16150,6 +16164,24 @@ impl<'w> Server<'w> {
                     }
                 }
             }
+        }
+    }
+
+    /// Dissolving bodies (combine ball kills) are gone once the effect has run.
+    fn remove_dissolved(&mut self) {
+        let now = self.tick_count;
+        let gone: Vec<u32> = self
+            .sandbox
+            .props()
+            .iter()
+            .filter(|p| {
+                p.dissolve_at
+                    .is_some_and(|t| now.saturating_sub(t) >= DISSOLVE_TICKS)
+            })
+            .map(|p| p.id)
+            .collect();
+        for id in gone {
+            self.remove_prop(id);
         }
     }
 
@@ -24626,6 +24658,7 @@ impl<'w> Server<'w> {
         self.tick_npc_flight();
         self.tick_func_tanks();
         self.remove_dead_npcs();
+        self.remove_dissolved();
         self.ride_vehicles();
         // undo.lua counts ticks with removals (its EntityRemoved hook coalesces them through a
         // 0 s timer) and purges all-dead undo lists on every 16th

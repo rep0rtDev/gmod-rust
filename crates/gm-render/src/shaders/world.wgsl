@@ -146,7 +146,7 @@ struct VsIn {
     @location(8) spec_dir: vec3<f32>,
     @location(9) spec_color: vec3<f32>,
     // models: the player's colour (`$color2` through the PlayerColor proxy), 1 otherwise
-    @location(10) tint: vec3<f32>,
+    @location(10) tint: vec4<f32>,
 };
 
 struct VsOut {
@@ -161,7 +161,7 @@ struct VsOut {
     @location(7) cube: f32,
     @location(8) spec_dir: vec3<f32>,
     @location(9) spec_color: vec3<f32>,
-    @location(10) tint: vec3<f32>,
+    @location(10) tint: vec4<f32>,
 };
 
 @vertex
@@ -282,9 +282,21 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     // $detail mod2x: base * lerp(1, 2 * detail, $detailblendfactor) at base uv * $detailscale
     let d = textureSample(detail, base_sampler, in.uv * material.detail.x).rgb;
     // $blendtintbybasealpha (detail.w): the tint only where the base alpha lets it
-    let tint = mix(vec3<f32>(1.0), in.tint, select(1.0, albedo.a, material.detail.w > 0.5));
+    let tint = mix(vec3<f32>(1.0), in.tint.rgb, select(1.0, albedo.a, material.detail.w > 0.5));
+    // dissolving (tint.w = progress 0..1): texels burn away in a noise order, the burning
+    // edge glows blue-white (the combine ball's ENTITY_DISSOLVE_NORMAL)
+    var dissolve_glow = vec3<f32>(0.0);
+    if in.tint.w > 0.0 {
+        let cell = floor(in.world * 0.5) + floor(in.uv * 64.0).x;
+        let noise = fract(sin(dot(cell, vec3<f32>(12.9898, 78.233, 37.719))) * 43758.5453);
+        if noise < in.tint.w {
+            discard;
+        }
+        let edge = 1.0 - clamp((noise - in.tint.w) / 0.12, 0.0, 1.0);
+        dissolve_glow = vec3<f32>(0.55, 0.8, 1.0) * edge * edge * 4.0;
+    }
     let base = albedo.rgb * mix(vec3<f32>(1.0), d * 2.0, material.detail.y) * tint;
-    var shaded = base * light * in.color * camera.exposure;
+    var shaded = (base * light * in.color + dissolve_glow) * camera.exposure;
     // DecalModulate (mode 3): the raw texel is the blend factor (colour * 2 * texel), its
     // 128 grey neutral - no exposure, no light, no tint, else every bullet hole brightens
     // its square whenever the auto-exposure is above 1

@@ -3306,6 +3306,7 @@ fn a_client_actor_traces_the_clients_world_and_the_props_it_knows() {
     cw.entities.insert(
         7,
         gm_net::msg::EntityState {
+            dissolve: 0,
             id: 7,
             model: "models/props_junk/wood_crate001a.mdl".into(),
             pos: glam::Vec3::new(900.0, -500.0, -120.0),

@@ -312,7 +312,7 @@ pub fn collect_static_props(
                             prop.diffuse_modulation[2] as f32 / 255.0,
                         );
                         vertices.push(Vertex {
-                            tint: [1.0; 3],
+                            tint: [1.0, 1.0, 1.0, 0.0],
                             position: p.to_array(),
                             uv: v.uv,
                             lm_uv: white_uv,

@@ -212,6 +212,7 @@ fn client_realm_sees_the_assembled_world() {
     world.entities.insert(
         3,
         gm_net::EntityState {
+            dissolve: 0,
             id: 3,
             model: "crate".into(),
             pos: glam::Vec3::new(1.0, 2.0, 3.5),
@@ -1874,6 +1875,7 @@ fn glua_client_effect_touch_callbacks() {
     world.entities.insert(
         3,
         gm_net::EntityState {
+            dissolve: 0,
             id: 3,
             model: "crate".into(),
             pos: glam::Vec3::new(1.0, 2.0, 3.5),

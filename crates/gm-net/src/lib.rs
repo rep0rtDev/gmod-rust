@@ -107,6 +107,7 @@ mod tests {
                 name: "bot".to_string(),
             }],
             entities: vec![EntityState {
+                dissolve: 0,
                 id: 2,
                 model: String::new(),
                 model_id: 3,

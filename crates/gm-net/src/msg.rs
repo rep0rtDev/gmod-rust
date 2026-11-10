@@ -229,6 +229,8 @@ pub struct EntityState {
     pub color: [u8; 4],
     pub render_mode: u8,
     pub render_fx: u8,
+    /// Dissolving (combine ball kill): 1/50 s steps since it started, 0 = not dissolving.
+    pub dissolve: u8,
     /// `Entity:SetSubMaterial` overrides: (material index, path).
     pub sub_materials: Vec<(u8, String)>,
     /// `Entity:SetModelScale` (render only).
@@ -1256,6 +1258,7 @@ impl ServerMsg {
                     }
                     w.u8(e.render_mode);
                     w.u8(e.render_fx);
+                    w.u8(e.dissolve);
                     w.varint(e.sub_materials.len() as u64);
                     for (i, m) in &e.sub_materials {
                         w.u8(*i);
@@ -1740,6 +1743,7 @@ impl ServerMsg {
                         color: [r.u8()?, r.u8()?, r.u8()?, r.u8()?],
                         render_mode: r.u8()?,
                         render_fx: r.u8()?,
+                        dissolve: r.u8()?,
                         sub_materials: {
                             let n = r.varint()? as usize;
                             let mut v = Vec::with_capacity(n);

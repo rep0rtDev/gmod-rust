@@ -1557,6 +1557,7 @@ impl ServerNet {
             world.insert(
                 id,
                 EntityState {
+                    dissolve: 0,
                     id,
                     model: model.to_string(),
                     model_id,
@@ -1585,6 +1586,7 @@ impl ServerNet {
             world.insert(
                 id,
                 EntityState {
+                    dissolve: 0,
                     id,
                     model: model.clone(),
                     model_id,
@@ -1613,6 +1615,7 @@ impl ServerNet {
             world.insert(
                 id,
                 EntityState {
+                    dissolve: 0,
                     id,
                     model: model.clone(),
                     model_id,
@@ -1644,6 +1647,7 @@ impl ServerNet {
             world.insert(
                 *id,
                 EntityState {
+                    dissolve: 0,
                     id: *id,
                     model: n.model.clone(),
                     model_id,
@@ -1712,6 +1716,9 @@ impl ServerNet {
                     vel: st.map(|s| s.velocity).unwrap_or_default(),
                     angvel: st.map(|s| s.angular_velocity).unwrap_or_default(),
                     frozen: p.frozen,
+                    dissolve: p
+                        .dissolve_at
+                        .map_or(0, |t| server.tick_count().saturating_sub(t).min(255) as u8),
                     skin: p.skin,
                     body: p.body.clone(),
                     owner: p.owner,

@@ -45,6 +45,9 @@ pub struct Prop {
     /// `RENDERMODE_*` 0..9 and `renderfx` (the colour stool)
     pub render_mode: u8,
     pub render_fx: u8,
+    /// Tick a DMG_DISSOLVE kill started dissolving this body (combine ball): it drifts up
+    /// and is gone after `DISSOLVE_TICKS`.
+    pub dissolve_at: Option<u64>,
     /// `PhysObj:SetMaterial` surfaceprop override (the physprop stool), empty for the PHY's
     pub phys_material: String,
 }
@@ -1931,6 +1934,7 @@ impl Sandbox {
         let id = self.next_id;
         self.next_id += 1;
         self.props.push(Prop {
+            dissolve_at: None,
             id,
             owner,
             model: model.to_string(),
@@ -2283,6 +2287,7 @@ impl Sandbox {
         let id = self.next_id;
         self.next_id += 1;
         self.props.push(Prop {
+            dissolve_at: None,
             id,
             owner: player,
             model: model.to_string(),
@@ -2335,6 +2340,7 @@ impl Sandbox {
         let id = self.next_id;
         self.next_id += 1;
         self.props.push(Prop {
+            dissolve_at: None,
             id,
             owner: player,
             model: model.to_string(),
@@ -2371,6 +2377,7 @@ impl Sandbox {
     pub fn place_existing(&mut self, owner: u32, bodies: &[PropBody], models: &[String]) {
         for (b, model) in bodies.iter().zip(models) {
             self.props.push(Prop {
+                dissolve_at: None,
                 id: b.id,
                 owner,
                 model: model.clone(),
@@ -2461,6 +2468,12 @@ impl Sandbox {
     pub fn set_body(&mut self, id: u32, body: String) {
         if let Some(p) = self.props.iter_mut().find(|p| p.id == id) {
             p.body = body;
+        }
+    }
+
+    pub fn set_dissolve_at(&mut self, id: u32, tick: Option<u64>) {
+        if let Some(p) = self.props.iter_mut().find(|p| p.id == id) {
+            p.dissolve_at = tick;
         }
     }
 
@@ -2927,6 +2940,7 @@ impl Sandbox {
         let id = self.next_id;
         self.next_id += 1;
         self.props.push(Prop {
+            dissolve_at: None,
             id,
             owner: player,
             model: CAMERA_MODEL.into(),
@@ -3390,6 +3404,7 @@ impl Sandbox {
         let id = self.next_id;
         self.next_id += 1;
         self.props.push(Prop {
+            dissolve_at: None,
             id,
             owner: player,
             model: model.clone(),
