@@ -86,6 +86,7 @@ pub enum Cmd {
     Pitch(u32, f32),
     Seek(u32, f64),
     Pause(u32, bool),
+    PauseAll(bool),
     Loop(u32, bool),
     Feed(u32, Vec<f32>),
     Listener(Listener),
@@ -118,6 +119,7 @@ fn apply(engine: &mut Engine, cmd: Cmd) {
         Cmd::Pitch(id, p) => engine.set_pitch(id, p),
         Cmd::Seek(id, t) => engine.seek(id, t),
         Cmd::Pause(id, b) => engine.set_paused(id, b),
+        Cmd::PauseAll(b) => engine.game_paused = b,
         Cmd::Loop(id, b) => engine.set_looping(id, b),
         Cmd::Feed(id, s) => engine.feed(id, &s),
         Cmd::Listener(l) => engine.listener = l,
@@ -440,6 +442,11 @@ impl Mixer {
 
     pub fn set_paused(&self, id: u32, paused: bool) {
         let _ = self.tx.send(Cmd::Pause(id, paused));
+    }
+
+    /// The single-player pause: every voice holds silent in place.
+    pub fn set_game_paused(&self, paused: bool) {
+        let _ = self.tx.send(Cmd::PauseAll(paused));
     }
 
     pub fn set_looping(&self, id: u32, looping: bool) {

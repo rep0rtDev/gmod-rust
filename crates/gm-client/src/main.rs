@@ -1446,6 +1446,8 @@ struct App {
     /// A game has been started (a map named on the command line, a server joined, or New
     /// Game pressed): before that the main menu shows over the background slideshow.
     started: bool,
+    /// `sp_paused` last frame (the mixer is told on the change).
+    was_paused: bool,
     backgrounds: Backgrounds,
     last: Instant,
     acc: f32,
@@ -4506,11 +4508,27 @@ impl App {
         }
     }
 
+    /// The game menu pauses a single-player game (the engine's `pause` while the server has
+    /// one player and `sv_pausable` is implied in single player): the simulation, the
+    /// interpolation clocks and every sound hold until the menu closes.
+    fn sp_paused(&self) -> bool {
+        self.main_menu && self.started && !self.sim.remote && self.sim.server.players.len() <= 1
+    }
+
     fn step(&mut self) {
         let now = Instant::now();
         let frame = (now - self.last).as_secs_f32().min(0.25);
-        self.acc += frame;
         self.last = now;
+        let paused = self.sp_paused();
+        if paused != self.was_paused {
+            self.was_paused = paused;
+            self.sounds.mixer.set_game_paused(paused);
+        }
+        if paused {
+            self.acc = 0.0;
+            return;
+        }
+        self.acc += frame;
         self.sim.interp.advance(frame);
         self.sim.player_interp.advance(frame);
         let dt = gm_core::tick::DEFAULT_TICK_INTERVAL;
@@ -10132,6 +10150,7 @@ fn main() -> Result<()> {
         script_servers: Vec::new(),
         main_menu: !started_at_launch,
         started: started_at_launch,
+        was_paused: false,
         backgrounds: Backgrounds::default(),
         settings,
         fov_blend: None,

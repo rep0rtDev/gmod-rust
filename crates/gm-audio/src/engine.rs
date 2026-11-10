@@ -146,6 +146,8 @@ pub struct Engine {
     pub rate: u32,
     pub listener: Listener,
     pub master: f32,
+    /// The single-player pause: every voice holds silent in place.
+    pub game_paused: bool,
     voices: Vec<Voice>,
     mono: Vec<f32>,
     direct_out: Vec<f32>,
@@ -210,6 +212,7 @@ impl Engine {
             rate,
             listener: Listener::default(),
             master: 1.0,
+            game_paused: false,
             voices: Vec::new(),
             mono: vec![0.0; FRAME],
             direct_out: vec![0.0; FRAME],
@@ -378,6 +381,9 @@ impl Engine {
         let master = self.master;
         if let Some(r) = &mut self.reverb {
             r.wet.fill(0.0);
+        }
+        if self.game_paused {
+            return;
         }
         for v in &mut self.voices {
             v.fill(&mut self.mono);
