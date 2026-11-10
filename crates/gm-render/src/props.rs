@@ -188,6 +188,7 @@ pub fn collect_static_props(
     per_material: &mut HashMap<String, Vec<u32>>,
     per_material_sky: &mut HashMap<String, Vec<u32>>,
     skybox_bounds: &Option<([f32; 3], [f32; 3])>,
+    skybox_area: Option<i16>,
     root_lod: usize,
     cube_at: &dyn Fn(Vec3) -> f32,
 ) -> Result<(usize, usize, usize, Vec<String>)> {
@@ -234,9 +235,14 @@ pub fn collect_static_props(
         } else {
             1.0
         };
-        let in_sky = skybox_bounds.is_some_and(|(mins, maxs)| {
-            (0..3).all(|k| prop.origin[k] >= mins[k] && prop.origin[k] <= maxs[k])
-        });
+        // a prop is in the 3D skybox when it stands in the sky camera's area (like the
+        // engine's area check); the face bounds catch the ones whose origin sits in a solid
+        // leaf. Drawn with the world instead, a skybox building at z 11000 shows through
+        // the (skipped) sky faces as a thin dark corner high in the sky
+        let in_sky = skybox_area.is_some_and(|a| bsp.leafs[bsp.leaf_at(prop.origin)].area() == a)
+            || skybox_bounds.is_some_and(|(mins, maxs)| {
+                (0..3).all(|k| prop.origin[k] >= mins[k] && prop.origin[k] <= maxs[k])
+            });
         let target = if in_sky {
             &mut *per_material_sky
         } else {

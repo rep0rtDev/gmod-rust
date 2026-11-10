@@ -934,10 +934,22 @@ fn build_sky_cube(
         }));
         let base = verts.len() as u32;
         let (n, sx, ty) = (Vec3::from(n), Vec3::from(sx), Vec3::from(ty));
+        // the face uvs are inset by half a texel like the engine's sky box draw: sampled
+        // right to the edge, the outermost texel row of a face (which never matches its
+        // neighbour's) shows as a dark line along every cube edge
+        let (iu, iv) = (
+            0.5 / rgba.width.max(1) as f32,
+            0.5 / rgba.height.max(1) as f32,
+        );
         for (s, t) in [(-1.0f32, -1.0f32), (1.0, -1.0), (1.0, 1.0), (-1.0, 1.0)] {
             verts.push(Vertex {
-                position: ((n + sx * s + ty * t) * SKY_CUBE_HALF).to_array(),
-                uv: [(s + 1.0) / 2.0, (1.0 - t) / 2.0],
+                // faces overlap their neighbours a little: drawn edge to edge, the sub-pixel
+                // cracks along the cube edges let the clear colour through as dark lines
+                position: ((n + (sx * s + ty * t) * 1.002) * SKY_CUBE_HALF).to_array(),
+                uv: [
+                    iu + (s + 1.0) / 2.0 * (1.0 - 2.0 * iu),
+                    iv + (1.0 - t) / 2.0 * (1.0 - 2.0 * iv),
+                ],
                 lm_uv: white_uv,
                 color: [1.0; 3],
                 alpha: 0.0,
@@ -2036,9 +2048,58 @@ impl WorldRenderer {
                         c[k] += v[k] / verts.len() as f32;
                     }
                 }
-                let leaf = &bsp.leafs[bsp.leaf_at(c)];
-                if leaf.area() == area {
+                // the centre lies on the face's plane, which is also a leaf boundary: looked
+                // up as is, a skybox ground face may land in the solid leaf behind it (area
+                // 0), get drawn with the world at z 11000 and show through the (skipped) sky
+                // as a thin dark corner high in the sky (#144); test a point just in front
+                // (and, for a concave face whose centre lies outside it, each vertex pulled
+                // 1 u towards the centre)
+                let mut nudge = [0.0f32; 3];
+                if let Some(plane) = bsp.planes.get(face.plane_num as usize) {
+                    let sign = if face.side == 0 { 1.0 } else { -1.0 };
+                    nudge = plane.normal.map(|n| n * sign);
+                }
+                let off = face_offset.get(&fi).copied().unwrap_or([0.0; 3]);
+                let samples = std::iter::once(c).chain(verts.iter().map(|v| {
+                    let mut p = [0.0f32; 3];
+                    for k in 0..3 {
+                        let vk = v[k] + off[k];
+                        let d = c[k] - vk;
+                        let len = ((0..3).map(|j| (c[j] - v[j] - off[j]).powi(2)).sum::<f32>())
+                            .sqrt()
+                            .max(1e-3);
+                        p[k] = vk + d / len;
+                    }
+                    p
+                }));
+                if samples.into_iter().any(|mut p| {
+                    for k in 0..3 {
+                        p[k] += nudge[k];
+                    }
+                    bsp.leafs[bsp.leaf_at(p)].area() == area
+                }) {
                     skybox_faces.insert(fi);
+                }
+            }
+            // faces into a sealed pocket beside the skybox ground keep area 0 (never seen in
+            // the game: their leaf is in no PVS); the skybox and the world never overlap in
+            // space, so whatever lies within the skybox faces' bounds is skybox too
+            if let Some((mins, maxs)) = skybox_faces_bounds(bsp, &skybox_faces) {
+                for (fi, face) in bsp.faces.iter().enumerate() {
+                    if skybox_faces.contains(&fi) {
+                        continue;
+                    }
+                    let off = face_offset.get(&fi).copied().unwrap_or([0.0; 3]);
+                    let verts = bsp.face_vertices(face);
+                    if !verts.is_empty()
+                        && verts.iter().all(|v| {
+                            (0..3).all(|k| {
+                                v[k] + off[k] >= mins[k] - 1.0 && v[k] + off[k] <= maxs[k] + 1.0
+                            })
+                        })
+                    {
+                        skybox_faces.insert(fi);
+                    }
                 }
             }
         }
@@ -2323,6 +2384,7 @@ impl WorldRenderer {
             &mut per_material,
             &mut per_material_sky,
             &skybox_faces_bounds(bsp, &skybox_faces),
+            sky_camera.map(|s| bsp.leafs[bsp.leaf_at(s.origin.into())].area()),
             quality.root_lod as usize,
             &|p| cubes.nearest(p),
         )?;
@@ -4689,7 +4751,15 @@ impl WorldRenderer {
             (mat.base_texture.as_deref()?, format, 0.0)
         };
         let rgba = crate::material::load_texture(mount, tex, 512).ok()?;
-        Some(self.sprite_bind_group(gpu, &rgba, format, name, amount, FOG_NORMAL))
+        // additive sprites fog to black like the game's `$additive` materials: fogged towards
+        // the fog colour, a far one (the env_sun glow) adds that colour over its whole quad,
+        // a lighter square around the glow
+        let fog = if mat.additive {
+            FOG_TO_BLACK
+        } else {
+            FOG_NORMAL
+        };
+        Some(self.sprite_bind_group(gpu, &rgba, format, name, amount, fog))
     }
 
     /// The bind group of a sprite image (unlit, no lightmap) in `format`.
