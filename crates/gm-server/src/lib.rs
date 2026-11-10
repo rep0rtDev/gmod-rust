@@ -16019,7 +16019,7 @@ impl<'w> Server<'w> {
         let following = n.ai.behavior.as_deref() == Some("Follow");
         let salt = self.tick_count + u64::from(ent);
         let line = match (n.class.as_str(), following) {
-            ("npc_citizen", false) => Some(if salt % 3 == 0 {
+            ("npc_citizen", false) => Some(if salt.is_multiple_of(3) {
                 format!("npc_citizen.leadtheway{:02}", 1 + salt % 2)
             } else {
                 format!("npc_citizen.squad_follow{:02}", 1 + salt % 4)
