@@ -22621,10 +22621,14 @@ impl<'w> Server<'w> {
                     let w = st.angular_velocity + axis * (spin - along);
                     self.physics.set_velocity(body, st.velocity, w);
                 }
+                // the client draws the light stool's DynamicLight from the entity colour
+                gm_sandbox::Device::Light { color, .. } => {
+                    let c = [color[0], color[1], color[2], 255];
+                    self.sandbox.set_render(id, "", c, 0, 0);
+                }
                 gm_sandbox::Device::Button { .. }
                 | gm_sandbox::Device::Dynamite { .. }
                 | gm_sandbox::Device::Lamp { .. }
-                | gm_sandbox::Device::Light { .. }
                 | gm_sandbox::Device::Trail { .. }
                 | gm_sandbox::Device::Emitter { .. }
                 | gm_sandbox::Device::Camera { .. } => {}
@@ -23838,9 +23842,9 @@ impl<'w> Server<'w> {
                             hulls.iter().map(|h| convex_planes(h)).collect();
                         (planes, hulls)
                     });
-                let (planes, hulls): (&[Vec<(Vec3, f32)>], &[Vec<Vec3>]) = match &own {
-                    Some((pl, h)) => (pl, h),
-                    None => (&info.hull_planes, &info.hulls),
+                let (planes, hulls) = match &own {
+                    Some((pl, h)) => (pl.as_slice(), h.as_slice()),
+                    None => (info.hull_planes.as_slice(), info.hulls.as_slice()),
                 };
                 Some(
                     planes

@@ -5904,6 +5904,21 @@ impl App {
                 }
             }
         }
+        // gmod_light (light stool): a DynamicLight of the tool's colour on the tube model
+        // (light.lua: Size 256, Brightness 2 by default; the colour rides the entity colour)
+        for e in self.sim.client.world.entities.values() {
+            if e.model
+                .eq_ignore_ascii_case("models/maxofs2d/light_tubular.mdl")
+            {
+                let c = Vec3::new(e.color[0] as f32, e.color[1] as f32, e.color[2] as f32) / 255.0;
+                dlights.push(gm_render::world::DLight {
+                    pos: e.pos,
+                    radius: 256.0,
+                    color: c * 2.0,
+                    ..Default::default()
+                });
+            }
+        }
         let mut modulate: Vec<(&wgpu::BindGroup, Vec<gm_render::world::Vertex>, Vec<u32>)> =
             Vec::new();
         // a viewmodel attachment in world space (the viewmodel sits at the eye)
@@ -10223,7 +10238,7 @@ impl DeathNotice {
         if it.next()? != "Death" {
             return None;
         }
-        let victim: u32 = it.next()?.parse().ok()?;
+        let victim = it.next()?;
         let attacker: u32 = it.next()?.parse().ok()?;
         let inflictor = it.next()?.to_string();
         let name = |id: u32| {
@@ -10233,9 +10248,18 @@ impl DeathNotice {
                 .map(|p| p.name.clone())
                 .unwrap_or_else(|| format!("Player {id}"))
         };
+        // `npc:<spawnmenu key>`: an NPC victim is named like the game's `#npc_name` (its list
+        // name, e.g. "Zombie"), with spaces sent as underscores
+        let (victim_id, right) = match victim.strip_prefix("npc:") {
+            Some(key) => (0, key.replace('_', " ")),
+            None => {
+                let id: u32 = victim.parse().ok()?;
+                (id, name(id))
+            }
+        };
         Some(Self {
-            left: (attacker != 0 && attacker != victim).then(|| name(attacker)),
-            right: name(victim),
+            left: (attacker != 0 && attacker != victim_id).then(|| name(attacker)),
+            right,
             inflictor,
             at: Instant::now(),
         })

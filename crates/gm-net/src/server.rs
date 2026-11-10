@@ -1085,14 +1085,30 @@ impl ServerNet {
             }));
         let events = std::mem::take(&mut server.game_events);
         for e in &events {
-            if let gm_server::GameEvent::PlayerDied {
-                player,
-                attacker,
-                inflictor,
-                ..
-            } = e
-            {
-                let text = format!("Death {player} {attacker} {inflictor}");
+            // the kill feed (cl_deathnotice.lua): players and NPCs (`#npc_key` names) alike,
+            // an NPC's inflictor is the attacker's weapon
+            let text = match e {
+                gm_server::GameEvent::PlayerDied {
+                    player,
+                    attacker,
+                    inflictor,
+                    ..
+                } => Some(format!("Death {player} {attacker} {inflictor}")),
+                gm_server::GameEvent::NpcKilled { attacker, key, .. } => {
+                    let weapon = server
+                        .players
+                        .get(attacker)
+                        .map(|p| p.active_weapon.clone())
+                        .filter(|w| !w.is_empty())
+                        .unwrap_or_else(|| "worldspawn".to_string());
+                    Some(format!(
+                        "Death npc:{} {attacker} {weapon}",
+                        key.replace(' ', "_")
+                    ))
+                }
+                _ => None,
+            };
+            if let Some(text) = text {
                 for c in self.clients.values_mut() {
                     if c.welcomed && !c.closing {
                         c.pending_events.push(text.clone());
