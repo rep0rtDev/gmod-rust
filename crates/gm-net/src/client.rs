@@ -38,6 +38,7 @@ pub struct ClientWorld {
     /// The spawn menu's Weapons / Entities content, latest version whole.
     pub content_weapons: Vec<gm_server::ContentEntry>,
     pub content_entities: Vec<gm_server::ContentEntry>,
+    pub content_npcs: Vec<gm_server::ContentEntry>,
     /// Scripted entities' world tips (`SetOverlayText`) by entity id, latest version whole.
     pub overlays: Vec<(u32, String)>,
     /// Scripted / sandbox entity classes by entity id (`ServerMsg::EntityClasses`), whole.
@@ -606,6 +607,7 @@ impl ClientNet {
                             weapon_defs: std::mem::take(&mut self.world.weapon_defs),
                             content_weapons: std::mem::take(&mut self.world.content_weapons),
                             content_entities: std::mem::take(&mut self.world.content_entities),
+                            content_npcs: std::mem::take(&mut self.world.content_npcs),
                             overlays: std::mem::take(&mut self.world.overlays),
                             classes: std::mem::take(&mut self.world.classes),
                             edits: std::mem::take(&mut self.world.edits),
@@ -624,10 +626,14 @@ impl ClientNet {
                     ServerMsg::ToolSchemas { tools, .. } => self.world.tool_schemas = tools,
                     ServerMsg::WeaponDefs { defs, .. } => self.world.weapon_defs = defs,
                     ServerMsg::ContentLists {
-                        weapons, entities, ..
+                        weapons,
+                        entities,
+                        npcs,
+                        ..
                     } => {
                         self.world.content_weapons = weapons;
                         self.world.content_entities = entities;
+                        self.world.content_npcs = npcs;
                     }
                     ServerMsg::EntityOverlays { items, .. } => self.world.overlays = items,
                     ServerMsg::EntityClasses { items } => self.world.classes = items,

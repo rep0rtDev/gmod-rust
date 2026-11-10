@@ -65,6 +65,11 @@ pub enum Command {
         class: String,
     },
     /// `gm_spawnsent`: spawn a scripted entity from the Entities tab where the player looks.
+    /// `gmod_spawnnpc <key> <weapon>`: spawn an NPC from the NPCs tab where the player looks.
+    SpawnNpc {
+        key: String,
+        weapon: String,
+    },
     SpawnSent {
         class: String,
     },
@@ -517,6 +522,7 @@ pub enum ServerMsg {
         version: u32,
         weapons: Vec<gm_server::ContentEntry>,
         entities: Vec<gm_server::ContentEntry>,
+        npcs: Vec<gm_server::ContentEntry>,
     },
     /// The scripted entities' world tips (`SetOverlayText`), latest version whole; sent
     /// reliably whenever one changes.
@@ -925,6 +931,11 @@ impl ClientMsg {
                         w.u8(19);
                         w.str(class);
                     }
+                    Command::SpawnNpc { key, weapon } => {
+                        w.u8(23);
+                        w.str(key);
+                        w.str(weapon);
+                    }
                     Command::SpawnWeapon { class } => {
                         w.u8(20);
                         w.str(class);
@@ -1058,6 +1069,10 @@ impl ClientMsg {
                     9 => Command::SelectWeapon { class: r.str()? },
                     18 => Command::GiveWeapon { class: r.str()? },
                     19 => Command::SpawnSent { class: r.str()? },
+                    23 => Command::SpawnNpc {
+                        key: r.str()?,
+                        weapon: r.str()?,
+                    },
                     20 => Command::SpawnWeapon { class: r.str()? },
                     10 => Command::Chat { text: r.str()? },
                     11 => Command::Noclip { on: r.bool()? },
@@ -1416,10 +1431,11 @@ impl ServerMsg {
                 version,
                 weapons,
                 entities,
+                npcs,
             } => {
                 w.u8(18);
                 w.u32(*version);
-                for list in [weapons, entities] {
+                for list in [weapons, entities, npcs] {
                     w.varint(list.len() as u64);
                     for e in list {
                         w.str(&e.class);
@@ -2042,7 +2058,7 @@ impl ServerMsg {
             }
             18 => {
                 let version = r.u32()?;
-                let mut lists: [Vec<gm_server::ContentEntry>; 2] = [Vec::new(), Vec::new()];
+                let mut lists: [Vec<gm_server::ContentEntry>; 3] = Default::default();
                 for list in &mut lists {
                     let n = r.varint()?.min(4096) as usize;
                     for _ in 0..n {
@@ -2053,11 +2069,12 @@ impl ServerMsg {
                         });
                     }
                 }
-                let [weapons, entities] = lists;
+                let [weapons, entities, npcs] = lists;
                 ServerMsg::ContentLists {
                     version,
                     weapons,
                     entities,
+                    npcs,
                 }
             }
             17 => {

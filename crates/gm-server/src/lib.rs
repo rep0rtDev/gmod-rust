@@ -4155,6 +4155,48 @@ macro_rules! npc {
 /// The spawnmenu's NPC list as the game places them (measured `server_npc_spawn`: hull, health,
 /// default weapon, blood colour, first sequence per key). Ceiling-only classes (barnacle,
 /// combine camera, ceiling turret) spawn nothing from a floor hit and are left out.
+/// The spawnmenu category of `base_npcs.lua` for an NPC class.
+pub fn npc_category(class: &str) -> &'static str {
+    match class {
+        "npc_alyx" | "npc_barney" | "npc_breen" | "npc_dog" | "npc_eli" | "npc_gman"
+        | "npc_kleiner" | "npc_magnusson" | "npc_monk" | "npc_mossman" | "npc_vortigaunt"
+        | "npc_citizen" | "npc_fisherman" => "#spawnmenu.category.humans_resistance",
+        "npc_combine_s"
+        | "npc_metropolice"
+        | "npc_combinedropship"
+        | "npc_combinegunship"
+        | "npc_helicopter"
+        | "npc_hunter"
+        | "npc_manhack"
+        | "npc_rollermine"
+        | "npc_strider"
+        | "npc_cscanner"
+        | "npc_clawscanner"
+        | "npc_stalker"
+        | "npc_turret_ceiling"
+        | "npc_turret_floor"
+        | "npc_turret_ground"
+        | "npc_sniper"
+        | "npc_cremator" => "#spawnmenu.category.combine",
+        "npc_zombie"
+        | "npc_fastzombie"
+        | "npc_fastzombie_torso"
+        | "npc_poisonzombie"
+        | "npc_zombie_torso"
+        | "npc_zombine"
+        | "npc_headcrab"
+        | "npc_headcrab_fast"
+        | "npc_headcrab_black"
+        | "npc_headcrab_poison"
+        | "npc_antlion"
+        | "npc_antlionguard"
+        | "npc_antlion_worker"
+        | "npc_barnacle" => "#spawnmenu.category.zombies_aliens",
+        "npc_crow" | "npc_pigeon" | "npc_seagull" => "#spawnmenu.category.animals",
+        _ => "#spawnmenu.category.other",
+    }
+}
+
 pub static NPC_LIST: &[NpcDef] = &[
     npc!(
         "npc_alyx",
@@ -13156,7 +13198,20 @@ impl<'w> Server<'w> {
         out
     }
 
-    pub fn content_lists(&self) -> (Vec<ContentEntry>, Vec<ContentEntry>) {
+    /// `base_npcs.lua`'s `list.Set("NPC")` rows the NPCs tab shows: the list key, `#key`
+    /// name (garrysmod_english / entities.properties) under the game's categories.
+    pub fn content_npcs() -> Vec<ContentEntry> {
+        NPC_LIST
+            .iter()
+            .map(|d| ContentEntry {
+                class: d.key.to_string(),
+                name: format!("#{}", d.key),
+                category: npc_category(d.class).to_string(),
+            })
+            .collect()
+    }
+
+    pub fn content_lists(&self) -> (Vec<ContentEntry>, Vec<ContentEntry>, Vec<ContentEntry>) {
         let mut weapons: Vec<ContentEntry> = HL2_SPAWNABLE_WEAPONS
             .iter()
             .filter(|c| weapons::def(c).is_some())
@@ -13198,7 +13253,7 @@ impl<'w> Server<'w> {
                     .unwrap_or_else(|| "#spawnmenu.category.other".into()),
             }
         }));
-        (weapons, entities)
+        (weapons, entities, Self::content_npcs())
     }
 
     /// `gm_giveswep`: a live player gets a spawnable weapon (given if not carried) and

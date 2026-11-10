@@ -1363,7 +1363,7 @@ struct App {
     pending_input: Vec<(String, bool)>,
     spawn_lists_seen: usize,
     /// Weapons / Entities tab categories built from the server's content lists.
-    content: [Vec<derma::ContentList>; 2],
+    content: [Vec<derma::ContentList>; 3],
     content_seen: usize,
     content_lang: Option<std::collections::BTreeMap<String, String>>,
     /// Spawn menu search: every mounted model (lazily listed) and the current results.
@@ -1916,7 +1916,10 @@ impl App {
     /// `spawnmenu.properties`, `ContentCategoryIcons` for the game categories.
     fn sync_content_lists(&mut self) {
         let world = &self.sim.client.world;
-        let seen = world.content_weapons.len() * 4096 + world.content_entities.len() + 1;
+        let seen = world.content_weapons.len() * 4096 * 4096
+            + world.content_npcs.len() * 4096
+            + world.content_entities.len()
+            + 1;
         if seen == self.content_seen {
             return;
         }
@@ -2001,6 +2004,7 @@ impl App {
                     ""
                 }
             }),
+            build(&world.content_npcs, "icon16/monkey.png", &|_| ""),
         ];
     }
 
@@ -2568,7 +2572,7 @@ impl App {
             bold: &bold,
             header: &header,
             lists: &self.spawnlists,
-            content: [&self.content[0], &self.content[1]],
+            content: [&self.content[0], &self.content[1], &self.content[2]],
             results: &self.search_results,
             tool: &self.tool,
             has_image: &has_image,
@@ -3071,7 +3075,7 @@ impl App {
             bold: &bold,
             header: &header,
             lists: &self.spawnlists,
-            content: [&self.content[0], &self.content[1]],
+            content: [&self.content[0], &self.content[1], &self.content[2]],
             results: &self.search_results,
             tool: &self.tool,
             has_image: &has_image,
@@ -3323,7 +3327,7 @@ impl App {
             bold: &bold,
             header: &header,
             lists: &self.spawnlists,
-            content: [&self.content[0], &self.content[1]],
+            content: [&self.content[0], &self.content[1], &self.content[2]],
             results: &self.search_results,
             tool: &self.tool,
             has_image: &has_image,
@@ -3425,7 +3429,7 @@ impl App {
             bold: &bold,
             header: &header,
             lists: &self.spawnlists,
-            content: [&self.content[0], &self.content[1]],
+            content: [&self.content[0], &self.content[1], &self.content[2]],
             results: &self.search_results,
             tool: &self.tool,
             has_image: &has_image,
@@ -3474,7 +3478,7 @@ impl App {
             bold: &bold,
             header: &header,
             lists: &self.spawnlists,
-            content: [&self.content[0], &self.content[1]],
+            content: [&self.content[0], &self.content[1], &self.content[2]],
             results: &self.search_results,
             tool: &self.tool,
             has_image: &has_image,
@@ -3614,6 +3618,13 @@ impl App {
             Some(derma::Action::SpawnSent(class)) => {
                 self.console.log(format!("gm_spawnsent {class}"));
                 self.sim.client.command(Command::SpawnSent { class });
+            }
+            Some(derma::Action::SpawnNpc(key)) => {
+                self.console.log(format!("gmod_spawnnpc {key}"));
+                self.sim.client.command(Command::SpawnNpc {
+                    key,
+                    weapon: String::new(),
+                });
             }
             Some(derma::Action::ToolTab(i)) => {
                 menu.st.tool_tab = i;
@@ -7554,7 +7565,7 @@ impl App {
                 bold: &bold,
                 header: &header,
                 lists: &self.spawnlists,
-                content: [&self.content[0], &self.content[1]],
+                content: [&self.content[0], &self.content[1], &self.content[2]],
                 results: &self.search_results,
                 tool: title,
                 has_image: &has_image,
@@ -7610,7 +7621,7 @@ impl App {
                 bold: &bold,
                 header: &header,
                 lists: &self.spawnlists,
-                content: [&self.content[0], &self.content[1]],
+                content: [&self.content[0], &self.content[1], &self.content[2]],
                 results: &self.search_results,
                 tool: &self.tool,
                 has_image: &has_image,
@@ -9791,7 +9802,7 @@ fn main() -> Result<()> {
         scripted_world: Vec::new(),
         pending_input: Vec::new(),
         spawn_lists_seen: usize::MAX,
-        content: [Vec::new(), Vec::new()],
+        content: [Vec::new(), Vec::new(), Vec::new()],
         content_seen: usize::MAX,
         content_lang: None,
         search_models: None,
