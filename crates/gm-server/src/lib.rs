@@ -242,6 +242,31 @@ pub struct ModelScriptData {
 
 /// Faces of each PHY convex as triangle fans: the hull's vertices on each outward plane,
 /// sorted around the face centre.
+/// Whether the segment `a..b` passes through the box `lo..hi` (slab test; a segment starting
+/// inside counts).
+pub fn segment_hits_box(a: Vec3, b: Vec3, lo: Vec3, hi: Vec3) -> bool {
+    let d = b - a;
+    let (mut t0, mut t1) = (0.0f32, 1.0f32);
+    for i in 0..3 {
+        if d[i].abs() < 1e-6 {
+            if a[i] < lo[i] || a[i] > hi[i] {
+                return false;
+            }
+            continue;
+        }
+        let (mut ta, mut tb) = ((lo[i] - a[i]) / d[i], (hi[i] - a[i]) / d[i]);
+        if ta > tb {
+            std::mem::swap(&mut ta, &mut tb);
+        }
+        t0 = t0.max(ta);
+        t1 = t1.min(tb);
+        if t0 > t1 {
+            return false;
+        }
+    }
+    true
+}
+
 /// The face planes (`n . p = d`, outward) of the convex hull of `points`: every triple whose
 /// plane has all other points on the inside.
 pub fn convex_planes(points: &[Vec3]) -> Vec<(Vec3, f32)> {
@@ -2270,6 +2295,8 @@ pub struct Npc {
     /// Collision hull (`OBBMins` / `OBBMaxs`) around `pos`.
     pub mins: Vec3,
     pub maxs: Vec3,
+    /// Killed by DMG_DISSOLVE (combine ball): the corpse dissolves instead of lying around.
+    pub dissolved: bool,
     /// Float inside like the engine (shown rounded); goes negative on the killing hit and stays.
     pub health: f32,
     pub max_health: i32,
@@ -11167,6 +11194,26 @@ impl<'w> Server<'w> {
                         ),
                         weapons::Launch::Grenade => None,
                     };
+                    // prop_combine_ball vs an NPC (OnHitEntity): a dissolving kill, the ball
+                    // flies on
+                    if kind == weapons::Launch::Ball && touch.is_none() {
+                        let hit_npc = self
+                            .npcs
+                            .iter()
+                            .filter(|(_, n)| n.dead_at.is_none())
+                            .find(|(_, n)| {
+                                let lo = n.pos + n.mins - Vec3::splat(projectile::BALL_RADIUS);
+                                let hi = n.pos + n.maxs + Vec3::splat(projectile::BALL_RADIUS);
+                                segment_hits_box(prev, end, lo, hi)
+                            })
+                            .map(|(id, n)| (*id, n.health.max(1.0)));
+                        if let Some((npc, hp)) = hit_npc {
+                            self.damage_npc_typed(npc, owner, hp + 1.0, 0, false);
+                            if let Some(n) = self.npcs.get_mut(&npc) {
+                                n.dissolved = true;
+                            }
+                        }
+                    }
                     let prop_touch = if kind == weapons::Launch::Grenade
                         || self.sandbox.props().is_empty()
                     {
@@ -15380,6 +15427,7 @@ impl<'w> Server<'w> {
             settle,
             dead_at: None,
             remove_at: None,
+            dissolved: false,
             next_goal: None,
             chase: None,
             target: None,
@@ -15737,6 +15785,7 @@ impl<'w> Server<'w> {
             let dropped = std::mem::take(&mut n.weapon);
             let (key, class) = (n.key.clone(), n.class.clone());
             let (pos, yaw) = (n.pos, n.angles.y);
+            let (model, angles, dissolved) = (n.model.clone(), n.angles, n.dissolved);
             let crouched = npc_sequence_crouched(&n.sequence);
             self.game_events.push(GameEvent::NpcKilled {
                 npc: id,
@@ -15744,6 +15793,21 @@ impl<'w> Server<'w> {
                 key,
                 class: class.clone(),
             });
+            // the game's NPC becomes a server ragdoll (BecomeRagdollOnClient off in sandbox:
+            // the body is a prop_ragdoll under cleanup "ragdolls"); a dissolved one is gone
+            let owner = if self.players.contains_key(&attacker) {
+                attacker
+            } else {
+                0
+            };
+            if !dissolved && !model.is_empty() {
+                let rag = self.sandbox.restore_prop(owner, &model, pos, angles, false);
+                self.sync_physics();
+                self.sandbox.add_cleanup(owner, "ragdolls", rag);
+            }
+            if let Some(n) = self.npcs.get_mut(&id) {
+                n.remove_at = Some(tick);
+            }
             if !dropped.is_empty() {
                 self.drop_npc_weapon(attacker, &dropped, pos, yaw, crouched);
             }
@@ -21496,6 +21560,7 @@ impl<'w> Server<'w> {
                 settle: false,
                 dead_at: None,
                 remove_at: None,
+                dissolved: false,
                 next_goal: None,
                 chase: None,
                 target: None,
