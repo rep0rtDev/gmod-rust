@@ -5833,7 +5833,7 @@ impl App {
             // screen under the world camera (same clip position, world projection)
             let aspect = g.config.width as f32 / g.config.height as f32;
             let vm_fov = scale_fov_by_width(vm.fov, aspect);
-            let k = (vm_fov.to_radians() * 0.5).tan() / (camera.fov_x.to_radians() * 0.5).tan();
+            let k = (camera.fov_x.to_radians() * 0.5).tan() / (vm_fov.to_radians() * 0.5).tan();
             let view = glam::Mat4::look_to_rh(camera.position, camera.forward(), Vec3::Z);
             let mut v = view.transform_point3(p);
             v.x *= k;
@@ -6563,7 +6563,20 @@ impl App {
                         Self::vm_transition(vm_prev, |s| m.sequence_fade_out(s)),
                     )?;
                     let a = m.attachment_at(1, &w)?;
-                    Some(gm_render::world::model_transform(camera.position, self.view) * a)
+                    let mut a = gm_render::world::model_transform(camera.position, self.view) * a;
+                    // FormatViewModelAttachment: the shell starts where the viewmodel's
+                    // attachment appears on screen (tan(fov/2) / tan(vm fov/2) in view x/y),
+                    // else it pops out nearer the eye and twice as big
+                    let aspect = g.config.width as f32 / g.config.height as f32;
+                    let vm_fov = scale_fov_by_width(vm.fov, aspect);
+                    let k =
+                        (camera.fov_x.to_radians() * 0.5).tan() / (vm_fov.to_radians() * 0.5).tan();
+                    let view = glam::Mat4::look_to_rh(camera.position, camera.forward(), Vec3::Z);
+                    let mut v = view.transform_point3(a.w_axis.truncate());
+                    v.x *= k;
+                    v.y *= k;
+                    a.w_axis = view.inverse().transform_point3(v).extend(1.0);
+                    Some(a)
                 })();
                 if let Some(a) = at {
                     let r = &mut g.fx_rng;
@@ -8070,15 +8083,24 @@ impl App {
                         }
                         let col = [1.0, 220.0 / 255.0, 0.0, a];
                         for r in [66.0_f32, 74.0] {
-                            let r = r * s * scale;
+                            let r = (r * s * scale).round();
                             let n = (std::f32::consts::TAU * r / (16.0 * s)).round().max(4.0);
+                            // each dash a 4x2 (layout px) quad tangent to the circle
+                            let (hl, ht) = (2.0 * s, 1.0 * s);
                             for k in 0..n as usize {
                                 let ang = std::f32::consts::TAU * k as f32 / n;
-                                items.push(UiItem::Rect {
-                                    x: w / 2.0 + ang.cos() * r - s,
-                                    y: h / 2.0 + ang.sin() * r - 2.0 * s,
-                                    w: 2.0 * s,
-                                    h: 4.0 * s,
+                                let (c, sn) = (ang.cos(), ang.sin());
+                                let (cx, cy) = (w / 2.0 + c * r, h / 2.0 + sn * r);
+                                // tangent (-sin, cos), radial (cos, sin)
+                                let q = |a: f32, b: f32| [cx - sn * a + c * b, cy + c * a + sn * b];
+                                let (p0, p1, p2, p3) =
+                                    (q(-hl, -ht), q(hl, -ht), q(hl, ht), q(-hl, ht));
+                                items.push(UiItem::Tri {
+                                    pts: [p0, p1, p2],
+                                    color: col,
+                                });
+                                items.push(UiItem::Tri {
+                                    pts: [p0, p2, p3],
                                     color: col,
                                 });
                             }
