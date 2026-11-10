@@ -3166,56 +3166,6 @@ pub fn desktop_icons(out: &mut Layout, ctx: &Ctx, icons: &[(&'static str, &str, 
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn nice_name_splits_words_like_the_game() {
-        assert_eq!(nice_name("wheel_hub"), "Wheel hub");
-        assert_eq!(nice_name("lowerBody"), "Lower Body");
-        assert_eq!(nice_name("HDTV_screen"), "HDTV screen");
-        assert_eq!(nice_name("studio"), "Studio");
-    }
-
-    #[test]
-    fn bodygroups_are_a_toggle_at_two_states_and_a_submenu_above() {
-        let lang = BTreeMap::new();
-        let names: Vec<String> = [
-            "bodygroups 0 0",
-            "bodygroups 0 1",
-            "bodygroups 1 0",
-            "bodygroups 1 1",
-            "bodygroups 1 2",
-        ]
-        .iter()
-        .map(|s| s.to_string())
-        .collect();
-        let groups = vec![
-            ("hat".to_string(), vec!["cap.smd".into(), "blank".into()]),
-            (
-                "arms".to_string(),
-                vec!["arms_normal.smd".into(), "".into(), "arms_long".into()],
-            ),
-        ];
-        let out = menu_entries(&lang, &names, 0, "01", &groups);
-        let root = out.iter().find(|e| e.name == "bodygroups").unwrap();
-        assert_eq!(root.children.len(), 2);
-        // two states: one checkable option sending the other state (current 0 -> 1)
-        assert_eq!(root.children[0].label, "Hat");
-        assert_eq!(root.children[0].name, "bodygroups 0 1");
-        assert_eq!(root.children[0].checked, Some(false));
-        assert!(root.children[0].children.is_empty());
-        // three states: a submenu of submodel file names, "Model #2" for the unnamed one
-        let arms = &root.children[1];
-        assert_eq!(arms.label, "Arms");
-        let labels: Vec<&str> = arms.children.iter().map(|c| c.label.as_str()).collect();
-        assert_eq!(labels, ["Arms normal", "Model #2", "Arms long"]);
-        assert_eq!(arms.children[1].checked, Some(true));
-        assert_eq!(arms.children[2].name, "bodygroups 1 2");
-    }
-}
-
 /// The Dupes / Saves creation tab (the game's dupes.html / saves.html in a DHTML panel): a
 /// button bar with the save button (`dupe_save` with the duplicator's clipboard / `gm_save`)
 /// over the local files' icon grid. Returns the icons per page.
@@ -3430,5 +3380,55 @@ pub fn player_editor(out: &mut Layout, ctx: &Ctx, models: &[(&str, &str)], curre
             h: 64.0,
             action: Action::PlayerModel((*name).to_string()),
         });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn nice_name_splits_words_like_the_game() {
+        assert_eq!(nice_name("wheel_hub"), "Wheel hub");
+        assert_eq!(nice_name("lowerBody"), "Lower Body");
+        assert_eq!(nice_name("HDTV_screen"), "HDTV screen");
+        assert_eq!(nice_name("studio"), "Studio");
+    }
+
+    #[test]
+    fn bodygroups_are_a_toggle_at_two_states_and_a_submenu_above() {
+        let lang = BTreeMap::new();
+        let names: Vec<String> = [
+            "bodygroups 0 0",
+            "bodygroups 0 1",
+            "bodygroups 1 0",
+            "bodygroups 1 1",
+            "bodygroups 1 2",
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+        let groups = vec![
+            ("hat".to_string(), vec!["cap.smd".into(), "blank".into()]),
+            (
+                "arms".to_string(),
+                vec!["arms_normal.smd".into(), "".into(), "arms_long".into()],
+            ),
+        ];
+        let out = menu_entries(&lang, &names, 0, "01", &groups);
+        let root = out.iter().find(|e| e.name == "bodygroups").unwrap();
+        assert_eq!(root.children.len(), 2);
+        // two states: one checkable option sending the other state (current 0 -> 1)
+        assert_eq!(root.children[0].label, "Hat");
+        assert_eq!(root.children[0].name, "bodygroups 0 1");
+        assert_eq!(root.children[0].checked, Some(false));
+        assert!(root.children[0].children.is_empty());
+        // three states: a submenu of submodel file names, "Model #2" for the unnamed one
+        let arms = &root.children[1];
+        assert_eq!(arms.label, "Arms");
+        let labels: Vec<&str> = arms.children.iter().map(|c| c.label.as_str()).collect();
+        assert_eq!(labels, ["Arms normal", "Model #2", "Arms long"]);
+        assert_eq!(arms.children[1].checked, Some(true));
+        assert_eq!(arms.children[2].name, "bodygroups 1 2");
     }
 }
