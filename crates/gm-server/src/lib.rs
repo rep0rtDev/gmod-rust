@@ -2330,6 +2330,10 @@ pub struct Npc {
     pub remove_at: Option<u64>,
     /// Ground speed along a navigation path, u/s.
     pub move_speed: f32,
+    /// Velocity over the last tick (the client extrapolates a late snapshot by it) and the
+    /// position it was measured from.
+    pub vel: Vec3,
+    pub prev_pos: Option<Vec3>,
     pub run: bool,
     pub goal: Option<NpcPath>,
     pub next_goal: Option<Vec3>,
@@ -15570,6 +15574,8 @@ impl<'w> Server<'w> {
             next_think: self.tick_count + NPC_THINK_PHASE,
             think_interval: NPC_THINK_TICKS,
             move_speed: 0.0,
+            vel: Vec3::ZERO,
+            prev_pos: None,
             run: false,
             goal: None,
         }
@@ -18151,6 +18157,7 @@ impl<'w> Server<'w> {
                 _ => (dir, max_yaw.unwrap_or(path_yaw)),
             };
             let mut swap = None;
+            let mut move_yaw = None;
             if let Some(n) = self.npcs.get_mut(&id) {
                 n.aim_run = aim_run;
                 let moved = floor.truncate().distance(pos.truncate());
@@ -18180,6 +18187,14 @@ impl<'w> Server<'w> {
                 } else {
                     yaw
                 };
+                // the step's direction off the body (the game's move_yaw pose parameter:
+                // the 9-way walk/run blends step that way instead of sliding sideways)
+                let mv = floor.truncate() - pos.truncate();
+                move_yaw = Some(if moved > 0.01 {
+                    wrap_deg(mv.y.atan2(mv.x).to_degrees() - n.angles.y)
+                } else {
+                    0.0
+                });
                 // a sweep blocked three thinks running: the path is given up (the think
                 // re-decides), a cover run with it - unless the blocker is another NPC: that
                 // run slides on its hull until NPC_PEER_BLOCK_TICKS (the squad leader behind
@@ -18220,6 +18235,9 @@ impl<'w> Server<'w> {
                     g.idx = idx.min(points.len() - 1);
                     g.braking = braking;
                 }
+            }
+            if let Some(v) = move_yaw {
+                self.set_pose_parameter(id, "move_yaw", v);
             }
             if let Some((target, run)) = swap {
                 self.npc_goto(id, target, run);
@@ -21707,6 +21725,8 @@ impl<'w> Server<'w> {
                 next_think: self.tick_count + NPC_THINK_PHASE,
                 think_interval: NPC_THINK_TICKS,
                 move_speed: 0.0,
+                vel: Vec3::ZERO,
+                prev_pos: None,
                 run: false,
                 goal: None,
             },
@@ -23881,6 +23901,13 @@ impl<'w> Server<'w> {
     /// poses flow back into the sandbox.
     pub fn tick(&mut self, cmds: &BTreeMap<u32, PlayerCmd>) {
         let now = self.tick_count as u32;
+        // the NPC bodies' velocity over the tick just run (networked for extrapolation)
+        for n in self.npcs.values_mut() {
+            n.vel = n.prev_pos.map_or(Vec3::ZERO, |p| {
+                (n.pos - p) / gm_core::tick::DEFAULT_TICK_INTERVAL
+            });
+            n.prev_pos = Some(n.pos);
+        }
         let events_at_start = self.events.len();
         self.fire_tick();
         self.sent_tick();

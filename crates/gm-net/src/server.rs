@@ -1598,7 +1598,7 @@ impl ServerNet {
                     model_id,
                     pos: n.pos,
                     angles: n.angles,
-                    vel: Vec3::ZERO,
+                    vel: n.vel,
                     angvel: Vec3::ZERO,
                     frozen: false,
                     skin: n.skin,
