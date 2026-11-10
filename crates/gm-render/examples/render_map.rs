@@ -59,8 +59,13 @@ fn main() -> Result<()> {
         &bsp,
         wgpu::TextureFormat::Rgba8UnormSrgb,
         // GM_HDR: the HDR lighting lumps and .hdr.vtf cubemaps (mat_hdr_level 2)
+        // GM_MSAA: mat_antialias samples (the user's cards run 8; llvmpipe takes it too)
         gm_render::world::Quality {
             hdr: std::env::var_os("GM_HDR").is_some(),
+            msaa: std::env::var("GM_MSAA")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(1),
             ..Default::default()
         },
     )?;
@@ -94,8 +99,19 @@ fn main() -> Result<()> {
             );
         }
     }
-    let (color, depth) =
-        offscreen_targets(&gpu, width, height, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
+    let msaa = std::env::var("GM_MSAA")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(1);
+    let (color, _) = offscreen_targets(&gpu, width, height, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
+    // with MSAA the passes draw into multisampled targets and resolve into `color`
+    let (ms_color, depth) = offscreen_targets(
+        &gpu,
+        width,
+        height,
+        wgpu::TextureFormat::Rgba8UnormSrgb,
+        msaa,
+    );
     let t1 = std::time::Instant::now();
     // GM_PROBE_MODEL=<path>: load a model like the client does and report its animation state
     if let Some(path) = std::env::var_os("GM_PROBE_MODEL") {
@@ -162,11 +178,13 @@ fn main() -> Result<()> {
             }
         }
     }
+    let color_view = color.create_view(&Default::default());
+    let ms_view = ms_color.create_view(&Default::default());
     world.draw(
         &gpu,
         &camera,
-        &color.create_view(&Default::default()),
-        None,
+        if msaa > 1 { &ms_view } else { &color_view },
+        (msaa > 1).then_some(&color_view),
         &depth.create_view(&Default::default()),
         width as f32 / height as f32,
         // GM_NO_REFRACT: draw the water without the refraction copy (to compare)

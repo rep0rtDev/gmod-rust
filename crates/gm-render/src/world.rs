@@ -3508,7 +3508,11 @@ impl WorldRenderer {
                     .collect::<Vec<_>>()
             );
         }
-        let Some((n, zs)) = self.reflected_plane(camera.position) else {
+        // GM_NO_REFLECT: draw the water without the reflection (to compare)
+        let plane = self
+            .reflected_plane(camera.position)
+            .filter(|_| std::env::var_os("GM_NO_REFLECT").is_none());
+        let Some((n, zs)) = plane else {
             self.reflect.lock().unwrap().valid = false;
             return;
         };
