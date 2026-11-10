@@ -242,6 +242,37 @@ pub struct ModelScriptData {
 
 /// Faces of each PHY convex as triangle fans: the hull's vertices on each outward plane,
 /// sorted around the face centre.
+/// The face planes (`n . p = d`, outward) of the convex hull of `points`: every triple whose
+/// plane has all other points on the inside.
+pub fn convex_planes(points: &[Vec3]) -> Vec<(Vec3, f32)> {
+    let mut planes: Vec<(Vec3, f32)> = Vec::new();
+    let centre = points.iter().sum::<Vec3>() / points.len().max(1) as f32;
+    for i in 0..points.len() {
+        for j in i + 1..points.len() {
+            for k in j + 1..points.len() {
+                let n = (points[j] - points[i]).cross(points[k] - points[i]);
+                if n.length_squared() < 1e-6 {
+                    continue;
+                }
+                let mut n = n.normalize();
+                let mut d = n.dot(points[i]);
+                if n.dot(centre) > d {
+                    n = -n;
+                    d = -d;
+                }
+                if points.iter().all(|p| n.dot(*p) <= d + 1e-3)
+                    && !planes
+                        .iter()
+                        .any(|(pn, pd)| pn.dot(n) > 0.9999 && (pd - d).abs() < 1e-3)
+                {
+                    planes.push((n, d));
+                }
+            }
+        }
+    }
+    planes
+}
+
 pub fn phys_mesh(hulls: &[Vec<Vec3>], planes: &[Vec<(Vec3, f32)>]) -> Vec<Vec<[Vec3; 3]>> {
     hulls
         .iter()
@@ -13359,6 +13390,12 @@ impl<'w> Server<'w> {
                     255,
                 ];
                 self.sandbox.set_render(id, "", c, 0, 0);
+                // RebuildPhysics: PhysicsInitSphere(size / 2.1, "metal_bouncy") - a true
+                // sphere the player's hull sees too (friction 0, elasticity 1000)
+                self.script_shapes
+                    .insert(id, PhysShape::Sphere { radius: size / 2.1 });
+                self.sync_physics();
+                self.set_entity_surface(id, Some(0.0), Some(1.0));
             }
             return Some(id);
         }
@@ -23791,11 +23828,25 @@ impl<'w> Server<'w> {
                 let b = *self.bodies.get(&p.id)?;
                 let info = self.models.get(&p.model)?;
                 let st = self.physics.state(b);
+                // a scripted shape (sent_ball's sphere) replaces the model's hulls
+                let own = self
+                    .script_shapes
+                    .get(&p.id)
+                    .and_then(|sh| sh.hulls())
+                    .map(|hulls| {
+                        let planes: Vec<Vec<(Vec3, f32)>> =
+                            hulls.iter().map(|h| convex_planes(h)).collect();
+                        (planes, hulls)
+                    });
+                let (planes, hulls): (&[Vec<(Vec3, f32)>], &[Vec<Vec3>]) = match &own {
+                    Some((pl, h)) => (pl, h),
+                    None => (&info.hull_planes, &info.hulls),
+                };
                 Some(
-                    info.hull_planes
+                    planes
                         .iter()
-                        .zip(&info.hulls)
-                        .map(move |(pl, pts)| {
+                        .zip(hulls)
+                        .map(|(pl, pts)| {
                             let (planes, (mins, maxs)) =
                                 gm_physics::pickup::world_convex(pl, pts, st.rotation, st.position);
                             gm_collision::Convex {
@@ -23805,7 +23856,8 @@ impl<'w> Server<'w> {
                                 mins,
                                 maxs,
                             }
-                        }),
+                        })
+                        .collect::<Vec<_>>(),
                 )
             })
             .flatten()

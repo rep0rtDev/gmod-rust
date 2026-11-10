@@ -3462,32 +3462,30 @@ impl WorldRenderer {
         );
     }
 
-    /// The water surface the eye looks down on, if any: the volume nearest the eye among
-    /// those whose surface is below it.
-    fn reflected_surface(&self, eye: Vec3) -> Option<f32> {
-        self.water_volumes
-            .iter()
-            .filter(|w| w.surface_z < eye.z)
-            .min_by(|a, b| {
-                let d = |w: &WaterVolume| eye.clamp(w.min, w.max).distance_squared(eye);
-                d(a).total_cmp(&d(b))
-            })
-            .map(|w| w.surface_z)
-    }
-
     /// The plane the reflection pass mirrors in: the water surface under the eye, else the
     /// nearest `func_reflective_glass` facing the eye within 3000 u (one reflection a frame).
     fn reflected_plane(&self, eye: Vec3) -> Option<(Vec3, f32)> {
-        if let Some(z) = self.reflected_surface(eye) {
-            return Some((Vec3::Z, z));
-        }
+        // the nearer of the two wins: gm_construct's basement mirror sits far below the
+        // pool's surface, which must not claim the pass from the other end of the map
         let dist = |m: &Mirror| eye.clamp(m.min, m.max).distance_squared(eye);
-        self.mirrors
+        let mirror = self
+            .mirrors
             .iter()
             .filter(|m| m.normal.z.abs() < 0.5 && eye.dot(m.normal) - m.d > 0.0)
             .min_by(|a, b| dist(a).total_cmp(&dist(b)))
-            .filter(|m| dist(m) < 3000.0 * 3000.0)
-            .map(|m| (m.normal, m.d))
+            .filter(|m| dist(m) < 3000.0 * 3000.0);
+        let water = self
+            .water_volumes
+            .iter()
+            .filter(|w| w.surface_z < eye.z)
+            .map(|w| (eye.clamp(w.min, w.max).distance_squared(eye), w.surface_z))
+            .min_by(|a, b| a.0.total_cmp(&b.0));
+        match (mirror, water) {
+            (Some(m), Some((wd, _))) if dist(m) < wd => Some((m.normal, m.d)),
+            (_, Some((_, z))) => Some((Vec3::Z, z)),
+            (Some(m), None) => Some((m.normal, m.d)),
+            (None, None) => None,
+        }
     }
     /// `_rt_WaterReflection`: the scene above the water plane seen from the eye mirrored in
     /// it, drawn by a real camera below the plane (pitch and roll negated, so the winding
