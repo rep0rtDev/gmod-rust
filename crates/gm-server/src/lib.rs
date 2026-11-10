@@ -2334,6 +2334,8 @@ pub struct Npc {
     /// position it was measured from.
     pub vel: Vec3,
     pub prev_pos: Option<Vec3>,
+    /// A citizen answering another's idle question: the tick of the answer (0 = none).
+    pub answer_at: u64,
     pub run: bool,
     pub goal: Option<NpcPath>,
     pub next_goal: Option<Vec3>,
@@ -15611,6 +15613,7 @@ impl<'w> Server<'w> {
             move_speed: 0.0,
             vel: Vec3::ZERO,
             prev_pos: None,
+            answer_at: 0,
             run: false,
             goal: None,
         }
@@ -15931,7 +15934,15 @@ impl<'w> Server<'w> {
             }
             let class = n.class.clone();
             let mut snd = None;
-            if n.attack_vocal {
+            if n.answer_at != 0 && now >= n.answer_at {
+                n.answer_at = 0;
+                if n.target.is_none() {
+                    snd = Some(format!(
+                        "npc_citizen.answer{:02}",
+                        1 + (now + u64::from(id)) % 40
+                    ));
+                }
+            } else if n.attack_vocal {
                 n.attack_vocal = false;
                 snd = npc_vocal(&class, Vocal::Attack, now + u64::from(id));
             } else if n.target.is_some() {
@@ -15948,12 +15959,94 @@ impl<'w> Server<'w> {
                 } else if now >= n.next_idle_vocal {
                     n.next_idle_vocal = 0;
                     snd = npc_vocal(&class, Vocal::Idle, now + u64::from(id));
+                    if class == "npc_citizen" {
+                        // small talk needs company: a player in earshot, and a fellow citizen
+                        // to answer a second or two later
+                        let pos = n.pos;
+                        let heard = self
+                            .players
+                            .values()
+                            .any(|p| p.alive && p.state.origin.distance(pos) < 1024.0);
+                        if !heard {
+                            snd = None;
+                        } else if let Some((&other, _)) = self
+                            .npcs
+                            .iter()
+                            .filter(|(o, m)| {
+                                **o != id
+                                    && m.class == "npc_citizen"
+                                    && m.dead_at.is_none()
+                                    && m.target.is_none()
+                                    && m.pos.distance(pos) < 1024.0
+                            })
+                            .min_by(|a, b| a.1.pos.distance(pos).total_cmp(&b.1.pos.distance(pos)))
+                        {
+                            let at = now + 66 + (now + u64::from(id)) % 66;
+                            if let Some(m) = self.npcs.get_mut(&other) {
+                                m.answer_at = at;
+                            }
+                        }
+                    }
                 }
             }
             if let Some(snd) = snd {
                 self.emit_sound(id, snd, 1.0);
             }
         }
+    }
+
+    /// +use on a companion NPC: starts it following the player (TLK_STARTFOLLOW line) or
+    /// stops it (TLK_STOPFOLLOW). False when `ent` is no live, friendly companion.
+    fn npc_use_follow(&mut self, ent: u32, player: u32) -> bool {
+        let Some(n) = self.npcs.get_mut(&ent) else {
+            return false;
+        };
+        let companion = matches!(
+            n.class.as_str(),
+            "npc_citizen"
+                | "npc_alyx"
+                | "npc_barney"
+                | "npc_monk"
+                | "npc_vortigaunt"
+                | "npc_eli"
+                | "npc_kleiner"
+                | "npc_mossman"
+                | "npc_magnusson"
+        );
+        if !companion || n.dead_at.is_some() || n.held || npc_hostile_to_players(n) {
+            return false;
+        }
+        let following = n.ai.behavior.as_deref() == Some("Follow");
+        let salt = self.tick_count + u64::from(ent);
+        let line = match (n.class.as_str(), following) {
+            ("npc_citizen", false) => Some(if salt % 3 == 0 {
+                format!("npc_citizen.leadtheway{:02}", 1 + salt % 2)
+            } else {
+                format!("npc_citizen.squad_follow{:02}", 1 + salt % 4)
+            }),
+            ("npc_citizen", true) => Some(format!("npc_citizen.ok{:02}", 1 + salt % 2)),
+            ("npc_alyx", false) => Some("npc_alyx.followme01".to_string()),
+            ("npc_barney", false) => Some(format!("npc_barney.ba_followme{:02}", 1 + salt % 5)),
+            ("npc_vortigaunt", false) => Some(
+                ["npc_vortigaunt.honorfollow", "npc_vortigaunt.wefollowfm"][(salt % 2) as usize]
+                    .to_string(),
+            ),
+            _ => None,
+        };
+        if following {
+            n.ai.behavior = None;
+            n.goal = None;
+            n.next_goal = None;
+            n.chase = None;
+        } else {
+            n.ai.behavior = Some("Follow".to_string());
+        }
+        n.next_idle_vocal = 0;
+        let _ = player;
+        if let Some(line) = line {
+            self.emit_sound(ent, line, 1.0);
+        }
+        true
     }
 
     /// Measured `server_npc_drop`: on the death tick the NPC's weapon becomes an ownerless
@@ -21812,6 +21905,7 @@ impl<'w> Server<'w> {
                 move_speed: 0.0,
                 vel: Vec3::ZERO,
                 prev_pos: None,
+                answer_at: 0,
                 run: false,
                 goal: None,
             },
@@ -23433,6 +23527,11 @@ impl<'w> Server<'w> {
                         if let Some(p) = self.players.get_mut(&player) {
                             p.use_target = Some(ent);
                         }
+                        return;
+                    }
+                    // +use on a companion toggles its follow behaviour (CNPC_PlayerCompanion
+                    // / CNPC_Citizen `Use`: TLK_STARTFOLLOW / TLK_STOPFOLLOW)
+                    if use_pressed && self.npc_use_follow(ent, player) {
                         return;
                     }
                     match self.sent_use_type(ent) {
@@ -27940,6 +28039,10 @@ pub fn npc_vocal(class: &str, kind: Vocal, salt: u64) -> Option<String> {
         Alert if class == "npc_metropolice" => "NPC_MetroPolice.Alert",
         Pain if class == "npc_metropolice" => "NPC_MetroPolice.Pain",
         Die if class == "npc_metropolice" => "NPC_MetroPolice.Die",
+        // TLK_QUESTION: the idle citizens' small talk (another one answers, `tick_npc_vocals`)
+        Idle if class == "npc_citizen" => {
+            return Some(format!("npc_citizen.question{:02}", 1 + salt % 31));
+        }
         Pain if class == "npc_citizen" => {
             return Some(format!("npc_citizen.pain{:02}", 1 + salt % 9));
         }

@@ -242,7 +242,13 @@ impl Particles {
                 self.defs.insert(
                     s.name.to_ascii_lowercase(),
                     SystemDef {
-                        material: s.str("material").unwrap_or("").to_string(),
+                        // pcf material names come with backslashes and sometimes the .vmt
+                        // (`particle\blood_core.vmt`): the material loader wants neither
+                        material: {
+                            let m = s.str("material").unwrap_or("").replace('\\', "/");
+                            let m = m.to_ascii_lowercase();
+                            m.strip_suffix(".vmt").unwrap_or(&m).to_string()
+                        },
                         max_particles: s.int("max_particles").unwrap_or(1000).max(1) as usize,
                         initial_particles: s.int("initial_particles").unwrap_or(0).max(0) as usize,
                         radius: s.float("radius").unwrap_or(5.0),
