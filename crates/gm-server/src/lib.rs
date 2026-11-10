@@ -7788,6 +7788,25 @@ pub const HELD_MASS: f32 = 45678.0;
 pub const SPAWN_WEAPON: &str = "weapon_physgun";
 pub const RESPAWN_TICKS: u64 = 135;
 pub const SPAWN_Z_OFFSET: f32 = 1.0;
+/// Every stock weapon class the wire can name, by index (`PlayerSnap::active`, the owned
+/// mask): the loadout, then the spawnable HL2 weapons outside it; scripted classes follow.
+pub const WIRE_WEAPONS: [&str; 14] = [
+    "gmod_camera",
+    "gmod_tool",
+    "weapon_357",
+    "weapon_ar2",
+    "weapon_crossbow",
+    "weapon_crowbar",
+    "weapon_frag",
+    "weapon_physcannon",
+    "weapon_physgun",
+    "weapon_pistol",
+    "weapon_rpg",
+    "weapon_shotgun",
+    "weapon_smg1",
+    "weapon_stunstick",
+];
+
 pub const LOADOUT: [&str; 13] = [
     "gmod_camera",
     "gmod_tool",
@@ -10186,7 +10205,7 @@ impl<'w> Server<'w> {
 
     /// Every weapon class the wire can name: `LOADOUT`, then the scripted ones in order.
     pub fn weapon_classes(&self) -> Vec<String> {
-        LOADOUT
+        WIRE_WEAPONS
             .iter()
             .map(|w| w.to_string())
             .chain(self.scripted_weapons.iter().map(|w| w.class.clone()))
@@ -27064,9 +27083,9 @@ mod slot_tests {
 
     #[test]
     fn slot_order_follows_the_measured_table() {
-        let classes: Vec<String> = LOADOUT.iter().map(|c| c.to_string()).collect();
+        let classes: Vec<String> = WIRE_WEAPONS.iter().map(|c| c.to_string()).collect();
         let idx = |c: &str| classes.iter().position(|x| x == c).unwrap() as u8;
-        let all = (1u64 << LOADOUT.len()) - 1;
+        let all = (1u64 << LOADOUT.len()) - 1; // the loadout only (no stunstick)
         assert_eq!(
             slot_order(&classes, all, 0, &[]),
             vec![
@@ -27108,10 +27127,14 @@ mod slot_tests {
         };
         let mut classes2 = classes.clone();
         classes2.push("swep_x".into());
-        let owned2 = all | (1u64 << LOADOUT.len());
+        let owned2 = all | (1u64 << WIRE_WEAPONS.len());
         assert_eq!(
             slot_order(&classes2, owned2, 1, std::slice::from_ref(&swep)),
-            vec![idx("weapon_pistol"), LOADOUT.len() as u8, idx("weapon_357")]
+            vec![
+                idx("weapon_pistol"),
+                WIRE_WEAPONS.len() as u8,
+                idx("weapon_357")
+            ]
         );
     }
 }

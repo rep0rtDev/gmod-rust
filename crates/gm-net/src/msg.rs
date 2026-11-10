@@ -372,7 +372,7 @@ pub fn weapon_index(name: &str, classes: &[String]) -> u8 {
 
 /// `LOADOUT` followed by the scripted weapon classes a client knows (`WeaponDefs`).
 pub fn weapon_classes(defs: &[gm_server::ScriptedWeapon]) -> Vec<String> {
-    gm_server::LOADOUT
+    gm_server::WIRE_WEAPONS
         .iter()
         .map(|w| w.to_string())
         .chain(defs.iter().map(|d| d.class.clone()))

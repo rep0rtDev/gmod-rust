@@ -45,9 +45,9 @@ const GMOD_SUIT: bool = false;
 /// oldest (clientfx.md §4, gap-report #128).
 const DECAL_RING: usize = 2048;
 const DECAL_LIFE: f32 = f32::INFINITY;
-const GRAVGUN_SLOT: u8 = 10;
+const GRAVGUN_SLOT: u8 = 11;
 /// `gmod_camera` in `WEAPONS`.
-const CAMERA_SLOT: u8 = 12;
+const CAMERA_SLOT: u8 = 13;
 
 const SPAWN_MODEL: &str = "models/props_c17/oildrum001.mdl";
 
@@ -307,15 +307,16 @@ struct Gfx {
 
 const CONSOLE_LOG_LINES: usize = 500;
 
-/// World model held by another player, by `gm_server::LOADOUT` index (`PlayerSnap::active`);
+/// World model held by another player, by `gm_server::WIRE_WEAPONS` index (`PlayerSnap::active`);
 /// it shares `ValveBiped.Bip01_R_Hand` with the player skeleton and is bone-merged onto it.
 fn world_model(active: u8) -> Option<&'static str> {
-    Some(match gm_server::LOADOUT.get(active as usize)? {
+    Some(match gm_server::WIRE_WEAPONS.get(active as usize)? {
         &"gmod_tool" => "models/weapons/w_toolgun.mdl",
         &"weapon_357" => "models/weapons/w_357.mdl",
         &"weapon_ar2" => "models/weapons/w_irifle.mdl",
         &"weapon_crossbow" => "models/weapons/w_crossbow.mdl",
         &"weapon_crowbar" => "models/weapons/w_crowbar.mdl",
+        &"weapon_stunstick" => "models/weapons/w_stunstick.mdl",
         &"weapon_frag" => "models/weapons/w_grenade.mdl",
         &"weapon_physcannon" | &"weapon_physgun" => "models/weapons/w_physics.mdl",
         &"weapon_pistol" => "models/weapons/w_pistol.mdl",
@@ -514,6 +515,7 @@ const fn vm(
 }
 
 /// Slots on the number keys 1..9, 0; the physgun is slot 0 (key 1).
+/// `GRAVGUN_SLOT` / `CAMERA_SLOT` index this table (`slot_constants_match_the_table`).
 const WEAPONS: [Viewmodel; 14] = [
     Viewmodel {
         hold: Some("hold_idle"),
@@ -704,7 +706,7 @@ const PLAYER_RUN_SPEED: f32 = 150.0;
 /// The m_anm hold type of the active weapon: the game's holdtype from the weapon table (the
 /// toolgun uses the revolver hold), `fist` with nothing out; the SMG's sequences are `*_smg1`.
 fn hold_type(active: u8) -> &'static str {
-    match gm_server::LOADOUT
+    match gm_server::WIRE_WEAPONS
         .get(active as usize)
         .and_then(|c| gm_server::weapons::def(c))
         .map(|d| d.hold_type)
@@ -959,7 +961,7 @@ fn paint_tool_screen(
 /// Loadout weapons whose shot shows a muzzle flash (the game's `MuzzleFlash` effect).
 fn fires_bullets(active: u8) -> bool {
     matches!(
-        gm_server::LOADOUT.get(active as usize),
+        gm_server::WIRE_WEAPONS.get(active as usize),
         Some(&("weapon_pistol" | "weapon_357" | "weapon_smg1" | "weapon_ar2" | "weapon_shotgun"))
     )
 }
@@ -969,7 +971,7 @@ fn fires_bullets(active: u8) -> bool {
 /// when a one-go reload starts, the shotgun's `.Reload` per shell and `.Special1` (cock) at
 /// its end and on the pump, `.Empty` on a dry fire. The shotgun's start stage is silent.
 fn weapon_sound(act: u8, active: u8) -> Option<String> {
-    let class = gm_server::LOADOUT.get(active as usize)?;
+    let class = gm_server::WIRE_WEAPONS.get(active as usize)?;
     let prefix = match *class {
         "weapon_357" => "Weapon_357",
         "weapon_ar2" => "Weapon_AR2",
@@ -3811,7 +3813,7 @@ impl App {
     fn vm_of(&self, weapon: u8) -> Option<&'static Viewmodel> {
         viewmodel(weapon).or_else(|| {
             self.scripted_vms
-                .get((weapon as usize).checked_sub(gm_server::LOADOUT.len())?)
+                .get((weapon as usize).checked_sub(WEAPONS.len())?)
                 .copied()
         })
     }
@@ -3864,7 +3866,7 @@ impl App {
         }
         defs.iter()
             .position(|d| d.class == *class)
-            .map(|p| (gm_server::LOADOUT.len() + p) as u8)
+            .map(|p| (WEAPONS.len() + p) as u8)
     }
 
     /// The owned weapons of every bucket in the game's menu order (class indices).
@@ -4303,7 +4305,7 @@ impl App {
                     _ => None,
                 };
                 let predicted = act == 6
-                    && gm_server::LOADOUT.get(active as usize) == Some(&"gmod_tool")
+                    && gm_server::WIRE_WEAPONS.get(active as usize) == Some(&"gmod_tool")
                     && self
                         .tool_predicted
                         .take()
@@ -4320,7 +4322,9 @@ impl App {
                 }
                 // the crossbow's load effect (`SPECIAL1`, Weapon_Crossbow.BoltElectrify) comes
                 // as the reload seats the bolt, about a second into the sequence
-                if act == 1 && gm_server::LOADOUT.get(active as usize) == Some(&"weapon_crossbow") {
+                if act == 1
+                    && gm_server::WIRE_WEAPONS.get(active as usize) == Some(&"weapon_crossbow")
+                {
                     self.fx_sound_queue.push((
                         Instant::now() + std::time::Duration::from_millis(1000),
                         "Weapon_Crossbow.BoltElectrify".to_string(),
@@ -5288,7 +5292,7 @@ impl App {
         let world_model_of = |active: u8| -> Option<&'static str> {
             world_model(active).or_else(|| {
                 scripted_world
-                    .get((active as usize).checked_sub(gm_server::LOADOUT.len())?)
+                    .get((active as usize).checked_sub(WEAPONS.len())?)
                     .copied()
             })
         };
@@ -10719,6 +10723,7 @@ fn weapon_has_crosshair_glyph(class: &str) -> bool {
 fn weapon_icon(class: &str) -> Option<&'static str> {
     Some(match class {
         "weapon_crowbar" => "c",
+        "weapon_stunstick" => "n",
         "weapon_physcannon" | "weapon_physgun" => "m",
         "weapon_pistol" => "d",
         "weapon_357" => "e",
@@ -12733,5 +12738,22 @@ fn utility_schema(key: &str) -> Vec<gm_server::ToolSetting> {
         "PlayerModelSelector" => vec![help("Player model: press C and click the icon")],
         "Undo" => vec![help("Undo: the last things you did (Z)")],
         _ => Vec::new(),
+    }
+}
+
+#[cfg(test)]
+mod weapon_table_tests {
+    use super::*;
+
+    #[test]
+    fn slot_constants_match_the_table() {
+        assert_eq!(WEAPONS[0].class, "weapon_physgun");
+        assert_eq!(WEAPONS[1].class, "gmod_tool");
+        assert_eq!(WEAPONS[GRAVGUN_SLOT as usize].class, "weapon_physcannon");
+        assert_eq!(WEAPONS[CAMERA_SLOT as usize].class, "gmod_camera");
+        // every wire class has a local viewmodel entry (the selector drops those without)
+        for c in gm_server::WIRE_WEAPONS {
+            assert!(WEAPONS.iter().any(|w| w.class == c), "{c}");
+        }
     }
 }
