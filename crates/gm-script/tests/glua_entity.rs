@@ -522,9 +522,11 @@ fn npc_and_datatable_methods() {
     assert_eq!(s(5), "true");
     assert_eq!(s(6), "true");
     assert_eq!(s(7), "4");
-    assert_eq!(s(8), "2");
+    // the game's Set<name> runs the NetworkVarNotify proxies on every set, changed or not
+    // (includes/extensions/entity.lua CallProxies)
+    assert_eq!(s(8), "3");
     assert_eq!(s(9), "Count:nil>3");
-    assert_eq!(s(10), "Count:3>4");
+    assert_eq!(s(10), "Count:3>3");
     assert_eq!(s(11), "4");
     assert_eq!(s(12), "true");
     assert_eq!(s(14), "false");

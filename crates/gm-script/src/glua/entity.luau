@@ -1564,8 +1564,9 @@ for _, t in ipairs({ "Angle", "Bool", "Entity", "Float", "Int", "String", "Vecto
     ENT["GetNW2" .. t] = g; ENT["SetNW2" .. t] = s
     ENT["GetNetworked" .. t] = g; ENT["SetNetworked" .. t] = s
     ENT["GetNetworked2" .. t] = g; ENT["SetNetworked2" .. t] = s
-    ENT["GetDT" .. t] = function(self, i) return self:GetNWVar("dt_" .. t .. i) end
-    ENT["SetDT" .. t] = function(self, i, v) self:SetNWVar("dt_" .. t .. i, v) end
+    -- DT slots are 0..31 per type (luabind.md F52); another slot is ignored (M)
+    ENT["GetDT" .. t] = function(self, i) if i < 0 or i > 31 then return nil end return self:GetNWVar("dt_" .. t .. i) end
+    ENT["SetDT" .. t] = function(self, i, v) if i < 0 or i > 31 then return end self:SetNWVar("dt_" .. t .. i, v) end
 end
 ENT.SetNetworkedNumber = ENT.SetNWFloat
 ENT.GetNetworked2Var, ENT.SetNetworked2Var, ENT.GetNW2Var, ENT.SetNW2Var = ENT.GetNWVar, ENT.SetNWVar, ENT.GetNWVar, ENT.SetNWVar
@@ -1596,25 +1597,84 @@ for k, fn in pairs(ENT) do
 end
 function ENT:GetNWVarTable() return self:GetNWVars() end
 ENT.GetNW2VarTable, ENT.GetNetworkedVarTable, ENT.GetNetworked2VarTable = ENT.GetNWVarTable, ENT.GetNWVarTable, ENT.GetNWVarTable
--- NetworkVar: the scripted-entity data table over the same storage
-local dt_callbacks = {}
-function ENT:InstallDataTable() rawset(self, "__dt", true) end
+-- NetworkVar: the game's data table (includes/extensions/entity.lua) over the NW storage:
+-- 32 slots (0..31) per type, a var without a slot takes the first free one of its type,
+-- the value lives in `dt_<Type><slot>` so GetDT<Type>(slot) / SetDT<Type>(slot) see it;
+-- NetworkVarNotify on a missing var errors like the game. When a type's 32 slots are all
+-- used the game's FindUnusedIndex returns nil and the engine rejects the slot; here that is
+-- an error (M: the engine's exact reaction is not observed).
+local function dt_tables(ent)
+    local dt = rawget(ent, "__dt_vars")
+    if not dt then dt = { names = {}, types = {} }; rawset(ent, "__dt_vars", dt) end
+    return dt
+end
+local function dt_unused_index(ent, t)
+    local tbl = dt_tables(ent).types[t]
+    if not tbl then return 0 end
+    for i = 0, 31 do if not tbl[i] then return i end end
+    return nil
+end
+function ENT:InstallDataTable() rawset(self, "__dt", true); dt_tables(self) end
+function ENT:IsDTVarSlotUsed(t, slot) local tbl = dt_tables(self).types[t]; return tbl ~= nil and tbl[slot] ~= nil end
+function ENT:DTVar(t, slot, name)
+    if type(slot) == "string" and not name then name = slot; slot = dt_unused_index(self, t)
+    elseif not slot and type(name) == "string" then slot = dt_unused_index(self, t) end
+    if not self["SetDT" .. t] or not self["GetDT" .. t] then print("Couldn't addvar " .. tostring(name) .. " - type " .. tostring(t) .. " is invalid!") return end
+    if slot == nil then error("NetworkVar: no free " .. t .. " slot for " .. tostring(name) .. " (32 per type)", 2) end
+    local dt = dt_tables(self)
+    local data = { index = slot, name = name, typename = t, Notify = {} }
+    dt.types[t] = dt.types[t] or {}
+    dt.types[t][slot] = data
+    dt.names[name] = data
+    return data
+end
+local function dt_call_proxies(ent, list, name, old, new) for i = 1, #list do list[i](ent, name, old, new) end end
+function ENT:CallDTVarProxies(t, slot, v)
+    local tbl = dt_tables(self).types[t]
+    local d = tbl and tbl[slot]
+    if d then dt_call_proxies(self, d.Notify, d.name, self["GetDT" .. t](self, slot), v) end
+end
 function ENT:NetworkVar(t, slot, name, extra)
-    if type(slot) == "string" then extra = name; name = slot end
-    rawset(self, "Get" .. name, function(s) local v = s:GetNWVar("dt_" .. name); if v == nil and extra and extra.KeyName then return nil end return v end)
-    rawset(self, "Set" .. name, function(s, v) s:SetNWVar("dt_" .. name, v) end)
+    if type(slot) == "string" and (type(name) == "table" or name == nil) then extra = name; name = slot; slot = dt_unused_index(self, t)
+    elseif not slot and type(name) == "string" then slot = dt_unused_index(self, t) end
+    local d = self:DTVar(t, slot, name)
+    if not d then return end
+    rawset(self, "Set" .. name, function(s, v)
+        dt_call_proxies(self, d.Notify, name, self["GetDT" .. t](self, d.index), v)
+        self["SetDT" .. t](self, d.index, v)
+    end)
+    rawset(self, "Get" .. name, function(s) return self["GetDT" .. t](self, d.index) end)
     if extra and extra.KeyName then rawset(self, "__dt_keys", rawget(self, "__dt_keys") or {}); rawget(self, "__dt_keys")[string.lower(extra.KeyName)] = name end
 end
 function ENT:NetworkVarElement(t, slot, element, name, extra)
-    rawset(self, "Get" .. name, function(s) local v = s:GetNWVar("dt_" .. t .. slot); return v and v[element] end)
-    rawset(self, "Set" .. name, function(s, v) local cur = s:GetNWVar("dt_" .. t .. slot) or Vector(); cur[element] = v; s:SetNWVar("dt_" .. t .. slot, cur) end)
+    local dt = dt_tables(self)
+    dt.types[t] = dt.types[t] or {}
+    local d = dt.types[t][slot] or { index = slot, name = name, typename = t, Notify = {} }
+    dt.types[t][slot] = d
+    dt.names[name] = { index = slot, name = name, typename = t, element = element, Notify = d.Notify }
+    rawset(self, "Get" .. name, function(s) local v = self["GetDT" .. t](self, slot); return v and v[element] end)
+    rawset(self, "Set" .. name, function(s, v) local cur = self["GetDT" .. t](self, slot) or Vector(); cur[element] = v; self["SetDT" .. t](self, slot, cur) end)
+    if extra and extra.KeyName then rawset(self, "__dt_keys", rawget(self, "__dt_keys") or {}); rawget(self, "__dt_keys")[string.lower(extra.KeyName)] = name end
 end
-function ENT:NetworkVarNotify(name, fn) self:SetNWVarProxy("dt_" .. name, function(s, k, old, new) fn(s, name, old, new) end) end
-function ENT:GetNetworkVars() local o = {}; for k, v in pairs(self:GetNWVars()) do if string.sub(k, 1, 3) == "dt_" then o[string.sub(k, 4)] = v end end return o end
-function ENT:RestoreNetworkVars(t) for k, v in pairs(t) do self:SetNWVar("dt_" .. k, v) end end
+function ENT:NetworkVarNotify(name, fn)
+    local d = dt_tables(self).names[name]
+    if not d then error("calling NetworkVarNotify on missing network var " .. tostring(name), 2) end
+    d.Notify[#d.Notify + 1] = fn
+end
+function ENT:GetNetworkVars()
+    local o = {}
+    for name, d in pairs(dt_tables(self).names) do
+        if d.typename ~= "Entity" then
+            local v = self["GetDT" .. d.typename](self, d.index)
+            if d.element then o[name] = v and v[d.element] else o[name] = v end
+        end
+    end
+    return o
+end
+function ENT:RestoreNetworkVars(t)
+    for name, v in pairs(t) do if self["Set" .. name] then self["Set" .. name](self, v) end end
+end
 function ENT:SetNetworkVarsFromMapInput(t) self:RestoreNetworkVars(t) end
-function ENT:CallDTVarProxies(t, slot, v) end
-function ENT:DTVar(t, slot, name) self:NetworkVar(t, slot, name) end
 function ENT:SetNetworkKeyValue(k, v) local n = rawget(self, "__dt_keys") and rawget(self, "__dt_keys")[string.lower(k)]; if n then self["Set" .. n](self, v); return true end return false end
 -- an NPC's map keyvalues the brain reads: squadname (SetSquad) and hintgroup (SetHintGroup)
 local NPC_KEYVALUES = { squadname = "npc_ai_squad", hintgroup = "npc_ai_hint_group" }
