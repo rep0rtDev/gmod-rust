@@ -1196,6 +1196,8 @@ struct App {
     /// Lua `DynamicLight`s by key: the light, its `Decay` (units/s), when it dies, when it
     /// was last sent (the decay runs from there), and `nomodel`/`noworld`.
     lua_dlights: HashMap<i32, (gm_render::world::DLight, f32, Instant, Instant, bool, bool)>,
+    /// The spawnmenu's state while it is closed (restored on the next `+menu`).
+    saved_menu: Option<derma::MenuState>,
     /// CHudSuitPower: when the last active device went off (SuitAuxPowerMax 0.4 s fade).
     aux_off_at: std::cell::RefCell<Option<Instant>>,
     /// CHudZoom: when the FOV dropped below fov_desired / came back (0.4 s fades).
@@ -1912,9 +1914,12 @@ impl App {
                 }
             }
         }
-        self.menu = Some(SpawnMenu {
-            st: derma::MenuState::default(),
-        });
+        // the spawnmenu keeps its tabs / node / scroll between openings (the game's panel is
+        // only hidden); the search box and the right-click menu start closed
+        let mut st = self.saved_menu.take().unwrap_or_default();
+        st.search_focus = false;
+        st.ctx_menu = None;
+        self.menu = Some(SpawnMenu { st });
         self.mouse.clear();
         self.set_grab(false);
     }
@@ -4347,7 +4352,7 @@ impl App {
             match cmd {
                 "+showscores" => self.scoreboard = false,
                 "+menu" if self.menu.is_some() => {
-                    self.menu = None;
+                    self.saved_menu = self.menu.take().map(|m| m.st);
                     self.panel_drag = None;
                     self.panel_text = None;
                     self.set_grab(true);
@@ -9320,11 +9325,14 @@ impl ApplicationHandler for App {
                                 }
                                 Some(KeyCode::Backspace) => {
                                     m.st.search.pop();
+                                    refresh = true;
                                 }
                                 _ => {
                                     if let Some(t) = event.text.as_deref() {
+                                        let n = m.st.search.len();
                                         m.st.search.extend(t.chars().filter(|c| !c.is_control()));
                                         m.st.search.truncate(64);
+                                        refresh = m.st.search.len() != n;
                                     }
                                 }
                             }
@@ -9947,6 +9955,7 @@ fn main() -> Result<()> {
         zoom_at: Default::default(),
         aux_off_at: Default::default(),
         lua_dlights: HashMap::new(),
+        saved_menu: None,
         wsel_opened: None,
         epoch: Instant::now(),
         // cl_hints.lua: GM:AddHint( "OpeningMenu", 30 ), Annoy1 5, Annoy2 7
