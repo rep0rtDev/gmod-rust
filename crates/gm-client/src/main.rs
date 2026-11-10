@@ -1196,6 +1196,9 @@ struct App {
     /// Lua `DynamicLight`s by key: the light, its `Decay` (units/s), when it dies, when it
     /// was last sent (the decay runs from there), and `nomodel`/`noworld`.
     lua_dlights: HashMap<i32, (gm_render::world::DLight, f32, Instant, Instant, bool, bool)>,
+    /// The Utilities tab's values by convar: the server's replicated ones as last seen,
+    /// the client-side ones as set here.
+    utility_values: BTreeMap<String, String>,
     /// The spawnmenu's state while it is closed (restored on the next `+menu`).
     saved_menu: Option<derma::MenuState>,
     /// CHudSuitPower: when the last active device went off (SuitAuxPowerMax 0.4 s fade).
@@ -2134,10 +2137,36 @@ impl App {
         if let Some(ent) = self.edit_sheet.filter(|_| self.menu.is_none()) {
             return self.edit_class(ent).and_then(gm_server::editor_schema);
         }
+        if let Some(key) = self.utility_key() {
+            return Some(utility_schema(key));
+        }
         Some(
             self.tool_schema(&self.tool)
                 .map_or_else(|| gm_server::builtin_tool_schema(&self.tool), <[_]>::to_vec),
         )
+    }
+
+    /// The Utilities option whose panel is open (the spawnmenu on its Utilities tab).
+    fn utility_key(&self) -> Option<&'static str> {
+        let st = &self.menu.as_ref()?.st;
+        (st.tool_tab == 1).then(|| derma::UTILITIES[st.utility.min(derma::UTILITIES.len() - 1)].1)
+    }
+
+    /// The map the control panel's rows read: the Utilities values or the tool's settings.
+    fn settings_map(&self) -> Option<&BTreeMap<String, String>> {
+        if self.utility_key().is_some() {
+            Some(&self.utility_values)
+        } else {
+            self.tool_settings.get(&self.tool)
+        }
+    }
+
+    /// The server's replicated convars into the Utilities values (a client-side value set
+    /// here stays).
+    fn refresh_utility_values(&mut self) {
+        for (name, value) in &self.sim.client.world.cvars {
+            self.utility_values.insert(name.clone(), value.clone());
+        }
     }
 
     /// The class of entity `ent` as the server told it (`EntityClasses`).
@@ -2442,6 +2471,17 @@ impl App {
     }
 
     fn set_tool_setting(&mut self, key: &str, value: String) {
+        // a Utilities row is a convar: server ones go up as console lines
+        if self.utility_key().is_some() {
+            if self.utility_values.get(key) == Some(&value) {
+                return;
+            }
+            self.utility_values.insert(key.to_string(), value.clone());
+            self.sim.client.command(Command::Console {
+                line: format!("{key} {value}"),
+            });
+            return;
+        }
         // an open "Edit Properties" sheet: the row is the editor entity's var, not a convar
         if let Some(ent) = self.edit_sheet.filter(|_| self.menu.is_none()) {
             self.sim.client.command(Command::EditEntity {
@@ -3723,6 +3763,10 @@ impl App {
             }
             Some(derma::Action::ToolTab(i)) => {
                 menu.st.tool_tab = i;
+                self.panel_text = None;
+                if i == 1 {
+                    self.refresh_utility_values();
+                }
                 if i == 0 {
                     let p = gm_script::api::Payload::default();
                     self.sim
@@ -3739,6 +3783,15 @@ impl App {
             Some(derma::Action::Tool(t)) => {
                 self.tool = t.to_string();
                 self.console.log(format!("tool {t}"));
+            }
+            Some(derma::Action::Utility(i)) => {
+                menu.st.utility = i;
+                self.panel_text = None;
+                self.refresh_utility_values();
+            }
+            Some(derma::Action::Command(line)) => {
+                self.console.log(line.clone());
+                self.sim.client.command(Command::Console { line });
             }
             Some(
                 derma::Action::Property(_)
@@ -7733,9 +7786,7 @@ impl App {
                     .edit_sheet
                     .filter(|_| self.menu.is_none())
                     .map(|ent| self.edit_values(ent));
-                let set = sheet_vals
-                    .as_ref()
-                    .or_else(|| self.tool_settings.get(&self.tool));
+                let set = sheet_vals.as_ref().or_else(|| self.settings_map());
                 let value_of = |name: &str| {
                     set.and_then(|m| m.get(name)).cloned().unwrap_or_else(|| {
                         schema
@@ -7794,7 +7845,7 @@ impl App {
             let mut layout = derma::build(&ctx, &menu.st);
             let rows = match self.panel_schema() {
                 Some(schema) => {
-                    let set = self.tool_settings.get(&self.tool);
+                    let set = self.settings_map();
                     let value_of = |name: &str| {
                         set.and_then(|m| m.get(name)).cloned().unwrap_or_else(|| {
                             schema
@@ -9956,6 +10007,7 @@ fn main() -> Result<()> {
         aux_off_at: Default::default(),
         lua_dlights: HashMap::new(),
         saved_menu: None,
+        utility_values: BTreeMap::new(),
         wsel_opened: None,
         epoch: Instant::now(),
         // cl_hints.lua: GM:AddHint( "OpeningMenu", 30 ), Annoy1 5, Annoy2 7
@@ -12532,5 +12584,154 @@ mod fade_tests {
         assert_eq!(fade_alpha_at(1, 0.8, 2.0, 1.0, 0.5), Some(0.8));
         assert_eq!(fade_alpha_at(1, 0.8, 2.0, 1.0, 2.0), Some(0.4));
         assert_eq!(fade_alpha_at(1, 0.8, 2.0, 1.0, 3.1), None);
+    }
+}
+
+/// utilities_menu.lua / undo.lua: the rows of a Utilities option's ControlPanel (Help, then
+/// CheckBox / NumSlider per convar).
+fn utility_schema(key: &str) -> Vec<gm_server::ToolSetting> {
+    use gm_server::{ToolSetting, ToolSettingKind as K};
+    let row = |name: &str, kind: K, min: f32, max: f32, default: &str, label: &str| ToolSetting {
+        name: name.to_string(),
+        kind,
+        min,
+        max,
+        default: default.to_string(),
+        label: label.to_string(),
+        options: Vec::new(),
+    };
+    let help = |t: &str| row("", K::Help, 0.0, 0.0, "", t);
+    let check = |n: &str, d: &str, l: &str| row(n, K::Bool, 0.0, 1.0, d, l);
+    let num = |n: &str, lo: f32, hi: f32, d: &str, l: &str| row(n, K::Number, lo, hi, d, l);
+    match key {
+        "ServerSettings" => vec![
+            help("Server settings"),
+            check(
+                "sv_kickerrornum",
+                "0",
+                "Kick players with too many Lua errors",
+            ),
+            check("sv_allowcslua", "0", "Allow clientside Lua scripts"),
+            check("sv_sticktoground", "1", "Stick to ground"),
+            check("sv_playerpickupallowed", "1", "Allow picking up entities"),
+            check("mp_falldamage", "0", "Realistic fall damage"),
+            check("gmod_suit", "0", "Enable HEV suit"),
+            num("sv_gravity", -500.0, 1000.0, "600", "Gravity"),
+            num("sv_friction", 0.0, 16.0, "8", "Friction"),
+            num("phys_timescale", 0.0, 2.0, "1", "Physics timescale"),
+            num(
+                "sv_defaultdeployspeed",
+                0.1,
+                10.0,
+                "4",
+                "Weapon deploy speed",
+            ),
+            num("sv_noclipspeed", 1.0, 10.0, "5", "Noclip speed"),
+            num("gmod_maxammo", 0.0, 9999.0, "9999", "Maximum ammo"),
+            num(
+                "g_ragdoll_maxcount",
+                0.0,
+                128.0,
+                "32",
+                "Maximum client ragdolls",
+            ),
+            num("gmod_physiterations", 1.0, 10.0, "4", "Physics iterations"),
+            num("sv_timeout", 60.0, 300.0, "65", "Connection timeout"),
+        ],
+        "SandboxSettings" => {
+            let mut v = vec![
+                help("Sandbox settings"),
+                check("sbox_weapons", "1", "Spawn with weapons"),
+                check("sbox_godmode", "0", "God mode"),
+                check("sbox_playershurtplayers", "1", "Players damage players"),
+                check("sbox_noclip", "1", "Allow noclip"),
+                check("sbox_bonemanip_npc", "1", "Bone manipulate NPCs"),
+                check("sbox_bonemanip_player", "0", "Bone manipulate players"),
+                check("sbox_bonemanip_misc", "0", "Bone manipulate others"),
+            ];
+            for (cvar, max, d, label) in [
+                ("sbox_maxprops", 5000.0, "200", "Max props"),
+                ("sbox_maxragdolls", 500.0, "10", "Max ragdolls"),
+                ("sbox_maxnpcs", 100.0, "10", "Max NPCs"),
+                ("sbox_maxvehicles", 100.0, "20", "Max vehicles"),
+                ("sbox_maxeffects", 500.0, "200", "Max effects"),
+                ("sbox_maxballoons", 500.0, "100", "Max balloons"),
+                ("sbox_maxbuttons", 500.0, "50", "Max buttons"),
+                ("sbox_maxdynamite", 500.0, "10", "Max dynamite"),
+                ("sbox_maxemitters", 500.0, "50", "Max emitters"),
+                ("sbox_maxhoverballs", 500.0, "100", "Max hoverballs"),
+                ("sbox_maxlamps", 100.0, "3", "Max lamps"),
+                ("sbox_maxlights", 100.0, "3", "Max lights"),
+                ("sbox_maxsents", 500.0, "20", "Max scripted entities"),
+                ("sbox_maxthrusters", 500.0, "30", "Max thrusters"),
+                ("sbox_maxwheels", 500.0, "20", "Max wheels"),
+                ("sbox_maxcameras", 500.0, "10", "Max cameras"),
+            ] {
+                v.push(num(cvar, 0.0, max, d, label));
+            }
+            v
+        }
+        "PhysgunSVSettings" => vec![
+            help("Physgun server settings"),
+            check("physgun_limited", "0", "Limited physgun"),
+            num("physgun_maxrange", 128.0, 8192.0, "4096", "Max range"),
+            num(
+                "physgun_teleportdistance",
+                0.0,
+                10000.0,
+                "0",
+                "Teleport distance",
+            ),
+            num("physgun_maxspeed", 0.0, 10000.0, "0", "Max speed"),
+            num("physgun_maxangular", 0.0, 10000.0, "0", "Max angular speed"),
+            num("physgun_timetoarrive", 0.0, 2.0, "0.05", "Time to arrive"),
+            num(
+                "physgun_timetoarriveragdoll",
+                0.0,
+                2.0,
+                "0.1",
+                "Time to arrive (ragdolls)",
+            ),
+        ],
+        "PhysgunSettings" => vec![
+            help("Physgun settings"),
+            check("physgun_halo", "1", "Draw halo around held objects"),
+            check("physgun_drawbeams", "1", "Draw beams"),
+            check("effects_freeze", "1", "Freeze effect"),
+            check("effects_unfreeze", "1", "Unfreeze effect"),
+            num("gm_snapgrid", 0.0, 128.0, "0", "Snap grid"),
+            num("gm_snapangles", 5.0, 90.0, "45", "Snap angles"),
+            num(
+                "physgun_rotation_sensitivity",
+                0.01,
+                1.0,
+                "0.05",
+                "Rotation sensitivity",
+            ),
+            num("physgun_wheelspeed", 0.0, 50.0, "10", "Wheel speed"),
+        ],
+        "SandboxClientSettings" => vec![
+            help("Sandbox client settings"),
+            num(
+                "sbox_search_maxresults",
+                1024.0,
+                8192.0,
+                "1024",
+                "Max search results",
+            ),
+            check("cl_drawhud", "1", "Draw HUD"),
+            check("gmod_drawhelp", "1", "Draw tool help"),
+            check("gmod_drawtooleffects", "1", "Draw tool UI"),
+            check("cl_drawworldtooltips", "1", "Draw world tooltips"),
+            check("cl_drawspawneffect", "1", "Spawn effect"),
+            check("cl_draweffectrings", "1", "Effect rings"),
+            check("cl_drawcameras", "1", "Draw cameras"),
+            check("cl_drawthrusterseffects", "1", "Draw thruster effects"),
+            check("cl_showhints", "1", "Show hints"),
+            check("spawnmenu_toggle", "0", "Toggle spawnmenu"),
+        ],
+        "PlayerModelSelector" => vec![help("Player model: press C and click the icon")],
+        "Undo" => vec![help("Undo: the last things you did (Z)")],
+        _ => Vec::new(),
     }
 }

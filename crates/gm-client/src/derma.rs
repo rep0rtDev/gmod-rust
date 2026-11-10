@@ -77,6 +77,9 @@ pub const TREE: Piece = border(256, 128, 127, 127, 16);
 /// `SKIN.tex.Tooltip` (GWEN 384,64 31x31, 8 px borders).
 pub const TOOLTIP: Piece = border(384, 64, 31, 31, 8);
 pub const TEXTBOX: Piece = border(0, 150, 127, 21, 4);
+/// SKIN.tex.Button / Button_Hovered (derma/skins/default.lua).
+pub const BUTTON: Piece = border(480, 0, 31, 31, 8);
+pub const BUTTON_HOVER: Piece = border(480, 32, 31, 31, 8);
 pub const TAB_CONTROL: Piece = border(0, 256, 127, 127, 8);
 pub const TABT_ACTIVE: Piece = border(0, 384, 63, 31, 8);
 pub const TABT_INACTIVE: Piece = border(128, 384, 63, 31, 8);
@@ -380,6 +383,20 @@ pub const TOOL_TABS: [(&str, &str); 2] = [
 ];
 /// `spawnmenu.AddToolCategory` order; tools by `TOOL.Category`, names from `tool.properties`,
 /// sorted by name as the ToolPanel does.
+/// The Utilities tab's options (`spawnmenu.AddToolMenuOption("Utilities", category, key,
+/// label)` of utilities_menu.lua, cleanup.lua, undo.lua): category, key, label.
+pub const UTILITIES: [(&str, &str, &str); 9] = [
+    ("Admin", "Admin_Cleanup", "Clean Up"),
+    ("Admin", "ServerSettings", "Server Settings"),
+    ("Admin", "SandboxSettings", "Sandbox Settings"),
+    ("Admin", "PhysgunSVSettings", "Physgun Settings"),
+    ("User", "User_Cleanup", "Clean Up"),
+    ("User", "PhysgunSettings", "Physgun Settings"),
+    ("User", "SandboxClientSettings", "Sandbox Settings"),
+    ("User", "PlayerModelSelector", "Player Model"),
+    ("User", "Undo", "Undo"),
+];
+
 pub const TOOL_CATEGORIES: [(&str, &[(&str, &str)]); 4] = [
     (
         "Constraints",
@@ -464,6 +481,8 @@ pub struct MenuState {
     /// Selected category of the Weapons / Entities tabs.
     pub content_node: [usize; 5],
     pub tool_tab: usize,
+    /// The Utilities tab's selected option (index into `UTILITIES`).
+    pub utility: usize,
     /// Selected tree node: an index into the spawnlists.
     pub node: usize,
     pub browse_open: bool,
@@ -506,6 +525,10 @@ pub enum Action {
     DesktopWindow(&'static str),
     Category(usize),
     Tool(&'static str),
+    /// A Utilities option (index into `UTILITIES`).
+    Utility(usize),
+    /// A button that runs a console line.
+    Command(String),
     /// A `properties.Add` entry of the right-click menu, by its name.
     Property(String),
     /// A main menu entry (`template/main.html` ids / NavBar buttons).
@@ -616,6 +639,8 @@ pub fn build(ctx: &Ctx, st: &MenuState) -> Layout {
     );
     if st.tool_tab == 0 {
         tools(&mut out, ctx, st, tx, ty, tw, th);
+    } else {
+        utilities(&mut out, ctx, st, tx, ty, tw, th);
     }
     // contenticon.lua `OpenGenericSpawnmenuRightClickMenu` / the selection's "Delete %i items"
     if let Some((at, models)) = &st.ctx_menu {
@@ -1562,6 +1587,169 @@ fn tools(out: &mut Layout, ctx: &Ctx, st: &MenuState, x: f32, y: f32, w: f32, h:
     );
     out.control = (rx, y, rw, h);
 }
+
+/// The Utilities tab: the same DCategoryList as the tools (Admin / User) left of the option's
+/// ControlPanel; the clean-up options are a column of DButtons running the cleanup commands.
+fn utilities(out: &mut Layout, ctx: &Ctx, st: &MenuState, x: f32, y: f32, w: f32, h: f32) {
+    const LIST_W: f32 = 130.0;
+    const DIV: f32 = 6.0;
+    const ROW: f32 = 20.0;
+    nine(&mut out.items, &CATEGORY_OUTER, x, y, LIST_W, h, WHITE);
+    let mut cy = y;
+    let mut cats: Vec<&str> = Vec::new();
+    for (c, _, _) in UTILITIES.iter() {
+        if !cats.contains(c) {
+            cats.push(c);
+        }
+    }
+    for cat in cats {
+        let rows: Vec<(usize, &(&str, &str, &str))> = UTILITIES
+            .iter()
+            .enumerate()
+            .filter(|(_, (c, _, _))| *c == cat)
+            .collect();
+        if cy + ROW > y + h {
+            break;
+        }
+        nine(&mut out.items, &CATEGORY_INNER_H, x, cy, LIST_W, ROW, WHITE);
+        nine(
+            &mut out.items,
+            &CATEGORY_INNER,
+            x,
+            cy + ROW,
+            LIST_W,
+            rows.len() as f32 * ROW,
+            WHITE,
+        );
+        text(
+            &mut out.items,
+            FONT_BOLD,
+            ctx.bold,
+            x + 4.0,
+            cy,
+            ROW,
+            cat,
+            CATEGORY_HEADER_TEXT,
+        );
+        cy += ROW;
+        for (k, (i, (_, _, label))) in rows.iter().enumerate() {
+            let alt = k % 2;
+            let hovered = inside(ctx.cursor, x, cy, LIST_W, ROW);
+            let (bg, fg) = if st.utility == *i {
+                (LINE_SELECTED, WHITE)
+            } else if hovered {
+                (LINE_BUTTON_HOVER[alt], LINE_TEXT_HOVER[alt])
+            } else {
+                (LINE_BUTTON[alt], LINE_TEXT[alt])
+            };
+            if bg[3] > 0.0 {
+                out.items.push(UiItem::Rect {
+                    x,
+                    y: cy,
+                    w: LIST_W,
+                    h: ROW,
+                    color: bg,
+                });
+            }
+            text(&mut out.items, FONT, ctx.font, x + 6.0, cy, ROW, label, fg);
+            out.hits.push(Hit {
+                x,
+                y: cy,
+                w: LIST_W,
+                h: ROW,
+                action: Action::Utility(*i),
+            });
+            cy += ROW;
+        }
+    }
+    let (rx, rw) = (x + LIST_W + DIV, w - LIST_W - DIV);
+    let (_, key, label) = UTILITIES[st.utility.min(UTILITIES.len() - 1)];
+    nine(&mut out.items, &CATEGORY_INNER_H, rx, y, rw, ROW, WHITE);
+    nine(
+        &mut out.items,
+        &CATEGORY_INNER,
+        rx,
+        y + ROW,
+        rw,
+        h - ROW,
+        WHITE,
+    );
+    text(
+        &mut out.items,
+        FONT_BOLD,
+        ctx.bold,
+        rx + 4.0,
+        y,
+        ROW,
+        label,
+        CATEGORY_HEADER_TEXT,
+    );
+    out.control = (rx, y, rw, h);
+    // cleanup.lua BuildPanel: "Clean up everything" then a button per cleanup type
+    let command = match key {
+        "Admin_Cleanup" => Some("gmod_admin_cleanup"),
+        "User_Cleanup" => Some("gmod_cleanup"),
+        _ => None,
+    };
+    if let Some(command) = command {
+        let mut by = y + ROW + 10.0;
+        let bx = rx + 10.0;
+        let bw = rw - 20.0;
+        let mut rows: Vec<(String, String)> =
+            vec![("Clean up everything".to_string(), command.to_string())];
+        for (name, label) in CLEANUP_TYPES {
+            rows.push((label.to_string(), format!("{command} {name}")));
+        }
+        for (label, line) in rows {
+            if by + 22.0 > y + h {
+                break;
+            }
+            let hovered = inside(ctx.cursor, bx, by, bw, 22.0);
+            let piece = if hovered { &BUTTON_HOVER } else { &BUTTON };
+            nine(&mut out.items, piece, bx, by, bw, 22.0, WHITE);
+            let tw = ctx.font.text_width(&label);
+            text(
+                &mut out.items,
+                FONT,
+                ctx.font,
+                bx + ((bw - tw) / 2.0).round(),
+                by,
+                22.0,
+                &label,
+                BUTTON_TEXT,
+            );
+            out.hits.push(Hit {
+                x: bx,
+                y: by,
+                w: bw,
+                h: 22.0,
+                action: Action::Command(line),
+            });
+            by += 26.0;
+        }
+    }
+}
+
+/// cleanup.lua's registered types (`cleanup.Register`) as the clean-up panel lists them.
+pub const CLEANUP_TYPES: [(&str, &str); 17] = [
+    ("balloons", "Balloons"),
+    ("buttons", "Buttons"),
+    ("cameras", "Cameras"),
+    ("constraints", "Constraints"),
+    ("dynamite", "Dynamite"),
+    ("effects", "Effects"),
+    ("emitters", "Emitters"),
+    ("hoverballs", "Hoverballs"),
+    ("lamps", "Lamps"),
+    ("lights", "Lights"),
+    ("npcs", "NPCs"),
+    ("props", "Props"),
+    ("ragdolls", "Ragdolls"),
+    ("ropeconstraints", "Rope Constraints"),
+    ("sents", "Scripted Entities"),
+    ("thrusters", "Thrusters"),
+    ("vehicles", "Vehicles"),
+];
 
 /// `resource/localization/<lang>/*.properties`: `key=value` lines (`\:` escapes a colon).
 pub fn load_properties(mount: &Mount, path: &str) -> BTreeMap<String, String> {
