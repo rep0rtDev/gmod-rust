@@ -2591,6 +2591,7 @@ impl App {
                 alpha: 1.0,
             };
             let item = DrawItem {
+                tint: Vec3::ONE,
                 model: m,
                 transform: glam::Mat4::IDENTITY,
                 bones: None,
@@ -5972,6 +5973,7 @@ impl App {
             Option<Vec<glam::Mat4>>,
             Option<(&'static str, Vec<glam::Mat4>)>,
             &'a gm_render::world::DynModel,
+            Vec3,
         );
         let mut player_poses: Vec<PlayerPose<'_>> = Vec::new();
         // prop_ragdoll: skinning from the networked physics objects (world space, so the draw
@@ -6044,12 +6046,14 @@ impl App {
                 };
                 if let Some((_, skin)) = rag_poses.iter().find(|(id, _)| *id == e.id) {
                     return Some(DrawItem {
+                        tint: Vec3::ONE,
                         model,
                         transform: glam::Mat4::IDENTITY,
                         bones: Some(skin.as_slice()),
                     });
                 }
                 Some(DrawItem {
+                    tint: Vec3::ONE,
                     model,
                     transform: gm_render::world::model_transform(pos, ang)
                         * glam::Mat4::from_scale(Vec3::splat(e.model_scale.max(0.01))),
@@ -6153,11 +6157,13 @@ impl App {
                         }
                         Some((path, skin))
                     });
-                    player_poses.push((origin, yaw, pose, held, m));
+                    let tint = Vec3::from(p.player_color.map(|c| f32::from(c) / 255.0));
+                    player_poses.push((origin, yaw, pose, held, m, tint));
                 }
                 None => {
                     let h = if p.ducked { 36.0 } else { 72.0 };
                     items.push(DrawItem {
+                        tint: Vec3::ONE,
                         model: &g.player_box,
                         transform: glam::Mat4::from_translation(p.origin + Vec3::Z * (h / 2.0))
                             * glam::Mat4::from_rotation_z(p.view_angles.y.to_radians())
@@ -6168,10 +6174,11 @@ impl App {
             }
         }
         {
-            for (origin, yaw, pose, held, m) in &player_poses {
+            for (origin, yaw, pose, held, m, tint) in &player_poses {
                 let transform =
                     gm_render::world::model_transform(*origin, Vec3::new(0.0, *yaw, 0.0));
                 items.push(DrawItem {
+                    tint: *tint,
                     model: m,
                     transform,
                     bones: pose.as_deref(),
@@ -6179,6 +6186,7 @@ impl App {
                 if let Some((path, bones)) = held {
                     if let Some(wm) = g.models.get(*path).and_then(|w| w.as_ref()) {
                         items.push(DrawItem {
+                            tint: Vec3::ONE,
                             model: wm,
                             transform,
                             bones: Some(bones),
@@ -6190,6 +6198,7 @@ impl App {
         for sh in &self.fx_shells {
             if let Some(m) = g.models.get(sh.model).and_then(|m| m.as_ref()) {
                 items.push(DrawItem {
+                    tint: Vec3::ONE,
                     model: m,
                     transform: gm_render::world::model_transform(sh.pos, sh.ang),
                     bones: None,
@@ -7610,6 +7619,7 @@ impl App {
             };
             if let Some(m) = g.models.get(model.as_str()).and_then(|m| m.as_ref()) {
                 let ghost = [DrawItem {
+                    tint: Vec3::ONE,
                     model: m,
                     transform: gm_render::world::model_transform(*pos, *angles),
                     bones: None,
@@ -7695,12 +7705,14 @@ impl App {
                 let (vm_pos, vm_ang) = self.vm_view.view(speed, camera.position, self.view);
                 let transform = gm_render::world::model_transform(vm_pos, vm_ang);
                 let mut vm_items = vec![DrawItem {
+                    tint: Vec3::ONE,
                     model: m,
                     transform,
                     bones: pose.as_deref(),
                 }];
                 if let (Some(h), Some(hp)) = (hands, &hands_pose) {
                     vm_items.push(DrawItem {
+                        tint: Vec3::ONE,
                         model: h,
                         transform,
                         bones: Some(hp),

@@ -145,6 +145,8 @@ struct VsIn {
     @location(7) cube: f32,
     @location(8) spec_dir: vec3<f32>,
     @location(9) spec_color: vec3<f32>,
+    // models: the player's colour (`$color2` through the PlayerColor proxy), 1 otherwise
+    @location(10) tint: vec3<f32>,
 };
 
 struct VsOut {
@@ -159,6 +161,7 @@ struct VsOut {
     @location(7) cube: f32,
     @location(8) spec_dir: vec3<f32>,
     @location(9) spec_color: vec3<f32>,
+    @location(10) tint: vec3<f32>,
 };
 
 @vertex
@@ -168,6 +171,7 @@ fn vs_main(in: VsIn) -> VsOut {
     out.uv = in.uv;
     out.lm_uv = in.lm_uv;
     out.color = in.color;
+    out.tint = in.tint;
     out.world = in.position;
     out.alpha = in.alpha;
     out.lm_page = in.lm_page;
@@ -277,7 +281,9 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     }
     // $detail mod2x: base * lerp(1, 2 * detail, $detailblendfactor) at base uv * $detailscale
     let d = textureSample(detail, base_sampler, in.uv * material.detail.x).rgb;
-    let base = albedo.rgb * mix(vec3<f32>(1.0), d * 2.0, material.detail.y);
+    // $blendtintbybasealpha (detail.w): the tint only where the base alpha lets it
+    let tint = mix(vec3<f32>(1.0), in.tint, select(1.0, albedo.a, material.detail.w > 0.5));
+    let base = albedo.rgb * mix(vec3<f32>(1.0), d * 2.0, material.detail.y) * tint;
     var shaded = base * light * in.color * camera.exposure;
     // DecalModulate (mode 3): the raw texel is the blend factor (colour * 2 * texel), its
     // 128 grey neutral - no exposure, no light, no tint, else every bullet hole brightens

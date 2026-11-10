@@ -38,6 +38,8 @@ pub struct Vertex {
     /// origin (zero direction: the sun).
     pub spec_dir: [f32; 3],
     pub spec_color: [f32; 3],
+    /// Models: the player's colour (`$color2` through the PlayerColor proxy), 1 otherwise.
+    pub tint: [f32; 3],
 }
 
 /// `MaterialParams::unlit` of an unlit material fogged to the fog colour.
@@ -315,9 +317,10 @@ fn uv2_params(mat: &material::Material, modulate: bool, bump: bool) -> ([f32; 4]
 }
 
 fn detail_params(mat: &material::Material) -> [f32; 4] {
+    let blend_tint = f32::from(mat.blend_tint_by_base_alpha);
     match &mat.detail {
-        Some(d) if d.mode == 0 => [d.scale, d.factor, 0.0, 0.0],
-        _ => [0.0; 4],
+        Some(d) if d.mode == 0 => [d.scale, d.factor, 0.0, blend_tint],
+        _ => [0.0, 0.0, 0.0, blend_tint],
     }
 }
 
@@ -945,6 +948,7 @@ fn build_sky_cube(
         );
         for (s, t) in [(-1.0f32, -1.0f32), (1.0, -1.0), (1.0, 1.0), (-1.0, 1.0)] {
             verts.push(Vertex {
+                tint: [1.0; 3],
                 // faces overlap their neighbours a little: drawn edge to edge, the sub-pixel
                 // cracks along the cube edges let the clear colour through as dark lines
                 position: ((n + (sx * s + ty * t) * 1.002) * SKY_CUBE_HALF).to_array(),
@@ -1093,7 +1097,7 @@ impl DynVertex {
 /// A drawable piece of a [`DynModel`]: material bind group, vertices, indices, `$halflambert`,
 /// and whether the material's shader is unlit (`UnlitGeneric`: the toolgun screen) - such parts
 /// skip the model's origin lighting instead of only the shader's per-pixel light.
-type DynPart = (wgpu::BindGroup, Vec<DynVertex>, Vec<u32>, bool, bool);
+type DynPart = (wgpu::BindGroup, Vec<DynVertex>, Vec<u32>, bool, bool, bool);
 
 /// The bones of a `DynModel` and where its animations come from.
 struct Skeleton {
@@ -1467,6 +1471,8 @@ pub struct DrawItem<'a> {
     pub model: &'a DynModel,
     pub transform: Mat4,
     pub bones: Option<&'a [Mat4]>,
+    /// The player's colour for materials with the PlayerColor proxy (`cl_playercolor`).
+    pub tint: Vec3,
 }
 
 impl DynModel {
@@ -2330,6 +2336,7 @@ impl WorldRenderer {
                     let gx = (i % disp.side_verts()) as f32 / side;
                     let gy = (i / disp.side_verts()) as f32 / side;
                     vertices.push(Vertex {
+                        tint: [1.0; 3],
                         position: *p,
                         uv: face_uv(bsp, face, *p, tw, th),
                         lm_uv: if lit {
@@ -2363,6 +2370,7 @@ impl WorldRenderer {
             let off = face_offset.get(&fi).copied().unwrap_or([0.0; 3]);
             for p in &poly {
                 vertices.push(Vertex {
+                    tint: [1.0; 3],
                     position: [p[0] + off[0], p[1] + off[1], p[2] + off[2]],
                     uv: face_uv(bsp, face, *p, tw, th),
                     lm_uv: if lit {
@@ -3066,7 +3074,7 @@ impl WorldRenderer {
                 buffers: &[Some(wgpu::VertexBufferLayout {
                     array_stride: std::mem::size_of::<Vertex>() as u64,
                     step_mode: wgpu::VertexStepMode::Vertex,
-                    attributes: &wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x2, 2 => Float32x2, 3 => Float32x3, 4 => Float32, 5 => Float32, 6 => Float32x3, 7 => Float32, 8 => Float32x3, 9 => Float32x3],
+                    attributes: &wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x2, 2 => Float32x2, 3 => Float32x3, 4 => Float32, 5 => Float32, 6 => Float32x3, 7 => Float32, 8 => Float32x3, 9 => Float32x3, 10 => Float32x3],
                 })],
             },
             primitive: wgpu::PrimitiveState {
@@ -3117,7 +3125,7 @@ impl WorldRenderer {
                 buffers: &[Some(wgpu::VertexBufferLayout {
                     array_stride: std::mem::size_of::<Vertex>() as u64,
                     step_mode: wgpu::VertexStepMode::Vertex,
-                    attributes: &wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x2, 2 => Float32x2, 3 => Float32x3, 4 => Float32, 5 => Float32, 6 => Float32x3, 7 => Float32, 8 => Float32x3, 9 => Float32x3],
+                    attributes: &wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x2, 2 => Float32x2, 3 => Float32x3, 4 => Float32, 5 => Float32, 6 => Float32x3, 7 => Float32, 8 => Float32x3, 9 => Float32x3, 10 => Float32x3],
                 })],
             },
             primitive: wgpu::PrimitiveState {
@@ -3219,7 +3227,7 @@ impl WorldRenderer {
                 buffers: &[Some(wgpu::VertexBufferLayout {
                     array_stride: std::mem::size_of::<Vertex>() as u64,
                     step_mode: wgpu::VertexStepMode::Vertex,
-                    attributes: &wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x2, 2 => Float32x2, 3 => Float32x3, 4 => Float32, 5 => Float32, 6 => Float32x3, 7 => Float32, 8 => Float32x3, 9 => Float32x3],
+                    attributes: &wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x2, 2 => Float32x2, 3 => Float32x3, 4 => Float32, 5 => Float32, 6 => Float32x3, 7 => Float32, 8 => Float32x3, 9 => Float32x3, 10 => Float32x3],
                 })],
             },
             primitive: wgpu::PrimitiveState {
@@ -3266,7 +3274,7 @@ impl WorldRenderer {
                 buffers: &[Some(wgpu::VertexBufferLayout {
                     array_stride: std::mem::size_of::<Vertex>() as u64,
                     step_mode: wgpu::VertexStepMode::Vertex,
-                    attributes: &wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x2, 2 => Float32x2, 3 => Float32x3, 4 => Float32, 5 => Float32, 6 => Float32x3, 7 => Float32, 8 => Float32x3, 9 => Float32x3],
+                    attributes: &wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x2, 2 => Float32x2, 3 => Float32x3, 4 => Float32, 5 => Float32, 6 => Float32x3, 7 => Float32, 8 => Float32x3, 9 => Float32x3, 10 => Float32x3],
                 })],
             },
             primitive: wgpu::PrimitiveState {
@@ -4541,7 +4549,14 @@ impl WorldRenderer {
             let (mat, rgba) = &sizes[&name];
             let (bg, t) = self.material_part(gpu, &name, mat, rgba, None, None);
             part_textures.push((name.clone(), t));
-            parts.push((bg, verts, idx, mat.half_lambert, is_unlit(&mat.shader)));
+            parts.push((
+                bg,
+                verts,
+                idx,
+                mat.half_lambert,
+                is_unlit(&mat.shader),
+                mat.player_color_tint,
+            ));
         }
         Some(DynModel {
             parts,
@@ -4653,7 +4668,14 @@ impl WorldRenderer {
                 let (bg, t) =
                     self.material_part(gpu, key, mat, rgba, bump.as_ref(), iris_rgba.as_ref());
                 part_textures.push((key.to_string(), t));
-                parts.push((bg, verts, idx, mat.half_lambert, is_unlit(&mat.shader)));
+                parts.push((
+                    bg,
+                    verts,
+                    idx,
+                    mat.half_lambert,
+                    is_unlit(&mat.shader),
+                    mat.player_color_tint,
+                ));
             }
         }
         let skeleton = mount.read(path).ok().map(|bytes| Skeleton {
@@ -4663,7 +4685,7 @@ impl WorldRenderer {
             anims: AnimSource::for_model(mount, bytes, &mdl),
         });
         let mut bounds = (Vec3::splat(f32::MAX), Vec3::splat(f32::MIN));
-        for (_, verts, _, _, _) in &parts {
+        for (_, verts, _, _, _, _) in &parts {
             for v in verts {
                 let p = Vec3::from(v.position);
                 bounds.0 = bounds.0.min(p);
@@ -4959,6 +4981,7 @@ impl WorldRenderer {
             let base = verts.len() as u32;
             for (s, across) in [(-1.0f32, 0.0f32), (1.0, 1.0)] {
                 verts.push(Vertex {
+                    tint: [1.0; 3],
                     position: (*p + side * s).to_array(),
                     uv: [across, u],
                     lm_uv: self.white_uv,
@@ -5001,6 +5024,7 @@ impl WorldRenderer {
             let color = [rgba[0] * rgba[3], rgba[1] * rgba[3], rgba[2] * rgba[3]];
             for (s, across) in [(-1.0f32, 0.0f32), (1.0, 1.0)] {
                 verts.push(Vertex {
+                    tint: [1.0; 3],
                     position: (*p + side * s).to_array(),
                     uv: [across, *v],
                     lm_uv: self.white_uv,
@@ -5050,6 +5074,7 @@ impl WorldRenderer {
         let verts = [(-1.0f32, -1.0f32), (1.0, -1.0), (1.0, 1.0), (-1.0, 1.0)]
             .into_iter()
             .map(|(x, y)| Vertex {
+                tint: [1.0; 3],
                 position: (pos + right * (x * h) + up * (y * h)).to_array(),
                 uv: [(x + 1.0) * 0.5, 1.0 - (y + 1.0) * 0.5],
                 lm_uv: self.white_uv,
@@ -5101,6 +5126,7 @@ impl WorldRenderer {
         let verts = [(-1.0f32, -1.0f32), (1.0, -1.0), (1.0, 1.0), (-1.0, 1.0)]
             .into_iter()
             .map(|(x, y)| Vertex {
+                tint: [1.0; 3],
                 position: (pos + right * (x * h) + up * (y * h)).to_array(),
                 uv: [(x + 1.0) * 0.5, 1.0 - (y + 1.0) * 0.5],
                 lm_uv: self.white_uv,
@@ -5146,6 +5172,7 @@ impl WorldRenderer {
         let verts = [(-1.0f32, -1.0f32), (1.0, -1.0), (1.0, 1.0), (-1.0, 1.0)]
             .into_iter()
             .map(|(x, y)| Vertex {
+                tint: [1.0; 3],
                 position: (p + right * (x * h) + up * (y * h)).to_array(),
                 uv: [
                     uv[0] + (uv[2] - uv[0]) * (x + 1.0) * 0.5,
@@ -5573,7 +5600,7 @@ impl WorldRenderer {
         DynModel {
             part_textures: Vec::new(),
             bounds: (Vec3::splat(-0.5), Vec3::splat(0.5)),
-            parts: vec![(bg, verts, idx, false, false)],
+            parts: vec![(bg, verts, idx, false, false, false)],
             unlit,
             skeleton: None,
             bodygroups: Vec::new(),
@@ -5626,7 +5653,8 @@ impl WorldRenderer {
                     .unwrap_or((Vec3::Z, Vec3::ZERO)),
                 None => (Vec3::ZERO, Vec3::ZERO),
             };
-            for (bg, pv, pi, half_lambert, part_unlit) in &m.parts {
+            for (bg, pv, pi, half_lambert, part_unlit, player_tint) in &m.parts {
+                let tint = if *player_tint { item.tint } else { Vec3::ONE };
                 let base = verts.len() as u32;
                 for v in pv {
                     let (p, n) = match item.bones.or(m.rest_skin.as_deref()) {
@@ -5639,6 +5667,7 @@ impl WorldRenderer {
                         _ => Vec3::ONE,
                     };
                     verts.push(Vertex {
+                        tint: tint.to_array(),
                         position: xf.transform_point3(p).to_array(),
                         uv: v.uv,
                         lm_uv: if v.iris_uv[0] > -0.5 {

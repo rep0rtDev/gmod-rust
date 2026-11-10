@@ -66,6 +66,10 @@ pub struct Material {
     /// `Proxies { PlayerWeaponColor { resultVar $selfillumtint } }`: the tint is the player's
     /// weapon colour (`cl_weaponcolor`) - the physgun's glowing parts.
     pub weapon_color_tint: bool,
+    /// `Proxies { PlayerColor { resultVar $color2 } }`: the model is tinted with the
+    /// player's colour (`cl_playercolor`), only where `$blendtintbybasealpha` lets it.
+    pub player_color_tint: bool,
+    pub blend_tint_by_base_alpha: bool,
     /// `$phong`: the specular highlight of the sun (`VertexLitGeneric` models).
     pub phong: Option<Phong>,
 }
@@ -350,7 +354,9 @@ pub fn load_path(mount: &Mount, name: &str, vmt_path: &str) -> Result<Material> 
         mat.additive = matches!(get("$additive").as_deref(), Some("1"));
         mat.nocull = matches!(get("$nocull").as_deref(), Some("1"));
         mat.selfillum = matches!(get("$selfillum").as_deref(), Some("1"));
-        mat.weapon_color_tint = player_weapon_color(params);
+        mat.weapon_color_tint = proxy_result(params, "playerweaponcolor", "$selfillumtint");
+        mat.player_color_tint = proxy_result(params, "playercolor", "$color2");
+        mat.blend_tint_by_base_alpha = matches!(get("$blendtintbybasealpha").as_deref(), Some("1"));
         mat.ssbump = matches!(get("$ssbump").as_deref(), Some("1"));
         let tint = vec_of(get("$selfillumtint"));
         mat.selfillum_tint = if tint.len() >= 3 {
@@ -644,7 +650,8 @@ fn vec_of(v: Option<String>) -> Vec<f32> {
 }
 
 /// Whether the VMT's `Proxies` block has `PlayerWeaponColor` writing `$selfillumtint`.
-fn player_weapon_color(params: &[Node]) -> bool {
+/// Whether the material's `Proxies` block has `proxy { resultVar var }`.
+fn proxy_result(params: &[Node], proxy: &str, var: &str) -> bool {
     let Some(proxies) = params.iter().find_map(|n| match &n.value {
         Value::Block(b) if n.key.eq_ignore_ascii_case("proxies") => Some(b),
         _ => None,
@@ -652,14 +659,10 @@ fn player_weapon_color(params: &[Node]) -> bool {
         return false;
     };
     proxies.iter().any(|n| match &n.value {
-        Value::Block(b) if n.key.eq_ignore_ascii_case("playerweaponcolor") => {
-            b.iter().any(|m| match &m.value {
-                Value::Str(s) if m.key.eq_ignore_ascii_case("resultvar") => {
-                    s.eq_ignore_ascii_case("$selfillumtint")
-                }
-                _ => false,
-            })
-        }
+        Value::Block(b) if n.key.eq_ignore_ascii_case(proxy) => b.iter().any(|m| match &m.value {
+            Value::Str(s) if m.key.eq_ignore_ascii_case("resultvar") => s.eq_ignore_ascii_case(var),
+            _ => false,
+        }),
         _ => false,
     })
 }
