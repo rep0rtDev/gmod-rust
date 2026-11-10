@@ -343,6 +343,8 @@ struct MenuCache {
     /// New Game icon grid max scroll of the last frame.
     ng_max_scroll: f32,
     ugc_per_page: usize,
+    /// Icons per page of the spawn menu's Dupes / Saves tab.
+    qm_per_page: usize,
     /// The hovered spawn icon's tooltip and when the hover began.
     tip: Option<(String, std::time::Instant)>,
 }
@@ -377,6 +379,50 @@ fn slider_value(s: &gm_server::ToolSetting, t: f32) -> String {
 }
 
 /// The `Gfx::models` key of a player's model with its skin and body groups.
+/// The fonts of the spawn menu's Dupes / Saves tab (the Saves page's), owned so a
+/// `ugc::Fonts` can borrow them next to the derma context.
+struct UgcFontSet {
+    f11: gm_render::ui::FontMetrics,
+    f13: gm_render::ui::FontMetrics,
+    f14b: gm_render::ui::FontMetrics,
+    f32: gm_render::ui::FontMetrics,
+    f48b: gm_render::ui::FontMetrics,
+    opt: gm_render::ui::FontMetrics,
+    opt_font: &'static str,
+}
+
+impl UgcFontSet {
+    fn fonts(&self) -> ugc::Fonts<'_> {
+        ugc::Fonts {
+            f11: &self.f11,
+            f13: &self.f13,
+            f14b: &self.f14b,
+            f32: &self.f32,
+            f48b: &self.f48b,
+            opt: &self.opt,
+            opt_font: self.opt_font,
+        }
+    }
+}
+
+fn ugc_font_set(g: &Gfx) -> UgcFontSet {
+    let f = |n: &str| g.ui.font_metrics(Some(n));
+    let opt_font = if g.config.width as f32 > 1280.0 {
+        derma::MENU_FONT_23
+    } else {
+        derma::MENU_FONT_16
+    };
+    UgcFontSet {
+        f11: f(newgame::F11),
+        f13: f(newgame::F13),
+        f14b: f(ugc::F14B),
+        f32: f(newgame::F32),
+        f48b: f(ugc::F48B),
+        opt: f(opt_font),
+        opt_font,
+    }
+}
+
 fn player_model_key(p: &PlayerSnap) -> String {
     format!(
         "{}#{}#{}",
@@ -1425,6 +1471,11 @@ struct App {
     servers: Option<servers::ServersState>,
     /// The Saves / Dupes / Demos page while open.
     ugc: Option<ugc::UgcState>,
+    /// The spawn menu's Dupes / Saves tabs (local files), and a countdown of frames until
+    /// they are re-read after a save command.
+    qm_dupes: ugc::UgcState,
+    qm_saves: ugc::UgcState,
+    qm_ugc_dirty: u8,
     /// The Addons page while open.
     addons: Option<addons::AddonsState>,
     /// The map this client runs.
@@ -2645,6 +2696,8 @@ impl App {
         let has_image = |name: &str| g.ui.has_image(name);
         let pp_set = self.pp_enabled.clone();
         let pp_on = |k: &str| pp_set.contains(k);
+        let uf = ugc_font_set(g);
+        let ufonts = uf.fonts();
         let ctx = derma::Ctx {
             w,
             h,
@@ -2664,6 +2717,8 @@ impl App {
             tool: &self.tool,
             has_image: &has_image,
             pp_on: &pp_on,
+            lang: &self.lang,
+            ugc: Some((&self.qm_dupes, &self.qm_saves, &ufonts)),
         };
         let mut layout = derma::Layout::default();
         if !self.started {
@@ -2922,6 +2977,7 @@ impl App {
                         _ => {}
                     },
                     A::Delete(name) => u.delete(&name, &self.lang),
+                    A::Save => {}
                 }
             }
             _ => {}
@@ -3157,6 +3213,8 @@ impl App {
         let has_image = |name: &str| g.ui.has_image(name);
         let pp_set = self.pp_enabled.clone();
         let pp_on = |k: &str| pp_set.contains(k);
+        let uf = ugc_font_set(g);
+        let ufonts = uf.fonts();
         let ctx = derma::Ctx {
             w,
             h,
@@ -3176,6 +3234,8 @@ impl App {
             tool: &self.tool,
             has_image: &has_image,
             pp_on: &pp_on,
+            lang: &self.lang,
+            ugc: Some((&self.qm_dupes, &self.qm_saves, &ufonts)),
         };
         let fonts = options::Fonts {
             default: &default,
@@ -3418,6 +3478,8 @@ impl App {
         let has_image = |name: &str| g.ui.has_image(name);
         let pp_set = self.pp_enabled.clone();
         let pp_on = |k: &str| pp_set.contains(k);
+        let uf = ugc_font_set(g);
+        let ufonts = uf.fonts();
         let ctx = derma::Ctx {
             w,
             h,
@@ -3437,6 +3499,8 @@ impl App {
             tool: &self.tool,
             has_image: &has_image,
             pp_on: &pp_on,
+            lang: &self.lang,
+            ugc: Some((&self.qm_dupes, &self.qm_saves, &ufonts)),
         };
         derma::build(&ctx, &menu.st).hit(self.cursor).cloned()
     }
@@ -3529,6 +3593,8 @@ impl App {
         let has_image = |name: &str| g.ui.has_image(name);
         let pp_set = self.pp_enabled.clone();
         let pp_on = |k: &str| pp_set.contains(k);
+        let uf = ugc_font_set(g);
+        let ufonts = uf.fonts();
         let ctx = derma::Ctx {
             w,
             h,
@@ -3548,6 +3614,8 @@ impl App {
             tool: &self.tool,
             has_image: &has_image,
             pp_on: &pp_on,
+            lang: &self.lang,
+            ugc: Some((&self.qm_dupes, &self.qm_saves, &ufonts)),
         };
         let action = derma::build(&ctx, &menu.st).hit(self.cursor).cloned();
         menu.st.ctx_menu = None;
@@ -3587,6 +3655,8 @@ impl App {
         let has_image = |name: &str| g.ui.has_image(name);
         let pp_set = self.pp_enabled.clone();
         let pp_on = |k: &str| pp_set.contains(k);
+        let uf = ugc_font_set(g);
+        let ufonts = uf.fonts();
         let ctx = derma::Ctx {
             w,
             h,
@@ -3606,6 +3676,8 @@ impl App {
             tool: &self.tool,
             has_image: &has_image,
             pp_on: &pp_on,
+            lang: &self.lang,
+            ugc: Some((&self.qm_dupes, &self.qm_saves, &ufonts)),
         };
         let action = derma::build(&ctx, &menu.st).hit(self.cursor).cloned();
         if let Some((_, i)) = menu.st.list_menu.take() {
@@ -3729,6 +3801,69 @@ impl App {
             Some(derma::Action::CreationTab(i)) => {
                 menu.st.creation_tab = i;
                 menu.st.scroll = 0.0;
+                if i >= 6 {
+                    self.qm_dupes.refresh(&self.lang);
+                    self.qm_saves.refresh(&self.lang);
+                }
+            }
+            Some(derma::Action::Ugc(a)) => {
+                use ugc::UgcAction as A;
+                let dupes = menu.st.creation_tab == 6;
+                let per_page = self.menu_cache.borrow().qm_per_page.max(1);
+                let u = if dupes {
+                    &mut self.qm_dupes
+                } else {
+                    &mut self.qm_saves
+                };
+                match a {
+                    A::Category(c) => {
+                        u.category = c;
+                        u.offset = 0;
+                    }
+                    A::OpenFolder => {
+                        let dir = u.folder();
+                        let _ = std::fs::create_dir_all(&dir);
+                        let _ = std::process::Command::new("xdg-open").arg(&dir).spawn();
+                    }
+                    A::Page(dir) => {
+                        let next = u.offset as i64 + dir as i64 * per_page as i64;
+                        if next >= 0 && (next as usize) < u.total().max(1) {
+                            u.offset = next as usize;
+                        }
+                    }
+                    A::GoToPage(p) => {
+                        let off = (p.max(1) - 1) * per_page;
+                        if off < u.total().max(1) {
+                            u.offset = off;
+                        }
+                    }
+                    // a dupe is armed into the duplicator's clipboard (dupe_arm), a save
+                    // loaded into the world (gm_load)
+                    A::Primary(name) => {
+                        let line = if dupes {
+                            self.tool = "duplicator".to_string();
+                            format!("dupe_arm {name}")
+                        } else {
+                            format!("load {name}")
+                        };
+                        self.console.log(line.clone());
+                        self.sim.client.command(Command::Console { line });
+                    }
+                    A::Save => {
+                        let stamp = std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .map_or(0, |d| d.as_secs());
+                        let line = if dupes {
+                            format!("dupe_save dupe_{stamp}")
+                        } else {
+                            format!("save save_{stamp}")
+                        };
+                        self.console.log(line.clone());
+                        self.sim.client.command(Command::Console { line });
+                        self.qm_ugc_dirty = 20;
+                    }
+                    A::Delete(name) => u.delete(&name, &self.lang),
+                }
             }
             Some(derma::Action::SearchFocus) => menu.st.search_focus = true,
             Some(derma::Action::ContentNode(i)) => {
@@ -3803,7 +3938,6 @@ impl App {
                 | derma::Action::Opt(_)
                 | derma::Action::NewGame(_)
                 | derma::Action::Servers(_)
-                | derma::Action::Ugc(_)
                 | derma::Action::Addons(_)
                 | derma::Action::Nothing,
             )
@@ -4527,6 +4661,13 @@ impl App {
         if paused {
             self.acc = 0.0;
             return;
+        }
+        if self.qm_ugc_dirty > 0 {
+            self.qm_ugc_dirty -= 1;
+            if self.qm_ugc_dirty == 0 {
+                self.qm_dupes.refresh(&self.lang);
+                self.qm_saves.refresh(&self.lang);
+            }
         }
         self.acc += frame;
         self.sim.interp.advance(frame);
@@ -7793,6 +7934,8 @@ impl App {
                 tool: title,
                 has_image: &has_image,
                 pp_on: &pp_on,
+                lang: &self.lang,
+                ugc: None,
             };
             let mut layout = derma::Layout::default();
             if let (Some(schema), true) = (self.panel_schema(), self.menu.is_none()) {
@@ -7846,6 +7989,8 @@ impl App {
             let has_image = |name: &str| g.ui.has_image(name);
             let pp_set = self.pp_enabled.clone();
             let pp_on = |k: &str| pp_set.contains(k);
+            let uf = ugc_font_set(g);
+            let ufonts = uf.fonts();
             let ctx = derma::Ctx {
                 w,
                 h,
@@ -7865,8 +8010,13 @@ impl App {
                 tool: &self.tool,
                 has_image: &has_image,
                 pp_on: &pp_on,
+                lang: &self.lang,
+                ugc: Some((&self.qm_dupes, &self.qm_saves, &ufonts)),
             };
             let mut layout = derma::build(&ctx, &menu.st);
+            if layout.ugc_per_page > 0 {
+                self.menu_cache.borrow_mut().qm_per_page = layout.ugc_per_page;
+            }
             let rows = match self.panel_schema() {
                 Some(schema) => {
                     let set = self.settings_map();
@@ -7912,6 +8062,7 @@ impl App {
                 opt_bars: Vec::new(),
                 ng_max_scroll: 0.0,
                 ugc_per_page: 0,
+                qm_per_page: layout.ugc_per_page,
                 tip: tip.clone(),
             };
             items.extend(layout.items);
@@ -10116,6 +10267,9 @@ fn main() -> Result<()> {
         menu: None,
         spawnlists: Vec::new(),
         shift_held: false,
+        qm_dupes: ugc::UgcState::new("dupes", &lang),
+        qm_saves: ugc::UgcState::new("saves", &lang),
+        qm_ugc_dirty: 0,
         lang,
         menu_cache: Default::default(),
         context_held: false,

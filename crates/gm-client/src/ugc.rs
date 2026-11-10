@@ -44,6 +44,8 @@ pub enum UgcAction {
     GoToPage(usize),
     Primary(String),
     Delete(String),
+    /// The spawn menu tab's save button (`gm_save` / `dupe_save`).
+    Save,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -294,6 +296,25 @@ pub fn page(
     );
     // workshopcontainer: top 64, white, padding 8
     let (kx, ky, kw, kh) = (cx, cy + 64.0, cw, h - 16.0 - cy - 64.0);
+    grid(out, ctx, st, lang, fonts, kx, ky, kw, kh)
+}
+
+/// The `workshopcontainer` of a Saves / Dupes / Demos page: the white panel of file icons
+/// (preview, name bar, hover description, buttons) with the pagination at its bottom, in the
+/// rectangle given. Returns the icons per page.
+#[allow(clippy::too_many_arguments)]
+pub fn grid(
+    out: &mut Layout,
+    ctx: &Ctx,
+    st: &UgcState,
+    lang: &BTreeMap<String, String>,
+    fonts: &Fonts,
+    kx: f32,
+    ky: f32,
+    kw: f32,
+    kh: f32,
+) -> usize {
+    let kind = st.kind;
     rect(&mut out.items, kx, ky, kw, kh, WHITE);
     let (iw_all, ih_all) = ((kw - 16.0).max(180.0), (kh - 16.0 - 48.0).max(180.0));
     let icons_wide = ((iw_all / 180.0).floor() as usize).clamp(1, 6);

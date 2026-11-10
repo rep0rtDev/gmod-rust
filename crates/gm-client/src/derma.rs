@@ -560,6 +560,8 @@ pub struct Layout {
     pub hits: Vec<Hit>,
     /// The tool ControlPanel rect (x, y, w, h); the tool's setting rows go under its header.
     pub control: (f32, f32, f32, f32),
+    /// Icons per page of the Dupes / Saves tab drawn (0 when neither).
+    pub ugc_per_page: usize,
     /// Models whose spawn icons are on screen (to render the missing ones).
     pub visible: Vec<String>,
     pub max_scroll: f32,
@@ -594,6 +596,13 @@ pub struct Ctx<'a> {
     pub has_image: &'a dyn Fn(&str) -> bool,
     /// Whether a Post Process entry's `pp_*` convar is on (its checkbox).
     pub pp_on: &'a dyn Fn(&str) -> bool,
+    pub lang: &'a BTreeMap<String, String>,
+    /// The Dupes and Saves tabs' local files and the fonts of their panel (None: not drawn).
+    pub ugc: Option<(
+        &'a crate::ugc::UgcState,
+        &'a crate::ugc::UgcState,
+        &'a crate::ugc::Fonts<'a>,
+    )>,
 }
 
 /// `SpawnMenu`: margins `clamp((ScrW-1024)*spawnmenu_border, 25, 256)`, a DHorizontalDivider with
@@ -625,6 +634,9 @@ pub fn build(ctx: &Ctx, st: &MenuState) -> Layout {
         spawnlists(&mut out, ctx, st, cx, cy, cw, ch);
     } else if (1..=5).contains(&st.creation_tab) {
         content(&mut out, ctx, st, st.creation_tab - 1, cx, cy, cw, ch);
+    } else if let (6 | 7, Some((dupes, saves, fonts))) = (st.creation_tab, ctx.ugc) {
+        let u = if st.creation_tab == 6 { dupes } else { saves };
+        out.ugc_per_page = ugc_tab(&mut out, ctx, u, fonts, cx, cy, cw, ch);
     }
     let (tx, ty, tw, th) = sheet(
         &mut out,
@@ -3199,4 +3211,87 @@ mod tests {
         assert_eq!(arms.children[1].checked, Some(true));
         assert_eq!(arms.children[2].name, "bodygroups 1 2");
     }
+}
+
+/// The Dupes / Saves creation tab (the game's dupes.html / saves.html in a DHTML panel): a
+/// button bar with the save button (`dupe_save` with the duplicator's clipboard / `gm_save`)
+/// over the local files' icon grid. Returns the icons per page.
+#[allow(clippy::too_many_arguments)]
+fn ugc_tab(
+    out: &mut Layout,
+    ctx: &Ctx,
+    st: &crate::ugc::UgcState,
+    fonts: &crate::ugc::Fonts,
+    x: f32,
+    y: f32,
+    w: f32,
+    h: f32,
+) -> usize {
+    let say = |k: &str, d: &str| crate::ugc::say(ctx.lang, k, d);
+    let bar_h = 40.0;
+    crate::ugc::rect(&mut out.items, x, y, w, bar_h, rgba(255, 255, 255, 255));
+    let title = if st.kind == "dupes" {
+        say("dupes.local", "Local dupes")
+    } else {
+        say("saves.local", "Local saves")
+    };
+    text(
+        &mut out.items,
+        FONT_BOLD,
+        ctx.bold,
+        x + 8.0,
+        y,
+        bar_h,
+        &title,
+        [0.1, 0.1, 0.1, 1.0],
+    );
+    let label = if st.kind == "dupes" {
+        say("dupes.save", "Save Dupe")
+    } else {
+        say("saves.save", "Save Game")
+    };
+    let bw = ctx.font.text_width(&label) + 24.0;
+    let (bx, by, bh) = (x + w - 8.0 - bw, y + 8.0, bar_h - 16.0);
+    let hovered = inside(ctx.cursor, bx, by, bw, bh);
+    crate::ugc::rect(
+        &mut out.items,
+        bx,
+        by,
+        bw,
+        bh,
+        if hovered {
+            rgba(35, 135, 237, 255)
+        } else {
+            rgba(0, 110, 230, 255)
+        },
+    );
+    let tw = ctx.font.text_width(&label);
+    text(
+        &mut out.items,
+        FONT,
+        ctx.font,
+        bx + ((bw - tw) * 0.5).round(),
+        by,
+        bh,
+        &label,
+        [1.0, 1.0, 1.0, 1.0],
+    );
+    out.hits.push(Hit {
+        x: bx,
+        y: by,
+        w: bw,
+        h: bh,
+        action: Action::Ugc(crate::ugc::UgcAction::Save),
+    });
+    crate::ugc::grid(
+        out,
+        ctx,
+        st,
+        ctx.lang,
+        fonts,
+        x,
+        y + bar_h + 4.0,
+        w,
+        h - bar_h - 4.0,
+    )
 }

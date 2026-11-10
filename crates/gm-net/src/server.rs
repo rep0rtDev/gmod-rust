@@ -559,9 +559,52 @@ impl ServerNet {
         match verb {
             "help" => vec![
                 "status | kick <player> [reason] | ban <player> | unban <key> | cvar <name> [value] \
-                 | reload <addon> | say <text> | admins | save <name> | load <name>"
+                 | reload <addon> | say <text> | admins | save <name> | load <name> \
+                 | dupe_save <name> | dupe_arm <name>"
                     .to_string(),
             ],
+            // the Dupes tab: `dupe_save` writes the issuer's duplicator clipboard to
+            // dupes/<name>, `dupe_arm` loads a file back into the clipboard (the game's
+            // dupe_save / dupe_arm console commands)
+            "dupe_save" | "dupe_arm" => {
+                let Some(dir) = self
+                    .saves_dir
+                    .as_ref()
+                    .and_then(|d| d.parent())
+                    .map(|d| d.join("dupes"))
+                else {
+                    return vec![format!("{verb}: no data directory")];
+                };
+                let Some(name) = rest.first().filter(|n| {
+                    !n.is_empty() && n.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+                }) else {
+                    return vec![format!("{verb}: name expected (letters, digits, _ -)")];
+                };
+                let path = dir.join(format!("{name}.{}", gm_server::save::EXTENSION));
+                if verb == "dupe_save" {
+                    let Some(clip) = server.clipboards.get(&admin) else {
+                        return vec!["dupe_save: nothing copied with the duplicator".to_string()];
+                    };
+                    match std::fs::create_dir_all(&dir)
+                        .and_then(|_| serde_json::to_vec_pretty(clip).map_err(std::io::Error::other))
+                        .and_then(|bytes| std::fs::write(&path, bytes))
+                    {
+                        Ok(()) => vec![format!("dupe_save {name}: {} props", clip.props.len())],
+                        Err(e) => vec![format!("dupe_save {name}: {e}")],
+                    }
+                } else {
+                    match std::fs::read(&path)
+                        .and_then(|b| serde_json::from_slice::<gm_server::save::Save>(&b).map_err(std::io::Error::other))
+                    {
+                        Ok(clip) => {
+                            let n = clip.props.len();
+                            server.clipboards.insert(admin, clip);
+                            vec![format!("dupe_arm {name}: {n} props in the clipboard")]
+                        }
+                        Err(e) => vec![format!("dupe_arm {name}: {e}")],
+                    }
+                }
+            }
             "save" | "load" => {
                 let Some(dir) = self.saves_dir.clone() else {
                     return vec![format!("{verb}: no saves directory")];
