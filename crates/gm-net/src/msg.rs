@@ -306,6 +306,9 @@ pub struct PlayerSnap {
     pub model: u8,
     /// Skin family and `SetBodyGroups` digits of the player model, as set (unclamped).
     pub skin: u8,
+    /// `cl_playercolor` / `cl_weaponcolor` as 0..255 RGB.
+    pub player_color: [u8; 3],
+    pub weapon_color: [u8; 3],
     pub body: String,
     /// The player's name as given at connect (`Player:Nick`).
     pub name: String,
@@ -1210,6 +1213,9 @@ impl ServerMsg {
                     w.u8(p.tool_stage);
                     w.u8(p.model);
                     w.u8(p.skin);
+                    for c in p.player_color.iter().chain(&p.weapon_color) {
+                        w.u8(*c);
+                    }
                     w.str(&p.body);
                     w.str(&p.name);
                     w.u32(p.held.unwrap_or(0));
@@ -1683,6 +1689,8 @@ impl ServerMsg {
                         tool_stage: r.u8()?,
                         model: r.u8()?,
                         skin: r.u8()?,
+                        player_color: [r.u8()?, r.u8()?, r.u8()?],
+                        weapon_color: [r.u8()?, r.u8()?, r.u8()?],
                         body: r.str()?,
                         name: r.str()?,
                         held: match r.u32()? {

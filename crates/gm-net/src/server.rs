@@ -1783,6 +1783,8 @@ impl ServerNet {
             .players
             .iter()
             .map(|(id, p)| PlayerSnap {
+                player_color: color_u8(p.player_color),
+                weapon_color: color_u8(p.weapon_color),
                 id: *id,
                 origin: p.state.origin,
                 velocity: p.state.velocity,
@@ -2386,4 +2388,10 @@ fn gesture_state(anim: Option<&gm_server::EntAnim>) -> Option<crate::msg::Gestur
             priority: g.priority,
             finished: g.finished,
         })
+}
+
+/// A 0..1 colour as the snapshot's RGB bytes.
+fn color_u8(c: Vec3) -> [u8; 3] {
+    let q = |v: f32| (v.clamp(0.0, 1.0) * 255.0).round() as u8;
+    [q(c.x), q(c.y), q(c.z)]
 }

@@ -71,6 +71,8 @@ mod tests {
             baseline: 8,
             last_cmd_tick: 9,
             players: vec![PlayerSnap {
+                player_color: [61, 87, 105],
+                weapon_color: [77, 255, 64],
                 id: 1,
                 origin: Vec3::new(1.0, 2.0, 3.0),
                 velocity: Vec3::ZERO,

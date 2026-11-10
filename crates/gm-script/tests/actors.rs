@@ -917,6 +917,8 @@ fn glua_client_hud_paint_draws_through_surface() {
     );
     world.local_id = Some(3);
     world.players.push(gm_net::msg::PlayerSnap {
+        player_color: [61, 87, 105],
+        weapon_color: [77, 255, 64],
         id: 3,
         ..Default::default()
     });
@@ -1919,6 +1921,8 @@ fn glua_client_chat_line_reaches_the_chat_box_through_onplayerchat() {
     let world = gm_net::ClientWorld {
         local_id: Some(3),
         players: vec![gm_net::msg::PlayerSnap {
+            player_color: [61, 87, 105],
+            weapon_color: [77, 255, 64],
             id: 3,
             name: "alice".into(),
             ..Default::default()
