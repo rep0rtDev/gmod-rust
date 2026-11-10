@@ -129,6 +129,11 @@ pub enum Command {
     PlayerModel {
         name: String,
     },
+    /// `cl_playercolor` / `cl_weaponcolor`: the convar strings ("r g b" in 0..1).
+    PlayerColors {
+        body: String,
+        weapon: String,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -969,6 +974,11 @@ impl ClientMsg {
                         w.u8(13);
                         w.str(name);
                     }
+                    Command::PlayerColors { body, weapon } => {
+                        w.u8(25);
+                        w.str(body);
+                        w.str(weapon);
+                    }
                     Command::PlayerSkin { skin, body } => {
                         w.u8(14);
                         w.u8(*skin);
@@ -1088,6 +1098,10 @@ impl ClientMsg {
                     11 => Command::Noclip { on: r.bool()? },
                     12 => Command::Property { name: r.str()? },
                     13 => Command::PlayerModel { name: r.str()? },
+                    25 => Command::PlayerColors {
+                        body: r.str()?,
+                        weapon: r.str()?,
+                    },
                     14 => Command::PlayerSkin {
                         skin: r.u8()?,
                         body: r.str()?,

@@ -1267,6 +1267,14 @@ impl ServerNet {
                     Command::PlayerSkin { skin, body } => {
                         server.set_wanted_skin_body(slot.player, skin, &body)
                     }
+                    Command::PlayerColors { body, weapon } => {
+                        let parse = |s: &str| -> Option<Vec3> {
+                            let mut it = s.split_whitespace().map(|v| v.parse::<f32>().ok());
+                            let (r, g, b) = (it.next()??, it.next()??, it.next()??);
+                            Some(Vec3::new(r, g, b).clamp(Vec3::ZERO, Vec3::ONE))
+                        };
+                        let _ = server.set_player_colors(slot.player, parse(&body), parse(&weapon));
+                    }
                     Command::Kill => {
                         server.player_kill_command(slot.player);
                     }

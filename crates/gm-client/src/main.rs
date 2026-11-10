@@ -9419,6 +9419,20 @@ impl App {
                     name: rest.join(" "),
                 });
             }
+            // `cl_playercolor r g b` / `cl_weaponcolor r g b` (0..1): both ride in one command,
+            // an empty string keeps the other one
+            "playercolor" | "cl_playercolor" if rest.len() >= 3 => {
+                self.sim.client.command(Command::PlayerColors {
+                    body: rest[..3].join(" "),
+                    weapon: String::new(),
+                });
+            }
+            "weaponcolor" | "cl_weaponcolor" if rest.len() >= 3 => {
+                self.sim.client.command(Command::PlayerColors {
+                    body: String::new(),
+                    weapon: rest[..3].join(" "),
+                });
+            }
             // `cl_playerskin` / `cl_playerbodygroups`: both ride in one command, so each keeps
             // the other's current value
             "playerskin" if !rest.is_empty() => {
