@@ -99,6 +99,9 @@ pub struct FontMetrics {
     pub line_height: f32,
     pub advances: HashMap<char, f32>,
     pub fallback: f32,
+    /// Ink box of each glyph `[x0, y0, x1, y1]` in pixels from the pen at the line's top
+    /// (the rasterised outline's bounds, blur padding excluded); none for blank glyphs.
+    pub bounds: HashMap<char, [f32; 4]>,
 }
 
 impl FontMetrics {
@@ -106,6 +109,30 @@ impl FontMetrics {
         text.chars()
             .map(|c| self.advances.get(&c).copied().unwrap_or(self.fallback))
             .sum()
+    }
+
+    /// Ink box of `text` as drawn from a pen at (0, line top): `[x0, y0, x1, y1]`, None when
+    /// nothing is inked. Centring by it (as VGUI's `GetTextSize` of a glyph's bitmap does
+    /// for the HUD crosshair) puts the visible shape, not the advance box, on the point.
+    pub fn ink_bounds(&self, text: &str) -> Option<[f32; 4]> {
+        let mut pen = 0.0f32;
+        let mut out: Option<[f32; 4]> = None;
+        for c in text.chars() {
+            if let Some(b) = self.bounds.get(&c) {
+                let r = [pen + b[0], b[1], pen + b[2], b[3]];
+                out = Some(match out {
+                    None => r,
+                    Some(o) => [
+                        o[0].min(r[0]),
+                        o[1].min(r[1]),
+                        o[2].max(r[2]),
+                        o[3].max(r[3]),
+                    ],
+                });
+            }
+            pen += self.advances.get(&c).copied().unwrap_or(self.fallback);
+        }
+        out
     }
 }
 
@@ -164,6 +191,8 @@ struct FontAtlas {
     white_uv: [f32; 2],
     ascent: f32,
     line_height: f32,
+    /// Blur padding around every glyph box (`FontFx::blur`).
+    pad: u32,
     bind_group: wgpu::BindGroup,
 }
 
@@ -288,6 +317,7 @@ impl FontAtlas {
             fallback,
             white_uv,
             ascent,
+            pad,
             line_height,
             bind_group,
         })
@@ -302,10 +332,28 @@ impl FontAtlas {
     }
 
     fn metrics(&self) -> FontMetrics {
+        let pad = self.pad as f32;
         FontMetrics {
             line_height: self.line_height,
             advances: self.glyphs.iter().map(|(c, g)| (*c, g.advance)).collect(),
             fallback: self.fallback.advance,
+            bounds: self
+                .glyphs
+                .iter()
+                .filter(|(_, g)| g.size[0] > 2.0 * pad + 1.0 && g.size[1] > 2.0 * pad + 1.0)
+                .map(|(c, g)| {
+                    let (x0, y0) = (g.offset[0] + pad, self.ascent.round() + g.offset[1] + pad);
+                    (
+                        *c,
+                        [
+                            x0,
+                            y0,
+                            x0 + g.size[0] - 2.0 * pad - 1.0,
+                            y0 + g.size[1] - 2.0 * pad - 1.0,
+                        ],
+                    )
+                })
+                .collect(),
         }
     }
 }

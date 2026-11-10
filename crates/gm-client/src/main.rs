@@ -7974,10 +7974,16 @@ impl App {
                     let class = classes.get(self.weapon as usize).map(String::as_str);
                     if class.is_some_and(weapon_has_crosshair_glyph) {
                         let cm = g.ui.font_metrics(Some("Crosshairs"));
+                        // centred on the glyph's inked bounds (ui.md §7.2, gap-report #156),
+                        // the advance / line box when the font has no bounds
+                        let (cx, cy) = match cm.ink_bounds("Q") {
+                            Some(b) => ((b[0] + b[2]) / 2.0, (b[1] + b[3]) / 2.0),
+                            None => (cm.text_width("Q") / 2.0, cm.line_height / 2.0),
+                        };
                         items.push(UiItem::Text {
                             font: Some("Crosshairs".to_string()),
-                            x: w / 2.0 - cm.text_width("Q") / 2.0,
-                            y: h / 2.0 - cm.line_height / 2.0,
+                            x: (w / 2.0 - cx).round(),
+                            y: (h / 2.0 - cy).round(),
                             text: "Q".to_string(),
                             color: [1.0, 208.0 / 255.0, 64.0 / 255.0, 1.0],
                         });
