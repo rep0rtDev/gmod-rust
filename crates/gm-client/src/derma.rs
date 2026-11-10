@@ -507,6 +507,9 @@ pub enum Action {
     /// The Player Model editor: a model icon clicked (`cl_playermodel <name>`), its close button.
     PlayerModel(String),
     ClosePlayerEditor,
+    /// The window's sheet (0 Model, 1 Colors) and a colour picked (weapon?, rgb 0..1).
+    PlayerEditorTab(u8),
+    PlayerColor(bool, [f32; 3]),
     ToolTab(usize),
     Node(usize),
     Browse,
@@ -3255,10 +3258,18 @@ pub fn desktop_icon_rect(i: usize) -> (f32, f32, f32, f32) {
 }
 
 /// `editor_player.lua`'s Player Model window: a frame of 80% of the screen, centred, the
-/// chosen model's icon large on the left (the DModelPanel preview), the model list on the
-/// right as 64 px spawn icons (`player_manager.GetAllPlayerModels()`), the selected one
-/// framed. `models` are (name, model path); icons are the `icon:<path>` images.
-pub fn player_editor(out: &mut Layout, ctx: &Ctx, models: &[(&str, &str)], current: &str) {
+/// chosen model's icon large on the left (the DModelPanel preview), on the right a sheet with
+/// the model list (64 px spawn icons, the selected one framed) and the Colors page (two
+/// DColorMixer-like pickers for `cl_playercolor` / `cl_weaponcolor`). `models` are
+/// (name, model path); icons are the `icon:<path>` images; `colors` are (player, weapon).
+pub fn player_editor(
+    out: &mut Layout,
+    ctx: &Ctx,
+    models: &[(&str, &str)],
+    current: &str,
+    tab: u8,
+    colors: [[f32; 3]; 2],
+) {
     let (w, h) = (
         (ctx.w * 0.8).max(400.0).round(),
         (ctx.h * 0.8).max(250.0).round(),
@@ -3333,14 +3344,81 @@ pub fn player_editor(out: &mut Layout, ctx: &Ctx, models: &[(&str, &str)], curre
             );
         }
     }
-    // the model list: 64 px icons, 8 apart, in the right half
-    let (lx, ly, lw, lh) = (
+    // the sheet: tabs, then the model list (64 px icons, 8 apart) or the colour pickers
+    let (lx, mut ly, lw, mut lh) = (
         x + (w * 0.5).round() + 4.0,
         y + 32.0,
         (w * 0.5 - 12.0).round(),
         h - 40.0,
     );
+    let tabs = [
+        crate::ugc::say(ctx.lang, "smwidget.model", "Model"),
+        crate::ugc::say(ctx.lang, "smwidget.colors", "Colors"),
+    ];
+    let mut tx = lx;
+    for (i, name) in tabs.iter().enumerate() {
+        let tw = (ctx.bold.text_width(name) + 24.0).round();
+        let active = tab == i as u8;
+        crate::ugc::rect(
+            &mut out.items,
+            tx,
+            ly,
+            tw,
+            24.0,
+            if active {
+                rgba(230, 230, 230, 255)
+            } else {
+                rgba(80, 82, 86, 255)
+            },
+        );
+        text(
+            &mut out.items,
+            FONT_BOLD,
+            ctx.bold,
+            tx + 12.0,
+            ly,
+            24.0,
+            name,
+            if active {
+                [0.1, 0.1, 0.1, 1.0]
+            } else {
+                [1.0; 4]
+            },
+        );
+        out.hits.push(Hit {
+            x: tx,
+            y: ly,
+            w: tw,
+            h: 24.0,
+            action: Action::PlayerEditorTab(i as u8),
+        });
+        tx += tw + 2.0;
+    }
+    ly += 24.0;
+    lh -= 24.0;
     crate::ugc::rect(&mut out.items, lx, ly, lw, lh, rgba(230, 230, 230, 255));
+    if tab == 1 {
+        let labels = [
+            crate::ugc::say(ctx.lang, "smwidget.color_plr", "Player color"),
+            crate::ugc::say(ctx.lang, "smwidget.color_wep", "Physgun color"),
+        ];
+        let size = ((lh - 80.0) * 0.5).clamp(96.0, 220.0);
+        for (i, label) in labels.iter().enumerate() {
+            let cy = ly + 8.0 + i as f32 * (size + 40.0);
+            text(
+                &mut out.items,
+                FONT_BOLD,
+                ctx.bold,
+                lx + 8.0,
+                cy,
+                20.0,
+                label,
+                [0.1, 0.1, 0.1, 1.0],
+            );
+            color_mixer(out, ctx, lx + 8.0, cy + 22.0, size, colors[i], i == 1);
+        }
+        return;
+    }
     let per_row = (((lw - 8.0) / 72.0).floor() as usize).max(1);
     for (i, (name, path)) in models.iter().enumerate() {
         let (col, row) = ((i % per_row) as f32, (i / per_row) as f32);
@@ -3381,6 +3459,165 @@ pub fn player_editor(out: &mut Layout, ctx: &Ctx, models: &[(&str, &str)], curre
             action: Action::PlayerModel((*name).to_string()),
         });
     }
+}
+
+fn rgb_to_hsv(c: [f32; 3]) -> (f32, f32, f32) {
+    let (r, g, b) = (c[0], c[1], c[2]);
+    let max = r.max(g).max(b);
+    let min = r.min(g).min(b);
+    let d = max - min;
+    let h = if d <= 1e-5 {
+        0.0
+    } else if max == r {
+        (((g - b) / d) % 6.0 + 6.0) % 6.0 / 6.0
+    } else if max == g {
+        ((b - r) / d + 2.0) / 6.0
+    } else {
+        ((r - g) / d + 4.0) / 6.0
+    };
+    (h, if max <= 1e-5 { 0.0 } else { d / max }, max)
+}
+
+fn hsv_to_rgb(h: f32, s: f32, v: f32) -> [f32; 3] {
+    let h6 = (h.rem_euclid(1.0)) * 6.0;
+    let c = v * s;
+    let x = c * (1.0 - ((h6 % 2.0) - 1.0).abs());
+    let m = v - c;
+    let (r, g, b) = match h6 as i32 {
+        0 => (c, x, 0.0),
+        1 => (x, c, 0.0),
+        2 => (0.0, c, x),
+        3 => (0.0, x, c),
+        4 => (x, 0.0, c),
+        _ => (c, 0.0, x),
+    };
+    [r + m, g + m, b + m]
+}
+
+/// A DColorMixer: the saturation / value square of the current hue, the hue strip to its
+/// right, the colour swatch and its "r g b" below. `size` is the square's side; a click in the
+/// square or the strip picks the colour. Weapon colours may exceed 1 (the game's physgun
+/// glow is 0.3 1.8 2.1): the picker works on the normalised colour and keeps the scale.
+fn color_mixer(
+    out: &mut Layout,
+    ctx: &Ctx,
+    x: f32,
+    y: f32,
+    size: f32,
+    color: [f32; 3],
+    weapon: bool,
+) {
+    let scale = color[0].max(color[1]).max(color[2]).max(1.0);
+    let norm = [color[0] / scale, color[1] / scale, color[2] / scale];
+    let (h, s, v) = rgb_to_hsv(norm);
+    let cells = 16usize;
+    let cell = (size / cells as f32).floor().max(4.0);
+    let side = cell * cells as f32;
+    for j in 0..cells {
+        for i in 0..cells {
+            let (cs, cv) = (
+                (i as f32 + 0.5) / cells as f32,
+                1.0 - (j as f32 + 0.5) / cells as f32,
+            );
+            let c = hsv_to_rgb(h, cs, cv);
+            crate::ugc::rect(
+                &mut out.items,
+                x + i as f32 * cell,
+                y + j as f32 * cell,
+                cell,
+                cell,
+                [c[0], c[1], c[2], 1.0],
+            );
+        }
+    }
+    // the picked point
+    let (px, py) = (x + s * side, y + (1.0 - v) * side);
+    crate::ugc::rect(
+        &mut out.items,
+        px - 4.0,
+        py - 1.0,
+        8.0,
+        2.0,
+        [0.0, 0.0, 0.0, 1.0],
+    );
+    crate::ugc::rect(
+        &mut out.items,
+        px - 1.0,
+        py - 4.0,
+        2.0,
+        8.0,
+        [0.0, 0.0, 0.0, 1.0],
+    );
+    if inside(ctx.cursor, x, y, side, side) {
+        let (cs, cv) = (
+            ((ctx.cursor.0 - x) / side).clamp(0.0, 1.0),
+            (1.0 - (ctx.cursor.1 - y) / side).clamp(0.0, 1.0),
+        );
+        let c = hsv_to_rgb(h, cs, cv);
+        out.hits.push(Hit {
+            x,
+            y,
+            w: side,
+            h: side,
+            action: Action::PlayerColor(weapon, [c[0] * scale, c[1] * scale, c[2] * scale]),
+        });
+    }
+    // hue strip
+    let hx = x + side + 8.0;
+    let rows = 32usize;
+    let rh = side / rows as f32;
+    for j in 0..rows {
+        let c = hsv_to_rgb((j as f32 + 0.5) / rows as f32, 1.0, 1.0);
+        crate::ugc::rect(
+            &mut out.items,
+            hx,
+            y + j as f32 * rh,
+            20.0,
+            rh + 0.5,
+            [c[0], c[1], c[2], 1.0],
+        );
+    }
+    let hy = y + h * side;
+    crate::ugc::rect(
+        &mut out.items,
+        hx - 2.0,
+        hy - 1.0,
+        24.0,
+        2.0,
+        [0.0, 0.0, 0.0, 1.0],
+    );
+    if inside(ctx.cursor, hx, y, 20.0, side) {
+        let nh = ((ctx.cursor.1 - y) / side).clamp(0.0, 0.999);
+        let c = hsv_to_rgb(nh, s.max(0.05), v.max(0.05));
+        out.hits.push(Hit {
+            x: hx,
+            y,
+            w: 20.0,
+            h: side,
+            action: Action::PlayerColor(weapon, [c[0] * scale, c[1] * scale, c[2] * scale]),
+        });
+    }
+    // swatch + value
+    let sy = y + side + 6.0;
+    crate::ugc::rect(
+        &mut out.items,
+        x,
+        sy,
+        48.0,
+        20.0,
+        [norm[0], norm[1], norm[2], 1.0],
+    );
+    let label = format!("{:.2} {:.2} {:.2}", color[0], color[1], color[2]);
+    text(
+        &mut out.items,
+        FONT,
+        ctx.font,
+        x + 56.0,
+        sy,
+        20.0,
+        &label,
+        [0.1, 0.1, 0.1, 1.0],
+    );
 }
 
 #[cfg(test)]

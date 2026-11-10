@@ -32,6 +32,11 @@ pub struct Settings {
     pub hud_fastswitch: bool,
     pub cl_enable_loadingurl: bool,
     pub cl_downloadfilter: String,
+    /// `cl_playermodel` (empty: the server's default), `cl_playercolor` / `cl_weaponcolor`
+    /// ("r g b" in 0..1).
+    pub cl_playermodel: String,
+    pub cl_playercolor: String,
+    pub cl_weaponcolor: String,
     pub cl_spraydisable: bool,
     /// `fov_desired` 75..100 (sandbox lets 75..100 through `fov_desired`).
     pub fov_desired: f32,
@@ -87,6 +92,9 @@ impl Default for Settings {
             hud_fastswitch: false,
             cl_enable_loadingurl: true,
             cl_downloadfilter: "all".to_string(),
+            cl_playermodel: String::new(),
+            cl_playercolor: "0.24 0.34 0.41".to_string(),
+            cl_weaponcolor: "0.30 1.80 2.10".to_string(),
             cl_spraydisable: false,
             fov_desired: 75.0,
             fps_max: 300.0,
@@ -340,6 +348,15 @@ impl Settings {
         if let Some(v) = cvars.get("cl_downloadfilter") {
             self.cl_downloadfilter = v.clone();
         }
+        for (k, slot) in [
+            ("cl_playermodel", &mut self.cl_playermodel),
+            ("cl_playercolor", &mut self.cl_playercolor),
+            ("cl_weaponcolor", &mut self.cl_weaponcolor),
+        ] {
+            if let Some(v) = cvars.get(k) {
+                *slot = v.clone();
+            }
+        }
         self.cl_spraydisable = b("cl_spraydisable", self.cl_spraydisable);
         self.fov_desired = f("fov_desired", self.fov_desired).clamp(75.0, 100.0);
         self.fps_max = f("fps_max", self.fps_max).max(0.0);
@@ -418,6 +435,9 @@ impl Settings {
                 on(self.cl_enable_loadingurl).to_string(),
             ),
             ("cl_downloadfilter", self.cl_downloadfilter.clone()),
+            ("cl_playermodel", self.cl_playermodel.clone()),
+            ("cl_playercolor", self.cl_playercolor.clone()),
+            ("cl_weaponcolor", self.cl_weaponcolor.clone()),
             ("cl_spraydisable", on(self.cl_spraydisable).to_string()),
             ("fov_desired", format!("{}", self.fov_desired)),
             ("fps_max", format!("{}", self.fps_max)),

@@ -1395,6 +1395,9 @@ struct App {
     context_held: bool,
     /// The context menu's Player Model window (`editor_player.lua`) is open.
     player_editor: bool,
+    player_editor_tab: u8,
+    /// The player the `cl_playermodel` / colour preferences were sent to the server for.
+    prefs_sent_for: Option<u32>,
     /// `+showscores` held (TAB): the sandbox scoreboard.
     scoreboard: bool,
     /// When each remote player's last voice packet arrived (the voice panels).
@@ -2279,6 +2282,47 @@ impl App {
             .to_string()
     }
 
+    /// (`cl_playercolor`, `cl_weaponcolor`) as 0..1 RGB (the game's defaults when unparsable).
+    fn pref_colors(&self) -> [[f32; 3]; 2] {
+        let parse = |s: &str, d: [f32; 3]| -> [f32; 3] {
+            let v: Vec<f32> = s
+                .split_whitespace()
+                .filter_map(|t| t.parse().ok())
+                .collect();
+            if v.len() >= 3 {
+                [v[0], v[1], v[2]]
+            } else {
+                d
+            }
+        };
+        [
+            parse(&self.settings.cl_playercolor, [0.24, 0.34, 0.41]),
+            parse(
+                &self.settings.cl_weaponcolor,
+                gm_render::world::DEFAULT_WEAPON_COLOR.to_array(),
+            ),
+        ]
+    }
+
+    /// The local player's weapon colour (`cl_weaponcolor`), for the physgun's glow and beam.
+    fn local_weapon_color(&self) -> Vec3 {
+        Vec3::from(self.pref_colors()[1])
+    }
+
+    /// `cl_playermodel` and the colours go to the server once per connection (the game sends
+    /// its userinfo cvars on connect) and whenever they change.
+    fn send_prefs(&mut self) {
+        if !self.settings.cl_playermodel.is_empty() {
+            self.sim.client.command(Command::PlayerModel {
+                name: self.settings.cl_playermodel.clone(),
+            });
+        }
+        self.sim.client.command(Command::PlayerColors {
+            body: self.settings.cl_playercolor.clone(),
+            weapon: self.settings.cl_weaponcolor.clone(),
+        });
+    }
+
     /// A left click in the context menu on the desktop icons or inside the Player Model
     /// window: true when it was taken.
     fn player_editor_click(&mut self) -> bool {
@@ -2318,15 +2362,39 @@ impl App {
         };
         let mut layout = derma::Layout::default();
         let models = Self::player_model_list();
-        derma::player_editor(&mut layout, &ctx, &models, &self.current_player_model());
+        derma::player_editor(
+            &mut layout,
+            &ctx,
+            &models,
+            &self.current_player_model(),
+            self.player_editor_tab,
+            self.pref_colors(),
+        );
         match layout.hit(self.cursor).cloned() {
             Some(derma::Action::PlayerModel(name)) => {
                 self.console.log(format!("cl_playermodel {name}"));
+                self.settings.cl_playermodel = name.clone();
+                let _ = self.settings.save();
                 self.sim.client.command(Command::PlayerModel { name });
                 true
             }
             Some(derma::Action::ClosePlayerEditor) => {
                 self.player_editor = false;
+                true
+            }
+            Some(derma::Action::PlayerEditorTab(t)) => {
+                self.player_editor_tab = t;
+                true
+            }
+            Some(derma::Action::PlayerColor(weapon, c)) => {
+                let v = format!("{:.3} {:.3} {:.3}", c[0], c[1], c[2]);
+                if weapon {
+                    self.settings.cl_weaponcolor = v;
+                } else {
+                    self.settings.cl_playercolor = v;
+                }
+                let _ = self.settings.save();
+                self.send_prefs();
                 true
             }
             Some(_) => true,
@@ -3978,7 +4046,12 @@ impl App {
                     self.player_editor = true;
                 }
             }
-            Some(derma::Action::PlayerModel(_) | derma::Action::ClosePlayerEditor) => {}
+            Some(
+                derma::Action::PlayerModel(_)
+                | derma::Action::ClosePlayerEditor
+                | derma::Action::PlayerEditorTab(_)
+                | derma::Action::PlayerColor(..),
+            ) => {}
             Some(derma::Action::SpawnNpc(key)) => {
                 self.console.log(format!("gmod_spawnnpc {key}"));
                 self.sim.client.command(Command::SpawnNpc {
@@ -4748,6 +4821,10 @@ impl App {
         if paused {
             self.acc = 0.0;
             return;
+        }
+        if self.sim.client.player_id.is_some() && self.prefs_sent_for != self.sim.client.player_id {
+            self.prefs_sent_for = self.sim.client.player_id;
+            self.send_prefs();
         }
         if self.qm_ugc_dirty > 0 {
             self.qm_ugc_dirty -= 1;
@@ -5551,6 +5628,7 @@ impl App {
         } else {
             self.camera_fov()
         };
+        let weapon_color = self.local_weapon_color();
         let Some(g) = &mut self.gfx else { return };
         // light styles 1..=12 animate at 10 Hz from the engine's pattern strings (render.md
         // §9, gap-report #150); the rest are the server's values
@@ -6299,7 +6377,7 @@ impl App {
                 fwd,
             ));
             // `cl_weaponcolor` run through the game's clamping helper
-            let wc = gm_render::world::DEFAULT_WEAPON_COLOR.clamp(Vec3::ZERO, Vec3::ONE);
+            let wc = weapon_color.clamp(Vec3::ZERO, Vec3::ONE);
             let color = wc.to_array();
             // muzzle glow in both states (physg_glow1 / physg_glow2; the game's helper is not
             // in the dump, sizes are ours)
@@ -6356,7 +6434,7 @@ impl App {
             ));
         }
         for (start, fwd, end, holding) in beams {
-            let wc = gm_render::world::DEFAULT_WEAPON_COLOR.clamp(Vec3::ZERO, Vec3::ONE);
+            let wc = weapon_color.clamp(Vec3::ZERO, Vec3::ONE);
             let color = wc.to_array();
             {
                 let len = (end - start).length();
@@ -7578,6 +7656,7 @@ impl App {
         g.world.fog_override =
             edit_fog_of(&self.sim.client.world.classes, &self.sim.client.world.edits);
         // an edit_sky entity (env_skypaint's vars): a painted sky instead of the skybox
+        g.world.weapon_color = weapon_color;
         g.world.sky_paint = edit_sky_of(
             &self.sim.client.world.classes,
             &self.sim.client.world.edits,
@@ -8055,7 +8134,14 @@ impl App {
                 );
                 if self.player_editor {
                     let models = Self::player_model_list();
-                    derma::player_editor(&mut layout, &dctx, &models, &self.current_player_model());
+                    derma::player_editor(
+                        &mut layout,
+                        &dctx,
+                        &models,
+                        &self.current_player_model(),
+                        self.player_editor_tab,
+                        self.pref_colors(),
+                    );
                 }
                 let rect = derma::context_canvas(&mut layout, &dctx, &schema);
                 let sheet_vals = self
@@ -10397,6 +10483,8 @@ fn main() -> Result<()> {
         qm_saves: ugc::UgcState::new("saves", &lang),
         qm_ugc_dirty: 0,
         player_editor: false,
+        player_editor_tab: 0,
+        prefs_sent_for: None,
         lang,
         menu_cache: Default::default(),
         context_held: false,
