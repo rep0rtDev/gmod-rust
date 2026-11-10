@@ -1342,6 +1342,8 @@ struct App {
     context_held: bool,
     /// `+showscores` held (TAB): the sandbox scoreboard.
     scoreboard: bool,
+    /// When each remote player's last voice packet arrived (the voice panels).
+    voice_seen: HashMap<u32, Instant>,
     /// When the local player died (first dead snapshot) and the view angles at that moment:
     /// the death camera keeps them while it pulls back.
     death_at: Option<Instant>,
@@ -5626,6 +5628,10 @@ impl App {
                 })
                 .collect();
             let received = std::mem::take(&mut self.sim.client.voice);
+            let now = Instant::now();
+            for (pid, _, _) in &received {
+                self.voice_seen.insert(*pid, now);
+            }
             let packets = self.voice.update(
                 &mut self.sounds,
                 received,
@@ -7842,56 +7848,36 @@ impl App {
             return items;
         }
         if self.scoreboard && !self.console.open {
-            // sandbox scoreboard (`scoreboard.lua`): dark panel centred near the top,
-            // one row per player - name, kills, deaths
-            let lh = g.ui.line_height();
-            let players = &self.sim.client.world.players;
-            let bw = (w * 0.5).clamp(480.0, 900.0);
-            let x0 = ((w - bw) * 0.5).floor();
-            let y0 = (h * 0.08).floor();
-            let rows = players.len() as f32;
-            let bh = lh * (rows + 2.0) + 24.0;
-            let dim = [0.0, 0.0, 0.0, 0.6];
-            items.push(UiItem::Rect {
-                x: x0,
-                y: y0,
-                w: bw,
-                h: bh,
-                color: [0.0, 0.0, 0.0, 0.8],
-            });
-            items.push(UiItem::Rect {
-                x: x0,
-                y: y0,
-                w: bw,
-                h: lh + 10.0,
-                color: [0.0, 0.0, 0.0, 0.5],
-            });
-            let title = format!(
-                "{}  -  {} player{}",
-                self.map_name,
-                players.len(),
-                if players.len() == 1 { "" } else { "s" }
-            );
+            // base cl_scoreboard.lua: a 700 x (ScrH - 200) panel at (ScrW/2 - 350, 100) with
+            // no background, a 100 px header carrying the host name (ScoreboardDefaultTitle,
+            // centred, shadow 2), then PLAYER_LINE rows: 38 tall, margin 2/0/2/2, a
+            // draw.RoundedBox(4) in the line colour, 3 px padding, the 32 px avatar, the name
+            // (ScoreboardDefault, 93 93 93) 8 px further, and from the right the 32 px mute
+            // button and the 50 px Ping / Deaths / Kills columns
+            let bw = 700.0;
+            let x0 = (w * 0.5 - 350.0).floor();
+            let y0 = 100.0;
+            let title_fm = g.ui.font_metrics(Some("ScoreboardDefaultTitle"));
+            let fm = g.ui.font_metrics(Some("ScoreboardDefault"));
+            let hostname = "Garry's Mod";
+            let tw = title_fm.text_width(hostname);
+            let tx = (x0 + (bw - tw) * 0.5).floor();
+            let ty = (y0 + (40.0 - title_fm.line_height) * 0.5).floor();
             items.push(UiItem::Text {
-                font: None,
-                x: x0 + 12.0,
-                y: y0 + 5.0,
-                text: title,
+                font: Some("ScoreboardDefaultTitle".to_string()),
+                x: tx + 2.0,
+                y: ty + 2.0,
+                text: hostname.to_string(),
+                color: [0.0, 0.0, 0.0, 200.0 / 255.0],
+            });
+            items.push(UiItem::Text {
+                font: Some("ScoreboardDefaultTitle".to_string()),
+                x: tx,
+                y: ty,
+                text: hostname.to_string(),
                 color: white,
             });
-            let col_k = x0 + bw - 200.0;
-            let col_d = x0 + bw - 100.0;
-            let mut y = y0 + lh + 16.0;
-            for (label, x) in [("Name", x0 + 12.0), ("Kills", col_k), ("Deaths", col_d)] {
-                items.push(UiItem::Text {
-                    font: None,
-                    x,
-                    y,
-                    text: label.to_string(),
-                    color: [0.7, 0.7, 0.7, 1.0],
-                });
-            }
-            y += lh + 4.0;
+            let players = &self.sim.client.world.players;
             let mut sorted: Vec<_> = players.iter().collect();
             sorted.sort_by(|a, b| {
                 b.frags
@@ -7899,45 +7885,126 @@ impl App {
                     .then(a.deaths.cmp(&b.deaths))
                     .then(a.id.cmp(&b.id))
             });
-            for (i, p) in sorted.iter().enumerate() {
-                if i % 2 == 1 {
-                    items.push(UiItem::Rect {
-                        x: x0 + 4.0,
-                        y,
-                        w: bw - 8.0,
-                        h: lh,
-                        color: dim,
+            let grey = [93.0 / 255.0, 93.0 / 255.0, 93.0 / 255.0, 1.0];
+            let row_h = 38.0;
+            let mut y = y0 + 100.0;
+            let bottom = h - 100.0;
+            let centred = |text: &str, cx: f32, cy: f32| UiItem::Text {
+                font: Some("ScoreboardDefault".to_string()),
+                x: (cx - fm.text_width(text) * 0.5).floor(),
+                y: (cy - fm.line_height * 0.5).floor(),
+                text: text.to_string(),
+                color: grey,
+            };
+            for p in sorted {
+                if y + row_h > bottom {
+                    break;
+                }
+                let rx = x0 + 2.0;
+                let rw = bw - 4.0;
+                let line = if p.alive {
+                    [230.0 / 255.0, 230.0 / 255.0, 230.0 / 255.0, 1.0]
+                } else {
+                    [230.0 / 255.0, 200.0 / 255.0, 200.0 / 255.0, 1.0]
+                };
+                rounded_box(&mut items, 4.0, rx, y, rw, row_h, line);
+                items.push(UiItem::Image {
+                    x: rx + 3.0,
+                    y: y + 3.0,
+                    w: 32.0,
+                    h: 32.0,
+                    material: "vgui/avatar_default".to_string(),
+                    color: white,
+                    rot: 0,
+                });
+                let cy = y + row_h * 0.5;
+                items.push(UiItem::Text {
+                    font: Some("ScoreboardDefault".to_string()),
+                    x: rx + 3.0 + 32.0 + 8.0,
+                    y: (cy - fm.line_height * 0.5).floor(),
+                    text: p.name.clone(),
+                    color: grey,
+                });
+                let right = rx + rw - 3.0;
+                let me = Some(p.id) == self.sim.client.player_id;
+                if !me {
+                    items.push(UiItem::Image {
+                        x: right - 32.0,
+                        y: y + 3.0,
+                        w: 32.0,
+                        h: 32.0,
+                        material: "icon32/unmuted.png".to_string(),
+                        color: white,
+                        rot: 0,
                     });
                 }
-                let me = Some(p.id) == self.sim.client.player_id;
-                let c = if me { [1.0, 0.9, 0.5, 1.0] } else { white };
-                let name = if p.alive {
-                    p.name.clone()
-                } else {
-                    format!("{} (dead)", p.name)
-                };
+                // no ping is measured yet: the column stays blank
+                items.push(centred(&p.deaths.to_string(), right - 82.0 - 25.0, cy));
+                items.push(centred(&p.frags.to_string(), right - 132.0 - 25.0, cy));
+                y += row_h + 2.0;
+            }
+        }
+        if !self.console.open {
+            // base cl_voice.lua: g_VoicePanelList at (ScrW - 250 - 50, ScrH * 0.13), 250 x
+            // ScrH * 0.74, panels docked to its bottom - 250 x 40, margin 2, padding 4, a
+            // draw.RoundedBox(4) whose green is the voice volume, the 32 px avatar and the
+            // name (GModVoiceNotify) 8 px right of it; a panel stays while the player speaks
+            let now = Instant::now();
+            let fm = g.ui.font_metrics(Some("GModVoiceNotify"));
+            let mut talkers: Vec<(String, f32)> = Vec::new();
+            if self.voice.recording {
+                let me = self
+                    .sim
+                    .client
+                    .world
+                    .players
+                    .iter()
+                    .find(|p| Some(p.id) == self.sim.client.player_id)
+                    .map(|p| p.name.clone())
+                    .unwrap_or_else(|| "Player".to_string());
+                talkers.push((me, 1.0));
+            }
+            for p in &self.sim.client.world.players {
+                if Some(p.id) == self.sim.client.player_id {
+                    continue;
+                }
+                if let Some(t) = self.voice_seen.get(&p.id) {
+                    if now.duration_since(*t).as_secs_f32() < 0.5 {
+                        talkers.push((p.name.clone(), 1.0));
+                    }
+                }
+            }
+            let px = w - 250.0 - 50.0;
+            let mut py = (h * 0.13 + h * 0.74).floor() - 2.0 - 40.0;
+            for (name, volume) in talkers {
+                let bx = px + 2.0;
+                let bw = 250.0 - 4.0;
+                rounded_box(
+                    &mut items,
+                    4.0,
+                    bx,
+                    py,
+                    bw,
+                    40.0,
+                    [0.0, volume, 0.0, 240.0 / 255.0],
+                );
+                items.push(UiItem::Image {
+                    x: bx + 4.0,
+                    y: py + 4.0,
+                    w: 32.0,
+                    h: 32.0,
+                    material: "vgui/avatar_default".to_string(),
+                    color: white,
+                    rot: 0,
+                });
                 items.push(UiItem::Text {
-                    font: None,
-                    x: x0 + 12.0,
-                    y,
+                    font: Some("GModVoiceNotify".to_string()),
+                    x: bx + 4.0 + 32.0 + 8.0,
+                    y: (py + (40.0 - fm.line_height) * 0.5).floor(),
                     text: name,
-                    color: c,
+                    color: white,
                 });
-                items.push(UiItem::Text {
-                    font: None,
-                    x: col_k,
-                    y,
-                    text: p.frags.to_string(),
-                    color: c,
-                });
-                items.push(UiItem::Text {
-                    font: None,
-                    x: col_d,
-                    y,
-                    text: p.deaths.to_string(),
-                    color: c,
-                });
-                y += lh;
+                py -= 40.0 + 4.0;
             }
         }
         if !self.console.open {
@@ -9953,6 +10020,7 @@ fn main() -> Result<()> {
         menu_cache: Default::default(),
         context_held: false,
         scoreboard: false,
+        voice_seen: HashMap::new(),
         death_at: None,
         death_view: Vec3::ZERO,
         dmg_side: [None; 2],
@@ -12314,6 +12382,28 @@ fn register_ui_fonts(mount: &gm_content::Mount, ui: &mut UiRenderer, gpu: &Gpu, 
         if !ui.register_font(gpu, mount, name, "Verdana", px) {
             ui.register_font(gpu, mount, name, "Roboto-Bold", px);
         }
+    }
+    // base cl_scoreboard.lua / cl_voice.lua fonts: Helvetica 22 / 32 weight 800, Arial 21
+    for (name, family, fallback, px) in [
+        ("ScoreboardDefault", "Helvetica-Bold", "Roboto-Bold", 22.0),
+        (
+            "ScoreboardDefaultTitle",
+            "Helvetica-Bold",
+            "Roboto-Bold",
+            32.0,
+        ),
+        ("GModVoiceNotify", "Arial", "Roboto-Regular", 21.0),
+    ] {
+        if !ui.register_font(gpu, mount, name, family, px) {
+            ui.register_font(gpu, mount, name, fallback, px);
+        }
+    }
+    for img in [
+        "vgui/avatar_default",
+        "icon32/muted.png",
+        "icon32/unmuted.png",
+    ] {
+        ui.load_image(gpu, mount, img);
     }
     ui.load_image(gpu, mount, "weapons/swep");
     ui.load_image(gpu, mount, "gui/speech_lid");
