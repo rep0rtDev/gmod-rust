@@ -97,6 +97,71 @@ fn main() -> Result<()> {
     let (color, depth) =
         offscreen_targets(&gpu, width, height, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
     let t1 = std::time::Instant::now();
+    // GM_PROBE_MODEL=<path>: load a model like the client does and report its animation state
+    if let Some(path) = std::env::var_os("GM_PROBE_MODEL") {
+        let path = path.to_string_lossy().to_string();
+        if let Ok(bytes) = mount.read(&path) {
+            if let Ok(mdl) = gm_formats::mdl::Mdl::parse(&bytes) {
+                for t in 0..mdl.textures.len() {
+                    for mp in mdl.material_paths(t) {
+                        eprintln!("PROBE material {mp}: exists {}", mount.exists(&mp));
+                    }
+                }
+                for t in 0..mdl.textures.len() {
+                    for mp in mdl.material_paths(t) {
+                        if !mount.exists(&mp) {
+                            continue;
+                        }
+                        match gm_render::material::load_path(&mount, &mp, &mp) {
+                            Err(e) => eprintln!("PROBE material {mp}: load error {e}"),
+                            Ok(m) => {
+                                let tex = m.base_texture.clone();
+                                let r = tex.as_deref().map(|t| {
+                                    gm_render::material::load_texture(&mount, t, 512)
+                                        .map(|r| format!("{}x{}", r.width, r.height))
+                                        .map_err(|e| e.to_string())
+                                });
+                                eprintln!(
+                                    "PROBE material {mp}: shader {} base {tex:?} -> {r:?}",
+                                    m.shader
+                                );
+                            }
+                        }
+                    }
+                }
+                for inc in gm_formats::mdl::include_models(&bytes, &mdl.header) {
+                    let seqs = mount
+                        .read(&inc)
+                        .ok()
+                        .and_then(|b| gm_formats::mdl::Mdl::parse(&b).ok())
+                        .map(|m| m.bones.len());
+                    eprintln!(
+                        "PROBE include {inc}: exists {} sequences {seqs:?}",
+                        mount.exists(&inc)
+                    );
+                }
+            }
+        }
+        match world.load_model(&gpu, &mount, &path) {
+            None => eprintln!("PROBE {path}: load_model -> None"),
+            Some(m) => {
+                for seq in ["Idle1", "idle", "ragdoll", "Idle1_SMG1", "batonidle1"] {
+                    let len = m.sequence_length(seq);
+                    let bones = m.bone_world(seq, 0.0, None, &[]);
+                    let summary = bones.as_ref().map(|b| {
+                        let nan = b.iter().filter(|m| m.is_nan()).count();
+                        let t: Vec<[f32; 3]> = b
+                            .iter()
+                            .take(3)
+                            .map(|m| m.w_axis.truncate().to_array())
+                            .collect();
+                        format!("{} bones, {nan} nan, first {:?}", b.len(), t)
+                    });
+                    eprintln!("PROBE {path} seq {seq}: len {len:?} bones {summary:?}");
+                }
+            }
+        }
+    }
     world.draw(
         &gpu,
         &camera,

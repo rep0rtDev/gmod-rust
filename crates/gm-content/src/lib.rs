@@ -191,25 +191,38 @@ impl Mount {
         Ok(())
     }
 
-    pub fn exists(&self, path: &str) -> bool {
+    /// The provider holding `path` and the name it holds it under: the game's filesystem is
+    /// case-insensitive (models name `models/Combine_Soldier/`, `models/Police_animations.mdl`),
+    /// VPKs store lower-case names, so a miss is retried in lower case.
+    fn locate(&self, path: &str) -> Option<(usize, String)> {
         let p = vpk::normalize(path);
-        self.providers.iter().any(|pr| pr.has(&p))
+        if let Some(i) = self.providers.iter().position(|pr| pr.has(&p)) {
+            return Some((i, p));
+        }
+        let lower = p.to_ascii_lowercase();
+        if lower == p {
+            return None;
+        }
+        self.providers
+            .iter()
+            .position(|pr| pr.has(&lower))
+            .map(|i| (i, lower))
+    }
+
+    pub fn exists(&self, path: &str) -> bool {
+        self.locate(path).is_some()
     }
 
     /// Which provider (index into `providers`) serves this path.
     pub fn resolve(&self, path: &str) -> Option<usize> {
-        let p = vpk::normalize(path);
-        self.providers.iter().position(|pr| pr.has(&p))
+        self.locate(path).map(|(i, _)| i)
     }
 
     pub fn read(&self, path: &str) -> Result<Vec<u8>> {
-        let p = vpk::normalize(path);
-        for pr in &self.providers {
-            if pr.has(&p) {
-                return pr.read(&p);
-            }
+        match self.locate(path) {
+            Some((i, p)) => self.providers[i].read(&p),
+            None => Err(ContentError::NotFound(vpk::normalize(path))),
         }
-        Err(ContentError::NotFound(p))
     }
 
     pub fn read_string(&self, path: &str) -> Result<String> {

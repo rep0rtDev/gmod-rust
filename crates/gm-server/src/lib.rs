@@ -2260,6 +2260,14 @@ pub struct Npc {
     /// Downward speed (u/s) of a body still settling onto the floor after its spawn (the
     /// strider's thinks, the rollermine's ticks).
     pub fall_vel: f32,
+    /// Carried by a physgun: the brain and the fall stand still, `hold_targets` moves it.
+    pub held: bool,
+    /// Tick of the next idle vocalisation (`IdleSound`), 0 = not scheduled yet.
+    pub next_idle_vocal: u64,
+    /// `AlertSound` played for the current enemy.
+    pub vocal_alerted: bool,
+    /// A melee swing started this think: `AttackSound` on the next vocal pass.
+    pub attack_vocal: bool,
     /// The remover's `timer.Simple(1)`: the tick the entity goes after the click made it `MOVETYPE_NONE`.
     pub remove_at: Option<u64>,
     /// Ground speed along a navigation path, u/s.
@@ -13032,6 +13040,9 @@ impl<'w> Server<'w> {
     /// Where the physgun beam ends on the held object: the grab point in world space.
     pub fn held_point(&self, id: u32) -> Option<Vec3> {
         let (ent, g) = self.players.get(&id)?.held.as_ref()?;
+        if let Some(n) = self.npcs.get(ent).filter(|n| n.held) {
+            return Some(n.pos - Quat::from_rotation_z(n.angles.y.to_radians()) * g.offset);
+        }
         let b = self.part_body(*ent, g.bone)?;
         let st = self.physics.state(b);
         Some(st.position - st.rotation * g.offset)
@@ -15309,6 +15320,10 @@ impl<'w> Server<'w> {
         Npc {
             child_of: None,
             fall_vel: 0.0,
+            held: false,
+            next_idle_vocal: 0,
+            vocal_alerted: false,
+            attack_vocal: false,
             special: Default::default(),
             key: def.key.to_string(),
             class: def.class.to_string(),
@@ -15495,10 +15510,12 @@ impl<'w> Server<'w> {
         } else {
             def.model.to_string()
         };
-        let armed = weapon != "none"
-            && !weapon.is_empty()
-            && (NPC_USABLE_WEAPONS.contains(&weapon) || def.weapon == weapon);
-        let weapon = if armed {
+        // the spawnmenu's "Default weapon" sends an empty weapon: the NPC table's own; "none"
+        // spawns it unarmed; anything else must be a weapon NPCs can hold
+        let weapon = if weapon.is_empty() {
+            def.weapon.to_string()
+        } else if weapon != "none" && (NPC_USABLE_WEAPONS.contains(&weapon) || def.weapon == weapon)
+        {
             weapon.to_string()
         } else {
             String::new()
@@ -15688,13 +15705,61 @@ impl<'w> Server<'w> {
                 npc: id,
                 attacker,
                 key,
-                class,
+                class: class.clone(),
             });
             if !dropped.is_empty() {
                 self.drop_npc_weapon(attacker, &dropped, pos, yaw, crouched);
             }
+            if let Some(snd) = npc_vocal(&class, Vocal::Die, tick) {
+                self.emit_sound(id, snd, 1.0);
+            }
+        } else {
+            let class = n.class.clone();
+            if let Some(snd) = npc_vocal(&class, Vocal::Pain, tick) {
+                self.emit_sound(id, snd, 1.0);
+            }
         }
         true
+    }
+
+    /// The NPCs' voices (`IdleSound` / `AlertSound` / `AttackSound` of the HL2 classes): the
+    /// alert once per acquired enemy, the attack cry with a melee swing, idle moans at random
+    /// 5..15 s while nothing is fought.
+    fn tick_npc_vocals(&mut self) {
+        let now = self.tick_count;
+        let ids: Vec<u32> = self.npcs.keys().copied().collect();
+        for id in ids {
+            let Some(n) = self.npcs.get_mut(&id) else {
+                continue;
+            };
+            if n.dead_at.is_some() || n.held {
+                continue;
+            }
+            let class = n.class.clone();
+            let mut snd = None;
+            if n.attack_vocal {
+                n.attack_vocal = false;
+                snd = npc_vocal(&class, Vocal::Attack, now + u64::from(id));
+            } else if n.target.is_some() {
+                if !n.vocal_alerted {
+                    n.vocal_alerted = true;
+                    snd = npc_vocal(&class, Vocal::Alert, now + u64::from(id));
+                }
+                n.next_idle_vocal = 0;
+            } else {
+                n.vocal_alerted = false;
+                if n.next_idle_vocal == 0 {
+                    n.next_idle_vocal =
+                        now + (66.0 * (5.0 + 10.0 * tick_rand(now, u64::from(id), 7))) as u64;
+                } else if now >= n.next_idle_vocal {
+                    n.next_idle_vocal = 0;
+                    snd = npc_vocal(&class, Vocal::Idle, now + u64::from(id));
+                }
+            }
+            if let Some(snd) = snd {
+                self.emit_sound(id, snd, 1.0);
+            }
+        }
     }
 
     /// Measured `server_npc_drop`: on the death tick the NPC's weapon becomes an ownerless
@@ -17162,6 +17227,11 @@ impl<'w> Server<'w> {
                 continue;
             };
             if now < n.next_think {
+                continue;
+            }
+            // carried by a physgun: the body goes where the beam puts it, the brain waits
+            if n.held {
+                n.next_think = now + 1;
                 continue;
             }
             // the antlion guard winding up, running or braking its charge is driven by tick_guard
@@ -19468,6 +19538,7 @@ impl<'w> Server<'w> {
             n.melee_hit_at = Some(now + m.hit_tick);
             n.melee_hits_left = m.hits;
             n.melee_swing = Some(m);
+            n.attack_vocal = true;
             if n.class == "npc_hunter" && m.hits > 1 {
                 n.ranged_after = now + m.swing_ticks + NPC_HUNTER_PROWL_AFTER_VOLLEY;
             }
@@ -21365,6 +21436,10 @@ impl<'w> Server<'w> {
             Npc {
                 child_of: None,
                 fall_vel: 0.0,
+                held: false,
+                next_idle_vocal: 0,
+                vocal_alerted: false,
+                attack_vocal: false,
                 special: Default::default(),
                 key: def.key.to_string(),
                 class: n.class.clone(),
@@ -23250,6 +23325,21 @@ impl<'w> Server<'w> {
                             }
                             (ent, g)
                         })
+                        .or_else(|| {
+                            // an NPC has no vphysics body of its own: the physgun carries it
+                            // by its origin, the brain and the fall wait until it is dropped
+                            let n = self
+                                .npcs
+                                .get_mut(&ent)
+                                .filter(|n| allowed && n.dead_at.is_none())?;
+                            let rot = Quat::from_rotation_z(n.angles.y.to_radians());
+                            let mut g = Grab::new(eye, forward, h.pos, n.pos, rot, view.y);
+                            g.bone = h.bone;
+                            n.held = true;
+                            n.goal = None;
+                            n.next_goal = None;
+                            Some((ent, g))
+                        })
                     }
                     _ => None,
                 }
@@ -23261,6 +23351,10 @@ impl<'w> Server<'w> {
                         self.physics.set_mass(b, g.saved_mass);
                     }
                 }
+                if let Some(n) = self.npcs.get_mut(&ent) {
+                    n.held = false;
+                    n.fall_vel = 0.0;
+                }
                 self.game_events
                     .push(GameEvent::PhysgunDrop { player, ent });
                 None
@@ -23271,6 +23365,10 @@ impl<'w> Server<'w> {
                     if g.saved_mass > 0.0 {
                         self.physics.set_mass(b, g.saved_mass);
                     }
+                }
+                if let Some(n) = self.npcs.get_mut(&ent) {
+                    n.held = false;
+                    n.fall_vel = 0.0;
                 }
                 // sandbox `OnPhysgunFreeze`: only the held physics object stops; the ragdoll
                 // entity counts as frozen once every part is
@@ -23339,6 +23437,11 @@ impl<'w> Server<'w> {
                     // the target itself is set in `hold_targets` after this tick's move
                     let _ = b;
                     Some((ent, g))
+                } else if self.npcs.get(&ent).is_some_and(|n| n.held) {
+                    if pc.wheel != 0.0 {
+                        g.distance = (g.distance + pc.wheel * 10.0).clamp(40.0, 4096.0);
+                    }
+                    Some((ent, g))
                 } else {
                     None
                 }
@@ -23391,6 +23494,12 @@ impl<'w> Server<'w> {
                     params.time_to_arrive = 0.1;
                 }
                 self.physics.hold(b, tp, tr, &params);
+            } else if let Some(n) = self.npcs.get_mut(&ent).filter(|n| n.held) {
+                let rot = Quat::from_rotation_z(n.angles.y.to_radians());
+                let (tp, tr) = g.target(eye, forward, view.y, rot);
+                n.pos = tp;
+                n.angles.y = tr.to_euler(glam::EulerRot::ZYX).0.to_degrees();
+                n.fall_vel = 0.0;
             }
             if let Some(p) = self.players.get_mut(&id) {
                 p.held = Some((ent, g));
@@ -24104,6 +24213,7 @@ impl<'w> Server<'w> {
         self.weapon_pickups();
         self.settle_npcs();
         self.tick_npc_regen();
+        self.tick_npc_vocals();
         self.tick_npc_move();
         let bodied: Vec<(u32, u32)> = self
             .npcs
@@ -27473,4 +27583,71 @@ mod ai_node_hint_tests {
             self
         }
     }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum Vocal {
+    Idle,
+    Alert,
+    Pain,
+    Die,
+    Attack,
+}
+
+/// The soundscript the HL2 NPC classes vocalise with (`npc_sounds_*.txt`); `salt` picks among
+/// the citizen's numbered lines. Combine soldiers and the talkers speak sentences / response
+/// rules, which are not voiced yet.
+pub fn npc_vocal(class: &str, kind: Vocal, salt: u64) -> Option<String> {
+    use Vocal::*;
+    let zombie = matches!(class, "npc_zombie" | "npc_zombie_torso" | "npc_zombine");
+    let fast = matches!(class, "npc_fastzombie" | "npc_fastzombie_torso");
+    let crab = matches!(
+        class,
+        "npc_headcrab" | "npc_headcrab_fast" | "npc_headcrab_black" | "npc_headcrab_poison"
+    );
+    let s = match kind {
+        _ if zombie => match kind {
+            Idle => "Zombie.Idle",
+            Alert => "Zombie.Alert",
+            Pain => "Zombie.Pain",
+            Die => "Zombie.Die",
+            Attack => "Zombie.Attack",
+        },
+        _ if fast => match kind {
+            Idle => "NPC_FastZombie.Idle",
+            Alert => "NPC_FastZombie.AlertNear",
+            Pain => "NPC_FastZombie.Pain",
+            Die => "NPC_FastZombie.Die",
+            Attack => "NPC_FastZombie.Attack",
+        },
+        _ if class == "npc_poisonzombie" => match kind {
+            Idle => "NPC_PoisonZombie.Idle",
+            Alert => "NPC_PoisonZombie.Alert",
+            Pain => "NPC_PoisonZombie.Pain",
+            Die => "NPC_PoisonZombie.Die",
+            Attack => "NPC_PoisonZombie.Attack",
+        },
+        _ if crab => match kind {
+            Idle => "NPC_HeadCrab.Idle",
+            Alert => "NPC_HeadCrab.Alert",
+            Pain => "NPC_HeadCrab.Pain",
+            Die => "NPC_HeadCrab.Die",
+            Attack => "NPC_Headcrab.Attack",
+        },
+        _ if class == "npc_antlion" => match kind {
+            Idle => "NPC_Antlion.Idle",
+            Alert => "NPC_Antlion.Distracted",
+            Pain | Die => "NPC_Antlion.Pain",
+            Attack => "NPC_Antlion.MeleeAttackSingle",
+        },
+        Alert if class == "npc_metropolice" => "NPC_MetroPolice.Alert",
+        Pain if class == "npc_metropolice" => "NPC_MetroPolice.Pain",
+        Die if class == "npc_metropolice" => "NPC_MetroPolice.Die",
+        Pain if class == "npc_citizen" => {
+            return Some(format!("npc_citizen.pain{:02}", 1 + salt % 9));
+        }
+        Die if class == "npc_citizen" => "npc_citizen.die",
+        _ => return None,
+    };
+    Some(s.to_string())
 }

@@ -462,7 +462,7 @@ pub struct MenuState {
     pub search: String,
     pub search_focus: bool,
     /// Selected category of the Weapons / Entities tabs.
-    pub content_node: [usize; 2],
+    pub content_node: [usize; 5],
     pub tool_tab: usize,
     /// Selected tree node: an index into the spawnlists.
     pub node: usize,
@@ -500,6 +500,10 @@ pub enum Action {
     SpawnNpc(String),
     /// `gmod_spawnvehicle <key>` of a Vehicles tab icon.
     SpawnVehicle(String),
+    /// The checkbox / icon of a Post Process tab entry: toggles its `pp_*` convar.
+    TogglePostProcess(String),
+    /// A `DesktopWindows` icon of the context menu.
+    DesktopWindow(&'static str),
     Category(usize),
     Tool(&'static str),
     /// A `properties.Add` entry of the right-click menu, by its name.
@@ -560,11 +564,13 @@ pub struct Ctx<'a> {
     pub bold: &'a FontMetrics,
     pub lists: &'a [SpawnList],
     /// Weapons and Entities tab categories.
-    pub content: [&'a [ContentList]; 4],
+    pub content: [&'a [ContentList]; 5],
     /// Results of the current search (`MenuState::search`), shown instead of the node.
     pub results: &'a SearchResults,
     pub tool: &'a str,
     pub has_image: &'a dyn Fn(&str) -> bool,
+    /// Whether a Post Process entry's `pp_*` convar is on (its checkbox).
+    pub pp_on: &'a dyn Fn(&str) -> bool,
 }
 
 /// `SpawnMenu`: margins `clamp((ScrW-1024)*spawnmenu_border, 25, 256)`, a DHorizontalDivider with
@@ -594,7 +600,7 @@ pub fn build(ctx: &Ctx, st: &MenuState) -> Layout {
     );
     if st.creation_tab == 0 {
         spawnlists(&mut out, ctx, st, cx, cy, cw, ch);
-    } else if (1..=4).contains(&st.creation_tab) {
+    } else if (1..=5).contains(&st.creation_tab) {
         content(&mut out, ctx, st, st.creation_tab - 1, cx, cy, cw, ch);
     }
     let (tx, ty, tw, th) = sheet(
@@ -1050,11 +1056,11 @@ fn content(
     const DIV: f32 = 6.0;
     const NODE_H: f32 = 17.0;
     const ICON: f32 = 128.0;
-    let lists = ctx.content[tab.min(3)];
+    let lists = ctx.content[tab.min(4)];
     search_box(out, ctx, st, x, y, TREE_W);
     let (ty, th) = (y + 24.0, h - 24.0);
     nine(&mut out.items, &TREE, x, ty, TREE_W, th, WHITE);
-    let node = st.content_node[tab.min(1)];
+    let node = st.content_node[tab.min(4)];
     let mut ny = ty + 1.0;
     for (i, l) in lists.iter().enumerate() {
         if ny + NODE_H > ty + th {
@@ -1176,7 +1182,11 @@ fn content(
             break;
         }
         let hovered = inside(ctx.cursor, ix, iy, ICON, ICON);
-        let img = format!("entities/{class}.png");
+        let img = if tab == 4 {
+            post_process_icon(class).to_string()
+        } else {
+            format!("entities/{class}.png")
+        };
         if (ctx.has_image)(&img) {
             image(
                 &mut out.items,
@@ -1204,6 +1214,23 @@ fn content(
         if (ctx.has_image)(overlay) {
             image(&mut out.items, overlay, ix, iy, ICON, ICON);
         }
+        // PostProcessIcon: a 20x20 DCheckBox on the convar at (w - 20 - 8, 8)
+        if tab == 4 && post_process_has_convar(class) {
+            let p = if (ctx.pp_on)(class) {
+                CHECKBOX_CHECKED
+            } else {
+                CHECKBOX
+            };
+            nine(
+                &mut out.items,
+                &p,
+                ix + ICON - 28.0,
+                iy + 8.0,
+                20.0,
+                20.0,
+                WHITE,
+            );
+        }
         let tw = ctx.font.text_width(name);
         let tx = ix + (ICON - tw) * 0.5;
         let tyy = iy + ICON - line_h - 9.0;
@@ -1227,7 +1254,8 @@ fn content(
                 0 => Action::GiveWeapon(class.clone()),
                 1 => Action::SpawnSent(class.clone()),
                 2 => Action::SpawnNpc(class.clone()),
-                _ => Action::SpawnVehicle(class.clone()),
+                3 => Action::SpawnVehicle(class.clone()),
+                _ => Action::TogglePostProcess(class.clone()),
             },
         });
     }
@@ -2643,6 +2671,295 @@ pub fn main_menu(
             "html/img/disconnect.png",
             "disconnect",
         );
+    }
+}
+
+/// `list.Get("PostProcess")` of the base game (lua/postprocess/*.lua) as the Post Process tab
+/// shows it: key, `#phrase`, icon, `#category`, and whether a `pp_*` convar toggles it (the
+/// Overlay / Texturize entries are one icon per `OverlayMaterials` / `TexturizeMaterials` row).
+pub const POST_PROCESS: &[(&str, &str, &str, &str, bool)] = &[
+    (
+        "bloom",
+        "#bloom_pp",
+        "gui/postprocess/bloom.png",
+        "#shaders_pp",
+        true,
+    ),
+    (
+        "colormod",
+        "#colormod_pp",
+        "gui/postprocess/colourmod.png",
+        "#shaders_pp",
+        true,
+    ),
+    (
+        "sharpen",
+        "#sharpen_pp",
+        "gui/postprocess/sharpen.png",
+        "#shaders_pp",
+        true,
+    ),
+    (
+        "sobel",
+        "#sobel_pp",
+        "gui/postprocess/sobel.png",
+        "#shaders_pp",
+        true,
+    ),
+    (
+        "sunbeams",
+        "#sunbeams_pp",
+        "gui/postprocess/sunrays.png",
+        "#shaders_pp",
+        true,
+    ),
+    (
+        "toytown",
+        "#toytown_pp",
+        "gui/postprocess/toytown.png",
+        "#shaders_pp",
+        true,
+    ),
+    (
+        "dof",
+        "#dof_pp",
+        "gui/postprocess/dof.png",
+        "#effects_pp",
+        true,
+    ),
+    (
+        "fb",
+        "#frame_blend_pp",
+        "gui/postprocess/frame_blend.png",
+        "#effects_pp",
+        true,
+    ),
+    (
+        "motionblur",
+        "#motion_blur_pp",
+        "gui/postprocess/accummotionblur.png",
+        "#effects_pp",
+        true,
+    ),
+    (
+        "stereoscopy",
+        "#stereoscopy_pp",
+        "gui/postprocess/stereoscopy.png",
+        "#effects_pp",
+        true,
+    ),
+    (
+        "superdof",
+        "#superdof_pp",
+        "gui/postprocess/superdof.png",
+        "#effects_pp",
+        false,
+    ),
+    (
+        "overlay:effects/combine_binocoverlay",
+        "#overlay_pp.binocoverlay",
+        "effects/combine_binocoverlay",
+        "#overlay_pp",
+        false,
+    ),
+    (
+        "overlay:models/shadertest/shader3",
+        "#overlay_pp.waterfall",
+        "models/shadertest/shader3",
+        "#overlay_pp",
+        false,
+    ),
+    (
+        "overlay:models/shadertest/shader4",
+        "#overlay_pp.jelly",
+        "models/shadertest/shader4",
+        "#overlay_pp",
+        false,
+    ),
+    (
+        "overlay:models/shadertest/shader5",
+        "#overlay_pp.stainedglass",
+        "models/shadertest/shader5",
+        "#overlay_pp",
+        false,
+    ),
+    (
+        "overlay:models/props_combine/stasisshield_sheet",
+        "#overlay_pp.statis",
+        "models/props_combine/stasisshield_sheet",
+        "#overlay_pp",
+        false,
+    ),
+    (
+        "overlay:models/props_combine/com_shield001a",
+        "#overlay_pp.shield",
+        "models/props_combine/com_shield001a",
+        "#overlay_pp",
+        false,
+    ),
+    (
+        "overlay:models/props_c17/frostedglass_01a",
+        "#overlay_pp.froested",
+        "models/props_c17/frostedglass_01a",
+        "#overlay_pp",
+        false,
+    ),
+    (
+        "overlay:models/props_lab/tank_glass001",
+        "#overlay_pp.tankglass",
+        "models/props_lab/tank_glass001",
+        "#overlay_pp",
+        false,
+    ),
+    (
+        "overlay:models/props_combine/tprings_globe",
+        "#overlay_pp.waves",
+        "models/props_combine/tprings_globe",
+        "#overlay_pp",
+        false,
+    ),
+    (
+        "overlay:models/props_c17/fisheyelens",
+        "#overlay_pp.fisheye",
+        "models/props_c17/fisheyelens",
+        "#overlay_pp",
+        false,
+    ),
+    (
+        "overlay:models/overlay_rendertarget",
+        "#overlay_pp.rendertarget",
+        "models/overlay_rendertarget",
+        "#overlay_pp",
+        false,
+    ),
+    (
+        "overlay:effects/strider_pinch_dudv",
+        "#overlay_pp.strider_pinch_dudv",
+        "effects/strider_pinch_dudv",
+        "#overlay_pp",
+        false,
+    ),
+    (
+        "overlay:effects/tp_eyefx/tpeye",
+        "#overlay_pp.teleport",
+        "effects/tp_eyefx/tpeye",
+        "#overlay_pp",
+        false,
+    ),
+    (
+        "overlay:effects/tp_eyefx/tpeye2",
+        "#overlay_pp.teleport2",
+        "effects/tp_eyefx/tpeye2",
+        "#overlay_pp",
+        false,
+    ),
+    (
+        "overlay:effects/tp_eyefx/tpeye3",
+        "#overlay_pp.teleport3",
+        "effects/tp_eyefx/tpeye3",
+        "#overlay_pp",
+        false,
+    ),
+    (
+        "overlay:effects/tvscreen_noise002a",
+        "#overlay_pp.tvnoise",
+        "effects/tvscreen_noise002a",
+        "#overlay_pp",
+        false,
+    ),
+    (
+        "overlay:effects/water_warp01",
+        "#overlay_pp.water_warp01",
+        "effects/water_warp01",
+        "#overlay_pp",
+        false,
+    ),
+    (
+        "texturize:pp/texturize/plain.png",
+        "#texturize_pp.plain",
+        "pp/texturize/plain.png",
+        "#texturize_pp",
+        false,
+    ),
+    (
+        "texturize:pp/texturize/pattern1.png",
+        "#texturize_pp.pattern1",
+        "pp/texturize/pattern1.png",
+        "#texturize_pp",
+        false,
+    ),
+    (
+        "texturize:pp/texturize/rainbow.png",
+        "#texturize_pp.rainbow",
+        "pp/texturize/rainbow.png",
+        "#texturize_pp",
+        false,
+    ),
+    (
+        "texturize:pp/texturize/lines.png",
+        "#texturize_pp.lines",
+        "pp/texturize/lines.png",
+        "#texturize_pp",
+        false,
+    ),
+    (
+        "texturize:pp/texturize/pinko.png",
+        "#texturize_pp.pinko",
+        "pp/texturize/pinko.png",
+        "#texturize_pp",
+        false,
+    ),
+    (
+        "texturize:pp/texturize/squaredo.png",
+        "#texturize_pp.squaredo",
+        "pp/texturize/squaredo.png",
+        "#texturize_pp",
+        false,
+    ),
+];
+
+pub fn post_process_icon(key: &str) -> &'static str {
+    POST_PROCESS
+        .iter()
+        .find(|r| r.0 == key)
+        .map_or("gui/noicon.png", |r| r.2)
+}
+
+pub fn post_process_has_convar(key: &str) -> bool {
+    POST_PROCESS.iter().any(|r| r.0 == key && r.4)
+}
+
+/// `ContextMenu`'s `DesktopWindows` DIconLayout (border 8, spacing 8): an 80x82 button per
+/// entry, its 64x64 icon docked top with 8 px side margins, the title below in white with a
+/// shadow.
+pub fn desktop_icons(out: &mut Layout, ctx: &Ctx, icons: &[(&'static str, &str, &str)]) {
+    let (mut x, y) = (8.0, 8.0);
+    for (id, icon, title) in icons {
+        if (ctx.has_image)(icon) {
+            image(&mut out.items, icon, x + 8.0, y, 64.0, 64.0);
+        }
+        let tw = ctx.font.text_width(title);
+        let tx = x + (80.0 - tw) * 0.5;
+        let ly = y + 64.0;
+        text(
+            &mut out.items,
+            FONT,
+            ctx.font,
+            tx + 1.0,
+            ly + 1.0,
+            18.0,
+            title,
+            [0.0, 0.0, 0.0, 200.0 / 255.0],
+        );
+        text(&mut out.items, FONT, ctx.font, tx, ly, 18.0, title, WHITE);
+        out.hits.push(Hit {
+            x,
+            y,
+            w: 80.0,
+            h: 82.0,
+            action: Action::DesktopWindow(id),
+        });
+        x += 80.0 + 8.0;
     }
 }
 

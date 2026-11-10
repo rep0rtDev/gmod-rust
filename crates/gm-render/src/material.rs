@@ -217,8 +217,25 @@ pub fn load_path(mount: &Mount, name: &str, vmt_path: &str) -> Result<Material> 
         let Value::Block(params) = &root.value else {
             return Err(anyhow!("{path}: shader is not a block"));
         };
+        // DX-level conditional blocks (`">=dx90_20b" { "$baseTexture" ... }`): the engine
+        // takes the block matching its shader level, ours is always the top one, so the
+        // `>=dx90*` entries override the plain ones and the `<dx90` fallbacks are ignored
+        // (combinesoldiersheet.vmt keeps its only $basetexture in such a block)
+        let flat: Vec<&keyvalues::Node> = params
+            .iter()
+            .filter(|n| {
+                let k = n.key.to_ascii_lowercase();
+                k.starts_with(">=dx9") || k.starts_with(">=dx8") || k == "dx9" || k == "dx90"
+            })
+            .filter_map(|n| match &n.value {
+                Value::Block(b) => Some(b.iter()),
+                _ => None,
+            })
+            .flatten()
+            .chain(params.iter())
+            .collect();
         let get = |k: &str| -> Option<String> {
-            params.iter().find_map(|n| {
+            flat.iter().find_map(|n| {
                 if !n.key.eq_ignore_ascii_case(k) {
                     return None;
                 }

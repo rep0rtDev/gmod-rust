@@ -1184,7 +1184,13 @@ impl AnimSource {
         let includes = gm_formats::mdl::include_models(&bytes, &mdl.header);
         let mut out = vec![AnimSource::new(mount, bytes, mdl, &mdl.bones)];
         out.extend(includes.into_iter().filter_map(|inc| {
-            let b = mount.read(&inc).ok()?;
+            // the game's filesystem is case-insensitive: police.mdl names
+            // `models/Police_animations.mdl`
+            let b = mount
+                .read(&inc)
+                .or_else(|_| mount.read(&inc.to_ascii_lowercase()))
+                .map_err(|e| eprintln!("model include {inc}: {e}"))
+                .ok()?;
             let m = gm_formats::mdl::Mdl::parse(&b).ok()?;
             Some(AnimSource::new(mount, b, &m, &mdl.bones))
         }));
@@ -4537,7 +4543,9 @@ impl WorldRenderer {
         body: &str,
     ) -> Option<DynModel> {
         let (mdl, vvd, vtx, lod_index) =
-            crate::props::load_model(mount, path, self.quality.root_lod as usize).ok()?;
+            crate::props::load_model(mount, path, self.quality.root_lod as usize)
+                .map_err(|e| eprintln!("model {path}: {e}"))
+                .ok()?;
         let skin_table = mdl.skins.get(skin as usize).or_else(|| mdl.skins.first());
         let body_choice = |bi: usize, n: usize| body_group_choice(body, bi, n);
         let mut materials: crate::props::MaterialMap = HashMap::new();

@@ -1363,7 +1363,9 @@ struct App {
     pending_input: Vec<(String, bool)>,
     spawn_lists_seen: usize,
     /// Weapons / Entities tab categories built from the server's content lists.
-    content: [Vec<derma::ContentList>; 4],
+    content: [Vec<derma::ContentList>; 5],
+    /// Post Process entries whose `pp_*` convar is on (the tab's checkboxes).
+    pp_enabled: std::collections::BTreeSet<String>,
     content_seen: usize,
     content_lang: Option<std::collections::BTreeMap<String, String>>,
     /// Spawn menu search: every mounted model (lazily listed) and the current results.
@@ -1894,10 +1896,14 @@ impl App {
                 "gui/ContentIcon-normal.png",
                 "gui/ContentIcon-hovered.png",
                 "gui/noicon.png",
-            ] {
+                "icon64/playermodel.png",
+            ]
+            .into_iter()
+            .chain(derma::POST_PROCESS.iter().map(|r| r.2))
+            {
                 g.ui.load_image(&g.gpu, &self.mount, name);
             }
-            for l in self.content.iter().flatten() {
+            for l in self.content[..4].iter().flatten() {
                 g.ui.load_image(&g.gpu, &self.mount, &l.icon);
                 for (class, _) in &l.items {
                     g.ui.load_image(&g.gpu, &self.mount, &format!("entities/{class}.png"));
@@ -1932,10 +1938,12 @@ impl App {
                 &self.mount,
                 "resource/localization/en/spawnmenu.properties",
             ));
-            m.extend(derma::load_properties(
-                &self.mount,
-                "resource/localization/en/tool.properties",
-            ));
+            for f in ["tool", "postprocessing", "context"] {
+                m.extend(derma::load_properties(
+                    &self.mount,
+                    &format!("resource/localization/en/{f}.properties"),
+                ));
+            }
             m
         });
         let localize = |s: &str| -> String {
@@ -2007,6 +2015,24 @@ impl App {
             }),
             build(&world.content_npcs, "icon16/monkey.png", &|_| ""),
             build(&world.content_vehicles, "icon16/car.png", &|_| ""),
+            {
+                let mut lists: Vec<derma::ContentList> = Vec::new();
+                for (key, name, _, cat, _) in derma::POST_PROCESS {
+                    let category = localize(cat);
+                    let item = (key.to_string(), localize(name));
+                    match lists.iter_mut().find(|l| l.category == category) {
+                        Some(l) => l.items.push(item),
+                        None => lists.push(derma::ContentList {
+                            category,
+                            icon: "icon16/picture.png".to_string(),
+                            items: vec![item],
+                            headers: Vec::new(),
+                        }),
+                    }
+                }
+                lists.sort_by(|a, b| a.category.cmp(&b.category));
+                lists
+            },
         ];
     }
 
@@ -2566,6 +2592,8 @@ impl App {
         let opt = g.ui.font_metrics(Some(opt_font));
         let nav = g.ui.font_metrics(Some(derma::NAV_FONT));
         let has_image = |name: &str| g.ui.has_image(name);
+        let pp_set = self.pp_enabled.clone();
+        let pp_on = |k: &str| pp_set.contains(k);
         let ctx = derma::Ctx {
             w,
             h,
@@ -2579,10 +2607,12 @@ impl App {
                 &self.content[1],
                 &self.content[2],
                 &self.content[3],
+                &self.content[4],
             ],
             results: &self.search_results,
             tool: &self.tool,
             has_image: &has_image,
+            pp_on: &pp_on,
         };
         let mut layout = derma::Layout::default();
         if !self.started {
@@ -3074,6 +3104,8 @@ impl App {
         let sbold = g.ui.font_metrics(Some(options::FONT_BOLD));
         let large = g.ui.font_metrics(Some(options::FONT_LARGE));
         let has_image = |name: &str| g.ui.has_image(name);
+        let pp_set = self.pp_enabled.clone();
+        let pp_on = |k: &str| pp_set.contains(k);
         let ctx = derma::Ctx {
             w,
             h,
@@ -3087,10 +3119,12 @@ impl App {
                 &self.content[1],
                 &self.content[2],
                 &self.content[3],
+                &self.content[4],
             ],
             results: &self.search_results,
             tool: &self.tool,
             has_image: &has_image,
+            pp_on: &pp_on,
         };
         let fonts = options::Fonts {
             default: &default,
@@ -3331,6 +3365,8 @@ impl App {
         let bold = g.ui.font_metrics(Some(derma::FONT_BOLD));
         let header = g.ui.font_metrics(Some(derma::HEADER_FONT));
         let has_image = |name: &str| g.ui.has_image(name);
+        let pp_set = self.pp_enabled.clone();
+        let pp_on = |k: &str| pp_set.contains(k);
         let ctx = derma::Ctx {
             w,
             h,
@@ -3344,10 +3380,12 @@ impl App {
                 &self.content[1],
                 &self.content[2],
                 &self.content[3],
+                &self.content[4],
             ],
             results: &self.search_results,
             tool: &self.tool,
             has_image: &has_image,
+            pp_on: &pp_on,
         };
         derma::build(&ctx, &menu.st).hit(self.cursor).cloned()
     }
@@ -3438,6 +3476,8 @@ impl App {
         let bold = g.ui.font_metrics(Some(derma::FONT_BOLD));
         let header = g.ui.font_metrics(Some(derma::HEADER_FONT));
         let has_image = |name: &str| g.ui.has_image(name);
+        let pp_set = self.pp_enabled.clone();
+        let pp_on = |k: &str| pp_set.contains(k);
         let ctx = derma::Ctx {
             w,
             h,
@@ -3451,10 +3491,12 @@ impl App {
                 &self.content[1],
                 &self.content[2],
                 &self.content[3],
+                &self.content[4],
             ],
             results: &self.search_results,
             tool: &self.tool,
             has_image: &has_image,
+            pp_on: &pp_on,
         };
         let action = derma::build(&ctx, &menu.st).hit(self.cursor).cloned();
         menu.st.ctx_menu = None;
@@ -3492,6 +3534,8 @@ impl App {
         let bold = g.ui.font_metrics(Some(derma::FONT_BOLD));
         let header = g.ui.font_metrics(Some(derma::HEADER_FONT));
         let has_image = |name: &str| g.ui.has_image(name);
+        let pp_set = self.pp_enabled.clone();
+        let pp_on = |k: &str| pp_set.contains(k);
         let ctx = derma::Ctx {
             w,
             h,
@@ -3505,10 +3549,12 @@ impl App {
                 &self.content[1],
                 &self.content[2],
                 &self.content[3],
+                &self.content[4],
             ],
             results: &self.search_results,
             tool: &self.tool,
             has_image: &has_image,
+            pp_on: &pp_on,
         };
         let action = derma::build(&ctx, &menu.st).hit(self.cursor).cloned();
         if let Some((_, i)) = menu.st.list_menu.take() {
@@ -3635,7 +3681,7 @@ impl App {
             }
             Some(derma::Action::SearchFocus) => menu.st.search_focus = true,
             Some(derma::Action::ContentNode(i)) => {
-                menu.st.content_node[menu.st.creation_tab.saturating_sub(1).min(1)] = i;
+                menu.st.content_node[menu.st.creation_tab.saturating_sub(1).min(4)] = i;
                 menu.st.scroll = 0.0;
             }
             Some(derma::Action::GiveWeapon(class)) => {
@@ -3649,6 +3695,17 @@ impl App {
             Some(derma::Action::SpawnVehicle(key)) => {
                 self.console.log(format!("gmod_spawnvehicle {key}"));
                 self.sim.client.command(Command::SpawnVehicle { key });
+            }
+            Some(derma::Action::TogglePostProcess(key)) => {
+                let on = !self.pp_enabled.remove(&key);
+                if on {
+                    self.pp_enabled.insert(key.clone());
+                }
+                self.console.log(format!("pp_{key} {}", u8::from(on)));
+            }
+            Some(derma::Action::DesktopWindow(id)) => {
+                self.console
+                    .log(format!("{id}: this desktop window is not implemented yet"));
             }
             Some(derma::Action::SpawnNpc(key)) => {
                 self.console.log(format!("gmod_spawnnpc {key}"));
@@ -7612,6 +7669,8 @@ impl App {
             let bold = g.ui.font_metrics(Some(derma::FONT_BOLD));
             let header = g.ui.font_metrics(Some(derma::HEADER_FONT));
             let has_image = |name: &str| g.ui.has_image(name);
+            let pp_set = self.pp_enabled.clone();
+            let pp_on = |k: &str| pp_set.contains(k);
             let dctx = derma::Ctx {
                 w,
                 h,
@@ -7625,13 +7684,24 @@ impl App {
                     &self.content[1],
                     &self.content[2],
                     &self.content[3],
+                    &self.content[4],
                 ],
                 results: &self.search_results,
                 tool: title,
                 has_image: &has_image,
+                pp_on: &pp_on,
             };
             let mut layout = derma::Layout::default();
             if let (Some(schema), true) = (self.panel_schema(), self.menu.is_none()) {
+                let title = self
+                    .lang
+                    .get("smwidget.playermodel")
+                    .map_or("Player Model", String::as_str);
+                derma::desktop_icons(
+                    &mut layout,
+                    &dctx,
+                    &[("PlayerEditor", "icon64/playermodel.png", title)],
+                );
                 let rect = derma::context_canvas(&mut layout, &dctx, &schema);
                 let sheet_vals = self
                     .edit_sheet
@@ -7673,6 +7743,8 @@ impl App {
             let bold = g.ui.font_metrics(Some(derma::FONT_BOLD));
             let header = g.ui.font_metrics(Some(derma::HEADER_FONT));
             let has_image = |name: &str| g.ui.has_image(name);
+            let pp_set = self.pp_enabled.clone();
+            let pp_on = |k: &str| pp_set.contains(k);
             let ctx = derma::Ctx {
                 w,
                 h,
@@ -7686,10 +7758,12 @@ impl App {
                     &self.content[1],
                     &self.content[2],
                     &self.content[3],
+                    &self.content[4],
                 ],
                 results: &self.search_results,
                 tool: &self.tool,
                 has_image: &has_image,
+                pp_on: &pp_on,
             };
             let mut layout = derma::build(&ctx, &menu.st);
             let rows = match self.panel_schema() {
@@ -8946,6 +9020,19 @@ impl App {
                 self.send_player_skin();
             }
             "kill" => self.sim.client.command(Command::Kill),
+            // the game's spawnmenu console commands, usable by hand
+            "gmod_spawnnpc" if !rest.is_empty() => self.sim.client.command(Command::SpawnNpc {
+                key: rest[0].to_string(),
+                weapon: rest.get(1).map(|w| w.to_string()).unwrap_or_default(),
+            }),
+            "gmod_spawnvehicle" if !rest.is_empty() => {
+                self.sim.client.command(Command::SpawnVehicle {
+                    key: rest[0].to_string(),
+                })
+            }
+            "gm_spawnsent" if !rest.is_empty() => self.sim.client.command(Command::SpawnSent {
+                class: rest[0].to_string(),
+            }),
             "ent_fire" if rest.len() >= 2 => self.sim.client.command(Command::EntFire {
                 target: rest[0].to_string(),
                 input: rest[1].to_string(),
@@ -9876,7 +9963,8 @@ fn main() -> Result<()> {
         scripted_world: Vec::new(),
         pending_input: Vec::new(),
         spawn_lists_seen: usize::MAX,
-        content: [Vec::new(), Vec::new(), Vec::new(), Vec::new()],
+        content: [Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new()],
+        pp_enabled: Default::default(),
         content_seen: usize::MAX,
         content_lang: None,
         search_models: None,
