@@ -1396,6 +1396,8 @@ struct App {
     /// The context menu's Player Model window (`editor_player.lua`) is open.
     player_editor: bool,
     player_editor_tab: u8,
+    /// The Player Model window's quick filter (typed while it is open).
+    player_editor_filter: String,
     /// The player the `cl_playermodel` / colour preferences were sent to the server for.
     prefs_sent_for: Option<u32>,
     /// `+showscores` held (TAB): the sandbox scoreboard.
@@ -2369,6 +2371,7 @@ impl App {
             &self.current_player_model(),
             self.player_editor_tab,
             self.pref_colors(),
+            &self.player_editor_filter,
         );
         match layout.hit(self.cursor).cloned() {
             Some(derma::Action::PlayerModel(name)) => {
@@ -8141,6 +8144,7 @@ impl App {
                         &self.current_player_model(),
                         self.player_editor_tab,
                         self.pref_colors(),
+                        &self.player_editor_filter,
                     );
                 }
                 let rect = derma::context_canvas(&mut layout, &dctx, &schema);
@@ -9747,6 +9751,28 @@ impl ApplicationHandler for App {
                     }
                     return;
                 }
+                // the Player Model window's quick filter takes the typing (the context key
+                // itself stays held and is not a filter character)
+                if self.player_editor && self.context_held && down && !event.repeat {
+                    match code {
+                        Some(KeyCode::Escape) => self.player_editor_filter.clear(),
+                        Some(KeyCode::Backspace) => {
+                            self.player_editor_filter.pop();
+                        }
+                        Some(KeyCode::KeyC) => {}
+                        _ => {
+                            if let Some(t) = event.text.as_deref() {
+                                self.player_editor_filter.extend(
+                                    t.chars()
+                                        .filter(|c| !c.is_control())
+                                        .map(|c| c.to_ascii_lowercase()),
+                                );
+                                self.player_editor_filter.truncate(64);
+                            }
+                        }
+                    }
+                    return;
+                }
                 if self.menu.as_ref().is_some_and(|m| m.st.search_focus) && !holds_menu {
                     if down && !event.repeat {
                         let mut refresh = false;
@@ -10484,6 +10510,7 @@ fn main() -> Result<()> {
         qm_ugc_dirty: 0,
         player_editor: false,
         player_editor_tab: 0,
+        player_editor_filter: String::new(),
         prefs_sent_for: None,
         lang,
         menu_cache: Default::default(),

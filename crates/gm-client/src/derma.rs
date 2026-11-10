@@ -3269,6 +3269,7 @@ pub fn player_editor(
     current: &str,
     tab: u8,
     colors: [[f32; 3]; 2],
+    filter: &str,
 ) {
     let (w, h) = (
         (ctx.w * 0.8).max(400.0).round(),
@@ -3420,8 +3421,55 @@ pub fn player_editor(
         }
         return;
     }
+    // the quick filter (DTextEntry, 8 px padding, 8 below): typed while the window is open
+    crate::ugc::rect(
+        &mut out.items,
+        lx + 8.0,
+        ly + 8.0,
+        lw - 16.0,
+        22.0,
+        [1.0; 4],
+    );
+    crate::ugc::rect(
+        &mut out.items,
+        lx + 8.0,
+        ly + 29.0,
+        lw - 16.0,
+        1.0,
+        rgba(160, 160, 160, 255),
+    );
+    if filter.is_empty() {
+        let hint = crate::ugc::say(ctx.lang, "spawnmenu.quick_filter", "Quick filter");
+        text(
+            &mut out.items,
+            FONT,
+            ctx.font,
+            lx + 12.0,
+            ly + 8.0,
+            22.0,
+            &hint,
+            [0.6, 0.6, 0.6, 1.0],
+        );
+    } else {
+        let shown = format!("{filter}_");
+        text(
+            &mut out.items,
+            FONT,
+            ctx.font,
+            lx + 12.0,
+            ly + 8.0,
+            22.0,
+            &shown,
+            [0.1, 0.1, 0.1, 1.0],
+        );
+    }
+    let ly = ly + 30.0;
+    let lh = lh - 30.0;
     let per_row = (((lw - 8.0) / 72.0).floor() as usize).max(1);
-    for (i, (name, path)) in models.iter().enumerate() {
+    let shown = models
+        .iter()
+        .filter(|(n, p)| filter.is_empty() || n.contains(filter) || p.contains(filter));
+    for (i, (name, path)) in shown.enumerate() {
         let (col, row) = ((i % per_row) as f32, (i / per_row) as f32);
         let (ix, iy) = (lx + 8.0 + col * 72.0, ly + 8.0 + row * 72.0);
         if iy + 64.0 > ly + lh {
