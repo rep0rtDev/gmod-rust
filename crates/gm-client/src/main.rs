@@ -5586,8 +5586,9 @@ impl App {
             .chain(held_models)
             .chain(ghost_models)
         {
-            // env_sprite entities carry a sprite material, not a model
-            if is_sprite_ent(model) {
+            // env_sprite entities carry a sprite material, not a model; a model-less entity
+            // (a point entity, an NPC body without a mesh) has nothing to load
+            if model.is_empty() || is_sprite_ent(model) {
                 continue;
             }
             if !g.models.contains_key(model) {

@@ -12459,6 +12459,9 @@ impl<'w> Server<'w> {
         if let Some(p) = self.sandbox.props().iter().find(|p| p.id == id) {
             return Some((p.pos, gm_sandbox::rotation(p.angles)));
         }
+        if let Some(n) = self.npcs.get(&id) {
+            return Some((n.pos, gm_sandbox::rotation(n.angles)));
+        }
         self.players.get(&id).map(|p| {
             (
                 p.state.origin,
@@ -19389,15 +19392,22 @@ impl<'w> Server<'w> {
         // server_npc_squad_soldier 261104) - the opening volley's two rounds, then a burst's
         // first round at the cone's rim and the rest on one ray 4.9 deg right; the game's
         // rounds never touch the bot
-        let _ = (bias, spread_dir as fn(Vec3, f32, f32, u64) -> Vec3);
-        let (yaw_off, pitch_off) = match round {
-            NPC_RAY_VOLLEY_ROUND => NPC_RAY_VOLLEY_1,
-            r if r == NPC_RAY_VOLLEY_ROUND + 1 => NPC_RAY_VOLLEY_2,
-            0 => NPC_RAY_BURST_FIRST,
-            _ => NPC_RAY_BURST,
+        // the recorded rim rays hold for the defocused opening (the game's first volley
+        // sails over the player); once the cone has focused the rounds spread inside it
+        // (CShotManipulator with the proficiency's bias), so a soldier does hit at range
+        let _ = bias;
+        let dir = if since < NPC_SPREAD_DEFOCUS_TICKS {
+            let (yaw_off, pitch_off) = match round {
+                NPC_RAY_VOLLEY_ROUND => NPC_RAY_VOLLEY_1,
+                r if r == NPC_RAY_VOLLEY_ROUND + 1 => NPC_RAY_VOLLEY_2,
+                0 => NPC_RAY_BURST_FIRST,
+                _ => NPC_RAY_BURST,
+            };
+            let scale = cone / NPC_AIM_CONE_DEG;
+            npc_ray_off(aim, yaw_off * scale, pitch_off * scale)
+        } else {
+            spread_dir(aim, cone, 1.0, now ^ ((id as u64) << 20) ^ round)
         };
-        let scale = cone / NPC_AIM_CONE_DEG;
-        let dir = npc_ray_off(aim, yaw_off * scale, pitch_off * scale);
         for _ in 0..pellets {
             self.npc_fire_bullet(id, muzzle, dir, dmg);
         }
