@@ -8859,6 +8859,8 @@ pub struct Server<'w> {
     pub prop_touch: std::collections::HashSet<(u32, u32)>,
     /// Last tick each prop hurt a player (one hit per PROP_HIT_COOLDOWN).
     pub prop_hit_at: BTreeMap<u32, u64>,
+    /// Tick of each `sent_ball`'s last pop (`data.DeltaTime > 0.2` between pops).
+    ball_pop_at: BTreeMap<u32, u64>,
     pub scripted_weapons_version: u32,
     /// Names created since the last `take_cvar_new` (replicated to connected clients).
     pub cvar_new: Vec<String>,
@@ -9049,6 +9051,7 @@ impl<'w> Server<'w> {
             sent_player_touch: std::collections::HashSet::new(),
             prop_touch: std::collections::HashSet::new(),
             prop_hit_at: BTreeMap::new(),
+            ball_pop_at: BTreeMap::new(),
             cvar_new: Vec::new(),
         }
     }
@@ -11020,7 +11023,7 @@ impl<'w> Server<'w> {
         let mut keep = Vec::with_capacity(self.projectiles.len());
         for (i, (prev, ev)) in steps.into_iter().enumerate() {
             let pr = &self.projectiles[i];
-            if let projectile::Event::Bounced(at) = ev {
+            if let (projectile::Event::Bounced(at), weapons::Launch::Ball) = (ev, pr.kind) {
                 self.sounds.push(WorldSound {
                     name: "NPC_CombineBall.Impact".to_string(),
                     pos: at,
@@ -13052,6 +13055,16 @@ impl<'w> Server<'w> {
         let dir = st.velocity.normalize_or_zero();
         self.physics
             .set_velocity(body, dir * last * 0.9, st.angular_velocity);
+        // the pop only when more than 0.2 s passed since the last contact sound
+        let now = self.tick_count;
+        let gap_ok = self
+            .ball_pop_at
+            .get(&ent)
+            .is_none_or(|t| (now - t) as f32 * gm_core::tick::DEFAULT_TICK_INTERVAL > 0.2);
+        if !gap_ok {
+            return;
+        }
+        self.ball_pop_at.insert(ent, now);
         let volume = (speed / 150.0).clamp(0.0, 1.0);
         // pitch 32 + 128 - size, +-10 at random: small balls squeak, big ones thud
         let size = (self.model_scales.get(&ent).copied().unwrap_or(1.0) * 32.0).clamp(16.0, 48.0);
@@ -26603,6 +26616,15 @@ impl<'w> Server<'w> {
                     continue;
                 };
                 if heard.contains(&id) {
+                    continue;
+                }
+                // sent_ball: only its own balloon pop (sent_ball.lua PhysicsCollide), no
+                // metal_bouncy impact scripts
+                if self
+                    .sandbox_sents
+                    .get(&id)
+                    .is_some_and(|c| c == "sent_ball")
+                {
                     continue;
                 }
                 let Some(model) = self

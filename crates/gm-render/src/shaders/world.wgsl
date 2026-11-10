@@ -267,6 +267,12 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     let d = textureSample(detail, base_sampler, in.uv * material.detail.x).rgb;
     let base = albedo.rgb * mix(vec3<f32>(1.0), d * 2.0, material.detail.y);
     var shaded = base * light * in.color * camera.exposure;
+    // DecalModulate (mode 3): the raw texel is the blend factor (colour * 2 * texel), its
+    // 128 grey neutral - no exposure, no light, no tint, else every bullet hole brightens
+    // its square whenever the auto-exposure is above 1
+    if material.unlit == 3u {
+        shaded = albedo.rgb;
+    }
     // $envmap: the nearest env_cubemap along the reflected view ray, times $envmaptint and
     // the mask (1 - base alpha for $basealphaenvmapmask, normal alpha), added after lighting
     let bump_a = textureSample(bump, base_sampler, in.uv).a;

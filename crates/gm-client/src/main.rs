@@ -39,7 +39,8 @@ use winit::window::{CursorGrabMode, Window, WindowId};
 /// `weapon_physgun` in `WEAPONS`: the weapon a sandbox spawn leaves out (`gm_server::SPAWN_WEAPON`).
 const PHYSGUN_SLOT: u8 = 0;
 /// Slots in `WEAPONS` of the weapons with their own effects.
-const RPG_SLOT: u8 = 9;
+/// `gmod_suit` (default 0): whether players wear the HEV suit (the AUX POWER panel).
+const GMOD_SUIT: bool = false;
 /// Decals never expire with time in the game; `r_decals` (2048) is a ring that drops the
 /// oldest (clientfx.md §4, gap-report #128).
 const DECAL_RING: usize = 2048;
@@ -5042,6 +5043,10 @@ impl App {
                         continue;
                     }
                     match (*event, name.as_str()) {
+                        // the alt-fire sequences (the AR2's IR_fire2 launching the ball) carry
+                        // no muzzle flash in the game: their event is skipped
+                        (5001, _) | (_, "AE_MUZZLEFLASH")
+                            if vm.alt.is_some_and(|alt| alt == seq) => {}
                         (5001, _) | (_, "AE_MUZZLEFLASH") => {
                             self.fx_muzzle_until =
                                 Some(Instant::now() + std::time::Duration::from_millis(60));
@@ -5873,9 +5878,19 @@ impl App {
             // * K2 (K2 unresolved, 0.5), widths 2 / rand 2..5 / rand 2..6 re-rolled every frame,
             // `sprites/physbeama`, and 7 `sprites/physbeam` sprites of rand 1..16 u, alpha
             // rand 100..255, at the end
-            if let Some(end) = held_pos {
-                beams.push((start, fwd, end));
-            }
+            // held: to the grab point; trigger down on nothing: to where the aim hits (the
+            // game's beam shows for the whole press, as the player sees it)
+            let end = held_pos.unwrap_or_else(|| {
+                self.sim
+                    .collision
+                    .trace_ray(
+                        camera.position,
+                        camera.position + fwd * 8192.0,
+                        gm_collision::MASK_SOLID,
+                    )
+                    .end
+            });
+            beams.push((start, fwd, end));
         }
         // every other player's beam (physgun.md 10: drawn for all players): from beside their
         // eye to the networked grab point (no world-model physgun attachment yet)
@@ -6915,7 +6930,7 @@ impl App {
             }
             // the RPG's laser dot (`CLaserDot`): a red glow where the aim meets the world,
             // and the 128 u `laser1_noz` beam out of the muzzle (hl2weapons.md, #110)
-            if self.weapon == RPG_SLOT {
+            if viewmodel(self.weapon).is_some_and(|v| v.class == "weapon_rpg") {
                 if let Some(m) = &g.fx_laserdot {
                     let hit = self.sim.collision.trace_ray(
                         camera.position,
@@ -7239,21 +7254,19 @@ impl App {
                 self.fx_vm_muzzle
                     .retain(|(_, _, _, _, born, life)| born.elapsed().as_secs_f32() < *life);
                 if vm_flash.is_some() || !self.fx_vm_muzzle.is_empty() {
-                    // 8 sprites along the barrel, white, alpha 255 -> 128 over 0.1 s
+                    // 8 sprites along the barrel, white, alpha 255 -> 128 over 0.1 s: drawn
+                    // over the viewmodel but with the world camera and world sizes (the
+                    // game's muzzle particles are world particles at the corrected muzzle;
+                    // under the viewmodel's FOV they came out twice as big)
                     let mut quads = Vec::new();
                     for &(pos, size, roll, variant, born, life) in &self.fx_vm_muzzle {
                         let Some(m) = g.fx_muzzles.get(variant) else {
                             continue;
                         };
                         let a = 1.0 - 0.5 * (born.elapsed().as_secs_f32() / life).min(1.0);
-                        let (v, i) = g.world.sprite_quad_var(
-                            pos,
-                            size * 2.0,
-                            [a, a, a, 0.0],
-                            roll,
-                            None,
-                            &vm_camera,
-                        );
+                        let (v, i) =
+                            g.world
+                                .sprite_quad_var(pos, size, [a, a, a, 0.0], roll, None, &camera);
                         quads.push((m, v, i));
                     }
                     if !quads.is_empty() {
@@ -7261,7 +7274,7 @@ impl App {
                             clear_depth: false,
                             ..target
                         };
-                        g.world.draw_additive(&g.gpu, &vm_camera, &target, &quads);
+                        g.world.draw_additive(&g.gpu, &camera, &target, &quads);
                     }
                 }
             }
@@ -8027,15 +8040,23 @@ impl App {
                     if alpha > 0.0 && !hidden("CHudZoom") {
                         let a = alpha * 64.0 / 255.0;
                         let ratio = w / h;
-                        items.push(UiItem::Slice {
-                            x: 0.0,
-                            y: 0.0,
-                            w,
-                            h,
-                            material: "vgui/zoom".to_string(),
-                            color: [1.0, 1.0, 1.0, alpha],
-                            uv: [0.5 - ratio / 2.0, 0.0, 0.5 + ratio / 2.0, 1.0],
-                        });
+                        // the dark edges: the vgui/zoom quadrant mirrored into the four
+                        // corners (CHudZoom draws it as four quads, uv 1/255..254/255)
+                        let _ = ratio;
+                        let (u0, u1) = (1.0 / 255.0, 1.0 - 1.0 / 255.0);
+                        for (qx, qy) in [(0.0, 0.0), (1.0, 0.0), (0.0, 1.0), (1.0, 1.0)] {
+                            let (ua, ub) = if qx == 0.0 { (u1, u0) } else { (u0, u1) };
+                            let (va, vb) = if qy == 0.0 { (u0, u1) } else { (u1, u0) };
+                            items.push(UiItem::Slice {
+                                x: qx * w / 2.0,
+                                y: qy * h / 2.0,
+                                w: w / 2.0,
+                                h: h / 2.0,
+                                material: "vgui/zoom".to_string(),
+                                color: [1.0, 1.0, 1.0, alpha],
+                                uv: [ua, va, ub, vb],
+                            });
+                        }
                         let col = [1.0, 220.0 / 255.0, 0.0, a];
                         for r in [66.0_f32, 74.0] {
                             let r = r * s * scale;
@@ -8548,12 +8569,15 @@ impl App {
                     let under = self.sim.collision.point_contents(o)
                         & gm_formats::bsp::lumps::contents::WATER
                         != 0;
+                    // CHudSuitPower::ShouldDraw needs the HEV suit; sandbox players have none
+                    // with the game's default gmod_suit 0, so the panel never appears
                     let devices: Vec<&str> = [
                         (self.shift_held && p.velocity.length() > 0.5, "SPRINT"),
                         (p.flashlight, "FLASHLIGHT"),
                         (under, "OXYGEN"),
                     ]
                     .into_iter()
+                    .filter(|_| GMOD_SUIT)
                     .filter_map(|(on, l)| on.then_some(l))
                     .collect();
                     let mut off = self.aux_off_at.borrow_mut();
