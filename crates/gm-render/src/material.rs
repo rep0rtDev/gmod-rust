@@ -11,6 +11,8 @@ pub struct Material {
     pub shader: String,
     pub base_texture: Option<String>,
     pub base_texture2: Option<String>,
+    /// `eyes` / `EyeRefract`: the iris texture the engine projects on the eyeball.
+    pub iris: Option<String>,
     pub translucent: bool,
     /// `$alphatest 1`: the base alpha cuts the surface out (drawn opaque, no sorting).
     pub alpha_test: bool,
@@ -257,6 +259,8 @@ pub fn load_path(mount: &Mount, name: &str, vmt_path: &str) -> Result<Material> 
                                     mat.base_texture = Some(s);
                                 } else if p.key.eq_ignore_ascii_case("$basetexture2") {
                                     mat.base_texture2 = Some(s);
+                                } else if p.key.eq_ignore_ascii_case("$iris") {
+                                    mat.iris = Some(s);
                                 }
                             }
                         }
@@ -336,6 +340,9 @@ pub fn load_path(mount: &Mount, name: &str, vmt_path: &str) -> Result<Material> 
         }
         if mat.base_texture2.is_none() {
             mat.base_texture2 = get("$basetexture2");
+        }
+        if mat.iris.is_none() {
+            mat.iris = get("$iris");
         }
         mat.half_lambert = matches!(get("$halflambert").as_deref(), Some("1"));
         mat.alpha_test = matches!(get("$alphatest").as_deref(), Some("1"));

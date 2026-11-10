@@ -5625,6 +5625,7 @@ impl App {
             }
         }
         let rt = self.sim.interp.render_tick(self.sim.client.world.tick) + alpha.clamp(0.0, 1.0);
+        self.sounds.pump(&self.mount);
         // looping entity sounds (thrusters) ride along with their interpolated entity
         for id in self.sounds.following() {
             if let Some(p) = self.sim.interp.sample(id, rt) {

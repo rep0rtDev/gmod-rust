@@ -27798,6 +27798,16 @@ pub fn npc_vocal(class: &str, kind: Vocal, salt: u64) -> Option<String> {
             Pain | Die => "NPC_Antlion.Pain",
             Attack => "NPC_Antlion.MeleeAttackSingle",
         },
+        // the soldiers and the police speak sentences.txt groups (`!GROUP`: the client
+        // plays the words of a random line of the group)
+        _ if class == "npc_combine_s" => match kind {
+            Idle => "!COMBINE_IDLE",
+            Alert => "!COMBINE_ANNOUNCE",
+            Pain => "!COMBINE_PAIN",
+            Die => "!COMBINE_DIE",
+            Attack => "!COMBINE_ASSAULT",
+        },
+        Idle if class == "npc_metropolice" => "!METROPOLICE_IDLE",
         Alert if class == "npc_metropolice" => "NPC_MetroPolice.Alert",
         Pain if class == "npc_metropolice" => "NPC_MetroPolice.Pain",
         Die if class == "npc_metropolice" => "NPC_MetroPolice.Die",

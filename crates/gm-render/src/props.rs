@@ -4,7 +4,7 @@
 use std::collections::HashMap;
 
 use anyhow::Result;
-use glam::{Mat3, Quat, Vec3};
+use glam::{Mat3, Mat4, Quat, Vec3};
 use gm_content::Mount;
 use gm_formats::bsp::extra::StaticProps;
 use gm_formats::bsp::Bsp;
@@ -336,9 +336,93 @@ pub fn collect_static_props(
     Ok((placed, distinct, triangles, missing))
 }
 
+/// An eyeball's frame for the `eyes` shader's iris projection: the vertex goes into the
+/// eye bone's space (`pose_to_bone`), the iris uv is its offset from the eye centre along
+/// right / up over the eye's diameter, scaled by `iris_scale` (studiorender's eyeball
+/// projection at rest, the eye looking down `forward`).
+pub struct EyeFrame {
+    pose_to_bone: Mat4,
+    org: Vec3,
+    right: Vec3,
+    up: Vec3,
+    radius: f32,
+    iris_scale: f32,
+}
+
+impl EyeFrame {
+    pub fn new(e: &gm_formats::mdl::Eyeball, pose_to_bone: &[[f32; 4]; 3]) -> EyeFrame {
+        let m = pose_to_bone;
+        let fwd = Vec3::from(e.forward).normalize_or_zero();
+        let up = Vec3::from(e.up).normalize_or_zero();
+        EyeFrame {
+            pose_to_bone: Mat4::from_cols_array_2d(&[
+                [m[0][0], m[1][0], m[2][0], 0.0],
+                [m[0][1], m[1][1], m[2][1], 0.0],
+                [m[0][2], m[1][2], m[2][2], 0.0],
+                [m[0][3], m[1][3], m[2][3], 1.0],
+            ]),
+            org: Vec3::from(e.org),
+            right: fwd.cross(up).normalize_or_zero(),
+            up,
+            radius: e.radius,
+            iris_scale: e.iris_scale,
+        }
+    }
+
+    /// Iris texture uv of a rest-pose vertex (outside 0..1 the sclera shows).
+    pub fn iris_uv(&self, position: [f32; 3]) -> [f32; 2] {
+        if self.radius <= 0.0 {
+            return [-1.0, -1.0];
+        }
+        let d = self.pose_to_bone.transform_point3(Vec3::from(position)) - self.org;
+        let k = self.iris_scale.max(0.01) / (2.0 * self.radius);
+        [0.5 + d.dot(self.right) * k, 0.5 - d.dot(self.up) * k]
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A citizen's eyeball meshes project their iris around the eye's front.
+    #[test]
+    fn citizen_eyeballs_project_an_iris() {
+        let Some(inst) = gm_content::find_install() else {
+            eprintln!("no GMod install, skipped");
+            return;
+        };
+        let mount = Mount::for_install(&inst).unwrap();
+        let (mdl, vvd, _vtx, _) =
+            load_model(&mount, "models/humans/group01/male_01.mdl", 0).unwrap();
+        let mut eyes = 0;
+        for bp in &mdl.body_parts {
+            for m in &bp.models {
+                let base = (m.vertex_index / 48).max(0) as usize;
+                for mesh in m.meshes.iter().filter(|k| k.material_type == 1) {
+                    let e = &m.eyeballs[mesh.material_param as usize];
+                    let bone = &mdl.bones[e.bone as usize];
+                    let f = EyeFrame::new(e, &bone.pose_to_bone);
+                    let (mut lo, mut hi) = ([f32::MAX; 2], [f32::MIN; 2]);
+                    let n = mesh.num_vertices.max(0) as usize;
+                    for v in &vvd.vertices[base + mesh.vertex_offset.max(0) as usize..][..n] {
+                        let uv = f.iris_uv(v.position);
+                        for i in 0..2 {
+                            lo[i] = lo[i].min(uv[i]);
+                            hi[i] = hi[i].max(uv[i]);
+                        }
+                    }
+                    eprintln!(
+                        "{} bone {} org {:?} radius {} iris_scale {} uv {:?}..{:?}",
+                        e.name, e.bone, e.org, e.radius, e.iris_scale, lo, hi
+                    );
+                    assert!(lo[0] < 0.5 && hi[0] > 0.5 && lo[1] < 0.5 && hi[1] > 0.5);
+                    assert!(lo[0] > -3.0 && hi[0] < 4.0, "{lo:?} {hi:?}");
+                    eyes += 1;
+                }
+            }
+        }
+        assert_eq!(eyes, 2);
+    }
 
     #[test]
     fn yaw_rotates_forward_to_left() {

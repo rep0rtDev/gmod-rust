@@ -9,6 +9,7 @@ pub mod engine;
 pub mod mixer;
 pub mod scene;
 pub mod script;
+pub mod sentences;
 pub mod soundscape;
 pub mod voice;
 pub mod wav;
@@ -36,6 +37,7 @@ pub const SCRIPTS: [&str; 5] = [
 ];
 
 /// xorshift: picks waves and pitches; seeded from the clock.
+#[derive(Clone, Copy)]
 struct Rng(u64);
 
 impl Rng {
@@ -68,6 +70,10 @@ impl Rng {
 pub struct Sounds {
     pub mixer: Mixer,
     pub scripts: Scripts,
+    /// `scripts/sentences.txt`: `!GROUP` names play a sentence word by word.
+    pub sentences: sentences::Sentences,
+    /// Sentence words still to start: (start time, word, position, entity, level).
+    queued_words: Vec<(std::time::Instant, sentences::Word, Option<Vec3>, u32, f32)>,
     cache: HashMap<String, Option<Arc<Pcm>>>,
     rng: Rng,
     /// Voice ids of entity sounds by (entity, channel), for stops and following.
@@ -102,13 +108,85 @@ pub fn load_scripts(mount: &gm_content::Mount) -> Scripts {
     scripts
 }
 
+/// The engine's `scripts/sentences.txt` (HL2's, under `sourceengine/`), empty when missing.
+pub fn load_sentences(mount: &gm_content::Mount) -> sentences::Sentences {
+    let mut s = sentences::Sentences::default();
+    if let Ok(bytes) = mount.read("scripts/sentences.txt") {
+        s.load(&String::from_utf8_lossy(&bytes));
+    }
+    s
+}
+
 impl Sounds {
+    /// `!GROUP` (a sentence, `EmitSentence`): its words one after the other from `position`
+    /// / `ent`, the first now; false when the group is unknown.
+    #[allow(clippy::too_many_arguments)]
+    pub fn play_sentence(
+        &mut self,
+        mount: &gm_content::Mount,
+        group: &str,
+        position: Option<Vec3>,
+        scale: f32,
+        ent: u32,
+        level: f32,
+    ) -> bool {
+        let mut rng = self.rng;
+        let Some(words) = self.sentences.pick(group, &mut || rng.next()) else {
+            return false;
+        };
+        self.rng = rng;
+        let mut at = std::time::Instant::now();
+        for mut w in words {
+            let Some(pcm) = self.wave(mount, &w.path) else {
+                continue;
+            };
+            let secs = pcm.duration() * 100.0 / w.pitch.max(1.0);
+            w.volume *= scale;
+            self.queued_words.push((at, w, position, ent, level));
+            at += std::time::Duration::from_secs_f32(secs.max(0.0));
+        }
+        self.pump(mount);
+        true
+    }
+
+    /// Starts the sentence words whose time has come (call every frame).
+    pub fn pump(&mut self, mount: &gm_content::Mount) {
+        let now = std::time::Instant::now();
+        let mut due = Vec::new();
+        self.queued_words.retain(|q| {
+            if q.0 <= now {
+                due.push(q.clone());
+                false
+            } else {
+                true
+            }
+        });
+        for (_, w, position, ent, level) in due {
+            let Some(pcm) = self.wave(mount, &w.path) else {
+                continue;
+            };
+            self.mixer.play(Play {
+                pcm,
+                volume: w.volume,
+                pitch: w.pitch,
+                position,
+                level: if level > 0.0 { level } else { 75.0 },
+                looping: false,
+                ent,
+                channel: 2,
+                stream: false,
+            });
+        }
+    }
+
     /// Open the device and load the scripts; missing scripts are skipped.
     pub fn new(mount: &gm_content::Mount) -> Sounds {
         let scripts = load_scripts(mount);
         Sounds {
             mixer: Mixer::open(),
             scripts,
+            sentences: load_sentences(mount),
+            queued_words: Vec::new(),
             cache: HashMap::new(),
             rng: Rng::new(),
             tracked: HashMap::new(),
@@ -121,6 +199,8 @@ impl Sounds {
         Ok(Sounds {
             mixer: Mixer::offline(rate)?,
             scripts: load_scripts(mount),
+            sentences: load_sentences(mount),
+            queued_words: Vec::new(),
             cache: HashMap::new(),
             rng: Rng::new(),
             tracked: HashMap::new(),
@@ -199,6 +279,9 @@ impl Sounds {
         pitch: f32,
         level: f32,
     ) -> bool {
+        if let Some(group) = name.strip_prefix('!') {
+            return self.play_sentence(mount, group, position, scale, ent, level);
+        }
         let Some(e) = self.scripts.get(name).cloned() else {
             // a raw file (`.wav` / `.mp3` / `.ogg` anywhere in the name, sound.md §1.1; the
             // engine's prefix characters stripped) plays as is
@@ -397,6 +480,34 @@ mod tests {
 #[cfg(test)]
 mod content_tests {
     use super::*;
+
+    /// The soldiers' and the police's sentence groups expand to waves of the install.
+    #[test]
+    fn npc_sentences_resolve_to_waves() {
+        let Some(inst) = gm_content::find_install() else {
+            eprintln!("no GMod install, skipped");
+            return;
+        };
+        let mount = gm_content::Mount::for_install(&inst).unwrap();
+        let mut s = Sounds::offline(&mount, 44100).unwrap();
+        assert!(!s.sentences.is_empty());
+        for group in [
+            "COMBINE_IDLE",
+            "COMBINE_ANNOUNCE",
+            "COMBINE_PAIN",
+            "COMBINE_DIE",
+            "COMBINE_ASSAULT",
+            "METROPOLICE_IDLE",
+        ] {
+            let mut rng = s.rng;
+            let words = s.sentences.pick(group, &mut || rng.next()).unwrap();
+            assert!(!words.is_empty(), "{group}");
+            for w in &words {
+                assert!(s.wave(&mount, &w.path).is_some(), "{group}: {}", w.path);
+            }
+            assert!(s.play_at(&mount, &format!("!{group}"), None, 1.0, 5, false, 0.0, 0.0));
+        }
+    }
 
     /// The base game's weapon scripts and waves, when a GMod install is mounted.
     #[test]

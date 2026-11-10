@@ -222,6 +222,24 @@ pub struct Mesh {
     pub vertex_offset: i32,
     pub mesh_id: i32,
     pub center: [f32; 3],
+    /// `materialtype` (1 = eyeball) and `materialparam` (the eyeball's index in `Model::eyeballs`).
+    pub material_type: i32,
+    pub material_param: i32,
+}
+
+/// `mstudioeyeball_t`: an eyeball the `eyes` / `EyeRefract` shaders project the iris on.
+#[derive(Clone, Debug)]
+pub struct Eyeball {
+    pub name: String,
+    pub bone: i32,
+    /// Centre in the bone's space.
+    pub org: [f32; 3],
+    pub z_offset: f32,
+    pub radius: f32,
+    pub up: [f32; 3],
+    pub forward: [f32; 3],
+    pub texture: i32,
+    pub iris_scale: f32,
 }
 
 #[derive(Clone, Debug)]
@@ -232,6 +250,7 @@ pub struct Model {
     pub num_vertices: i32,
     /// Byte offset of this model's first vertex in the VVD vertex block.
     pub vertex_index: i32,
+    pub eyeballs: Vec<Eyeball>,
 }
 
 #[derive(Clone, Debug)]
@@ -983,6 +1002,9 @@ impl Mdl {
                 let mesh_index = mr.i32()?;
                 let num_vertices = mr.i32()?;
                 let vertex_index = mr.i32()?;
+                mr.skip(12)?; // tangentsindex, numattachments, attachmentindex
+                let num_eyeballs = mr.i32()?;
+                let eyeball_index = mr.i32()?;
                 let mut meshes = Vec::new();
                 for k in 0..num_meshes.max(0) as usize {
                     let kbase = offset(mbase, mesh_index) + k * 116;
@@ -992,7 +1014,8 @@ impl Mdl {
                     let num_vertices = kr.i32()?;
                     let vertex_offset = kr.i32()?;
                     kr.skip(8)?; // flexes
-                    kr.skip(8)?; // material type/param
+                    let material_type = kr.i32()?;
+                    let material_param = kr.i32()?;
                     let mesh_id = kr.i32()?;
                     let center = vec3(&mut kr)?;
                     meshes.push(Mesh {
@@ -1002,6 +1025,36 @@ impl Mdl {
                         vertex_offset,
                         mesh_id,
                         center,
+                        material_type,
+                        material_param,
+                    });
+                }
+                let mut eyeballs = Vec::new();
+                for e in 0..num_eyeballs.clamp(0, 16) as usize {
+                    let ebase = offset(mbase, eyeball_index) + e * 172;
+                    let mut er = Reader::at(data, ebase);
+                    let name_idx = er.i32()?;
+                    let bone = er.i32()?;
+                    let org = vec3(&mut er)?;
+                    let z_offset = er.f32()?;
+                    let radius = er.f32()?;
+                    let up = vec3(&mut er)?;
+                    let forward = vec3(&mut er)?;
+                    let texture = er.i32()?;
+                    er.skip(4)?; // unused1
+                    let iris_scale = er.f32()?;
+                    eyeballs.push(Eyeball {
+                        name: cstr_at(data, offset(ebase, name_idx))
+                            .unwrap_or_default()
+                            .to_string(),
+                        bone,
+                        org,
+                        z_offset,
+                        radius,
+                        up,
+                        forward,
+                        texture,
+                        iris_scale,
                     });
                 }
                 models.push(Model {
@@ -1010,6 +1063,7 @@ impl Mdl {
                     meshes,
                     num_vertices,
                     vertex_index,
+                    eyeballs,
                 });
             }
             body_parts.push(BodyPart {

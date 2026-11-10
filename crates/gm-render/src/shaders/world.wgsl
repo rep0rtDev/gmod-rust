@@ -199,12 +199,24 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     if material.uv2_t.z > 0.5 {
         factor = smoothstep(minb, maxb, in.alpha);
     }
-    let albedo = mix(base1, base2_s, factor * f32(material.blend));
+    var albedo = mix(base1, base2_s, factor * f32(material.blend == 1u));
+    if material.blend == 2u {
+        // eyes: $iris projected on the eyeball (iris uv baked per vertex into lm_uv, the
+        // texture's own alpha and the unit square bound it; the sclera shows elsewhere)
+        let iris = textureSample(base2, base_sampler, in.lm_uv);
+        let inb = step(vec2<f32>(0.0), in.lm_uv) * step(in.lm_uv, vec2<f32>(1.0));
+        let k = iris.a * inb.x * inb.y;
+        albedo = vec4<f32>(mix(base1.rgb, iris.rgb, k), base1.a);
+    }
     if material.alpha_test != 0u && albedo.a < 0.5 {
         discard;
     }
     // lightmap atlas: linear light (Rgba16Float), lm_scale 1
     var light = textureSample(lightmap, lightmap_sampler, in.lm_uv).rgb;
+    if material.blend == 2u {
+        // eyes: lm_uv carries the iris projection, the model is lit by its vertex colour
+        light = vec3<f32>(1.0);
+    }
     // $bumpmap: the three bumped lightmap pages weighted by the squared dot of the
     // tangent-space normal with the bump basis (both live in the face's texture space)
     let nrm = normalize(textureSample(bump, base_sampler, in.uv).xyz * 2.0 - 1.0);

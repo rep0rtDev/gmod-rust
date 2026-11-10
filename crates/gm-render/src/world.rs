@@ -1069,6 +1069,9 @@ pub struct DynVertex {
     pub bones: [u8; 3],
     pub weights: [f32; 3],
     pub num_bones: u8,
+    /// `eyes` shader: the iris texture's uv at this vertex (the eyeball's iris projection at
+    /// rest), `[-1, -1]` on everything else.
+    pub iris_uv: [f32; 2],
 }
 
 impl DynVertex {
@@ -1080,6 +1083,7 @@ impl DynVertex {
             bones: [0; 3],
             weights: [0.0; 3],
             num_bones: 0,
+            iris_uv: [-1.0, -1.0],
         }
     }
 }
@@ -4356,6 +4360,7 @@ impl WorldRenderer {
         mat: &material::Material,
         rgba: &material::Rgba,
         bump: Option<&material::Rgba>,
+        iris: Option<&material::Rgba>,
     ) -> (wgpu::BindGroup, wgpu::Texture) {
         let device = &gpu.device;
         let params = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -4365,7 +4370,8 @@ impl WorldRenderer {
                 alpha_test: mat.alpha_test as u32,
                 unlit: is_unlit(&mat.shader) as u32,
                 translucent: mat.translucent as u32,
-                blend: 0,
+                // 2: `eyes`, the iris (binding 4) projected by the vertices' iris uv
+                blend: if iris.is_some() { 2 } else { 0 },
                 detail: detail_params(mat),
                 uv2_m: [1.0, 0.0, 0.0, 1.0],
                 uv2_t: [0.0; 4],
@@ -4382,6 +4388,9 @@ impl WorldRenderer {
         let t = upload_rgba_mips(gpu, rgba, wgpu::TextureFormat::Rgba8UnormSrgb, key);
         let bump_t = bump.map(|b| upload_rgba_mips(gpu, b, wgpu::TextureFormat::Rgba8Unorm, key));
         let bump_view = bump_t.as_ref().map(|t| t.create_view(&Default::default()));
+        let iris_t =
+            iris.map(|b| upload_rgba_mips(gpu, b, wgpu::TextureFormat::Rgba8UnormSrgb, key));
+        let iris_view = iris_t.as_ref().map(|t| t.create_view(&Default::default()));
         let bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some(key),
             layout: &self.material_layout,
@@ -4402,7 +4411,9 @@ impl WorldRenderer {
                 },
                 wgpu::BindGroupEntry {
                     binding: 4,
-                    resource: wgpu::BindingResource::TextureView(&self.detail_fallback),
+                    resource: wgpu::BindingResource::TextureView(
+                        iris_view.as_ref().unwrap_or(&self.detail_fallback),
+                    ),
                 },
                 wgpu::BindGroupEntry {
                     binding: 5,
@@ -4497,6 +4508,7 @@ impl WorldRenderer {
                     bones: [0; 3],
                     weights: [1.0, 0.0, 0.0],
                     num_bones: 1,
+                    iris_uv: [-1.0, -1.0],
                 });
             }
             for k in 1..verts.len() as u32 - 1 {
@@ -4510,7 +4522,7 @@ impl WorldRenderer {
         let mut part_textures = Vec::new();
         for (name, (verts, idx)) in by_mat {
             let (mat, rgba) = &sizes[&name];
-            let (bg, t) = self.material_part(gpu, &name, mat, rgba, None);
+            let (bg, t) = self.material_part(gpu, &name, mat, rgba, None, None);
             part_textures.push((name.clone(), t));
             parts.push((bg, verts, idx, mat.half_lambert, is_unlit(&mat.shader)));
         }
@@ -4581,6 +4593,18 @@ impl WorldRenderer {
                 let Some(Some((mat, rgba, bump))) = materials.get(key) else {
                     continue;
                 };
+                // an eyeball mesh (materialtype 1) under an `eyes` material: the iris uv per
+                // vertex from the eyeball's frame (mstudioeyeball_t, in its bone's space)
+                let eye = (mdl_mesh.material_type == 1)
+                    .then(|| mm.eyeballs.get(mdl_mesh.material_param.max(0) as usize))
+                    .flatten()
+                    .filter(|_| mat.iris.is_some());
+                let iris_rgba =
+                    eye.and_then(|_| material::load_texture(mount, mat.iris.as_deref()?, 512).ok());
+                let eye_frame = eye.and_then(|e| {
+                    let b = mdl.bones.get(e.bone.max(0) as usize)?;
+                    Some(crate::props::EyeFrame::new(e, &b.pose_to_bone))
+                });
                 let mut remap: HashMap<u32, u32> = HashMap::new();
                 let mut verts = Vec::new();
                 let mut idx = Vec::with_capacity(mesh.indices.len());
@@ -4591,6 +4615,9 @@ impl WorldRenderer {
                         let Some(v) = vvd.vertices.get(vertex_base + i as usize) else {
                             continue;
                         };
+                        let iris_uv = eye_frame
+                            .as_ref()
+                            .map_or([-1.0, -1.0], |f| f.iris_uv(v.position));
                         verts.push(DynVertex {
                             position: v.position,
                             normal: v.normal,
@@ -4598,11 +4625,13 @@ impl WorldRenderer {
                             bones: v.bones,
                             weights: v.weights,
                             num_bones: v.num_bones,
+                            iris_uv,
                         });
                     }
                     idx.push(li);
                 }
-                let (bg, t) = self.material_part(gpu, key, mat, rgba, bump.as_ref());
+                let (bg, t) =
+                    self.material_part(gpu, key, mat, rgba, bump.as_ref(), iris_rgba.as_ref());
                 part_textures.push((key.to_string(), t));
                 parts.push((bg, verts, idx, mat.half_lambert, is_unlit(&mat.shader)));
             }
@@ -5592,7 +5621,11 @@ impl WorldRenderer {
                     verts.push(Vertex {
                         position: xf.transform_point3(p).to_array(),
                         uv: v.uv,
-                        lm_uv: self.white_uv,
+                        lm_uv: if v.iris_uv[0] > -0.5 {
+                            v.iris_uv
+                        } else {
+                            self.white_uv
+                        },
                         color: shade.to_array(),
                         alpha: 0.0,
                         lm_page: 0.0,
