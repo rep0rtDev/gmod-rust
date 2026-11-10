@@ -3402,7 +3402,8 @@ pub fn player_editor(
             crate::ugc::say(ctx.lang, "smwidget.color_plr", "Player color"),
             crate::ugc::say(ctx.lang, "smwidget.color_wep", "Physgun color"),
         ];
-        let size = ((lh - 80.0) * 0.5).clamp(96.0, 220.0);
+        // two mixers (square + swatch row) and their labels must fit the sheet
+        let size = ((lh - 112.0) * 0.5).clamp(96.0, 220.0);
         for (i, label) in labels.iter().enumerate() {
             let cy = ly + 8.0 + i as f32 * (size + 40.0);
             text(
