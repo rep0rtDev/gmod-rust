@@ -144,9 +144,10 @@ impl Server<'_> {
             .filter(|(_, n)| {
                 npc_stationary_class(&n.class)
                     || bird_class(&n.class)
+                    || npc_aircraft_class(&n.class)
                     || matches!(
                         n.class.as_str(),
-                        "npc_vortigaunt" | "npc_stalker" | "npc_antlionguard"
+                        "npc_vortigaunt" | "npc_stalker" | "npc_antlionguard" | "npc_strider"
                     )
             })
             .map(|(id, _)| *id)
@@ -168,7 +169,9 @@ impl Server<'_> {
                 "npc_vortigaunt" => self.tick_vortigaunt(id, now),
                 "npc_stalker" => self.tick_stalker(id, now),
                 "npc_antlionguard" => self.tick_guard(id, now),
+                "npc_strider" => self.tick_strider_gun(id, now),
                 c if bird_class(c) => self.tick_bird(id, now),
+                c if npc_aircraft_class(c) => self.tick_aircraft(id, now),
                 _ => {}
             }
         }
@@ -1090,5 +1093,292 @@ impl Server<'_> {
                 }
             }
         }
+    }
+}
+
+/// The Combine aircraft: bodies the schedule brain never moves, flown by `tick_aircraft`.
+pub fn npc_aircraft_class(class: &str) -> bool {
+    matches!(
+        class,
+        "npc_helicopter" | "npc_combinegunship" | "npc_combinedropship"
+    )
+}
+
+/// Armour the game's bullets do nothing to: the aircraft and the strider only come down to
+/// blasts (rockets, grenades, the AR2 ball); the dropship to nothing at all.
+pub fn npc_bullet_proof(class: &str) -> bool {
+    npc_aircraft_class(class) || class == "npc_strider"
+}
+
+/// A heavy gun's firing pattern: shots per burst, ticks between shots, ticks of warm-up before
+/// the first shot and of cooldown after the last, damage and spread (degrees) per bullet.
+#[derive(Clone, Copy)]
+struct HeavyGun {
+    shots: u32,
+    shot_ticks: u64,
+    warmup_ticks: u64,
+    cooldown_ticks: u64,
+    damage: f32,
+    spread_deg: f32,
+    /// Sounds: the warm-up, every shot, the burst's end (empty for none).
+    warmup: &'static str,
+    shot: &'static str,
+    stop: &'static str,
+    /// The gun's muzzle in the body's frame (forward, left, up), u.
+    muzzle: [f32; 3],
+}
+
+/// The attack helicopter's chin gun (HL2: a charge-up whine, then ~20 rounds a second for
+/// a couple of seconds, 3 damage each).
+const HELI_GUN: HeavyGun = HeavyGun {
+    shots: 40,
+    shot_ticks: 3,
+    warmup_ticks: 66,
+    cooldown_ticks: 200,
+    damage: 3.0,
+    spread_deg: 4.0,
+    warmup: "NPC_AttackHelicopter.ChargeGun",
+    shot: "NPC_AttackHelicopter.FireGun",
+    stop: "NPC_AttackHelicopter.ChargeDownGun",
+    muzzle: [70.0, 0.0, -40.0],
+};
+/// The gunship's belly cannon: a 10-round belt at 10 rounds a second, 5 damage each.
+const GUNSHIP_GUN: HeavyGun = HeavyGun {
+    shots: 10,
+    shot_ticks: 7,
+    warmup_ticks: 40,
+    cooldown_ticks: 170,
+    damage: 5.0,
+    spread_deg: 1.5,
+    warmup: "NPC_CombineGunship.CannonStartSound",
+    shot: "NPC_CombineGunship.CannonSound",
+    stop: "NPC_CombineGunship.CannonStopSound",
+    muzzle: [40.0, 0.0, -60.0],
+};
+/// The strider's minigun: 15 rounds at 10 a second, 5 damage each.
+const STRIDER_GUN: HeavyGun = HeavyGun {
+    shots: 15,
+    shot_ticks: 7,
+    warmup_ticks: 33,
+    cooldown_ticks: 200,
+    damage: 5.0,
+    spread_deg: 3.0,
+    warmup: "NPC_Strider.Charge",
+    shot: "NPC_Strider.FireMinigun",
+    stop: "",
+    muzzle: [40.0, -30.0, -80.0],
+};
+
+/// How far the aircraft and the strider engage a player (u).
+const AIR_RANGE: f32 = 4000.0;
+/// Yaw turn rate toward the enemy (deg/s).
+const AIR_TURN_RATE: f32 = 60.0;
+/// Horizontal band the aircraft hold from the enemy (u) and their flight speed (u/s).
+const AIR_BAND: (f32, f32) = (700.0, 1400.0);
+const AIR_SPEED: f32 = 250.0;
+/// The hover's bob (u, period in ticks).
+const AIR_BOB: f32 = 6.0;
+const AIR_BOB_TICKS: f32 = 200.0;
+
+/// Phases of a heavy gun: hovering, warming up, firing, cooling down.
+const GUN_IDLE: u8 = 0;
+const GUN_WARMUP: u8 = 1;
+const GUN_FIRING: u8 = 2;
+const GUN_COOLDOWN: u8 = 3;
+
+impl Server<'_> {
+    /// Turns the body toward `dir` (xy) at `rate` deg/s; true once it faces within 5 degrees.
+    fn npc_turn_toward(&mut self, id: u32, dir: Vec3, rate: f32) -> bool {
+        let Some(n) = self.npcs.get_mut(&id) else {
+            return false;
+        };
+        if dir.truncate().length_squared() < 1e-6 {
+            return true;
+        }
+        let want = dir.y.atan2(dir.x).to_degrees();
+        let diff = crate::wrap_deg(want - n.angles.y);
+        let step = rate * TICK;
+        n.angles.y = crate::wrap_deg(if diff.abs() <= step {
+            want
+        } else {
+            n.angles.y + step * diff.signum()
+        });
+        diff.abs() <= 5.0
+    }
+
+    /// Runs a heavy gun's burst cycle on `target` (or winds it down without one).
+    fn tick_heavy_gun(&mut self, id: u32, now: u64, gun: &HeavyGun, target: Option<u32>) {
+        let Some(n) = self.npcs.get(&id) else {
+            return;
+        };
+        let (pos, yaw, phase, until, next_hit, left) = (
+            n.pos,
+            n.angles.y,
+            n.special.phase,
+            n.special.until,
+            n.special.next_hit,
+            n.special.dir.x as u32,
+        );
+        let fwd = gm_sandbox::forward(0.0, yaw);
+        let left_dir = Vec3::new(-fwd.y, fwd.x, 0.0);
+        let muzzle = pos + fwd * gun.muzzle[0] + left_dir * gun.muzzle[1] + Vec3::Z * gun.muzzle[2];
+        let aim = target
+            .and_then(|p| self.eye(p))
+            .map(|(eye, _)| eye - Vec3::new(0.0, 0.0, 24.0));
+        match phase {
+            GUN_IDLE => {
+                let Some(aim) = aim else {
+                    return;
+                };
+                if !self.npc_turn_toward(id, aim - pos, AIR_TURN_RATE) {
+                    return;
+                }
+                if !gun.warmup.is_empty() {
+                    self.emit_sound(id, gun.warmup.to_string(), 1.0);
+                }
+                if let Some(n) = self.npcs.get_mut(&id) {
+                    n.special.phase = GUN_WARMUP;
+                    n.special.until = now + gun.warmup_ticks;
+                    n.special.target = target;
+                }
+            }
+            GUN_WARMUP => {
+                if let Some(aim) = aim {
+                    self.npc_turn_toward(id, aim - pos, AIR_TURN_RATE);
+                }
+                if now >= until {
+                    if let Some(n) = self.npcs.get_mut(&id) {
+                        n.special.phase = GUN_FIRING;
+                        n.special.next_hit = now;
+                        n.special.dir.x = gun.shots as f32;
+                    }
+                }
+            }
+            GUN_FIRING => {
+                let Some(aim) = aim.filter(|_| left > 0) else {
+                    if !gun.stop.is_empty() {
+                        self.emit_sound(id, gun.stop.to_string(), 1.0);
+                    }
+                    if let Some(n) = self.npcs.get_mut(&id) {
+                        n.special.phase = GUN_COOLDOWN;
+                        n.special.until = now + gun.cooldown_ticks;
+                    }
+                    return;
+                };
+                self.npc_turn_toward(id, aim - pos, AIR_TURN_RATE);
+                if now < next_hit {
+                    return;
+                }
+                let dir = (aim - muzzle).normalize_or_zero();
+                let salt = now ^ (u64::from(id) << 20) ^ u64::from(left);
+                let dir = crate::spread_dir(dir, gun.spread_deg, 1.0, salt);
+                self.npc_fire_bullet(id, muzzle + dir * 8.0, dir, gun.damage);
+                self.emit_sound(id, gun.shot.to_string(), 1.0);
+                if let Some(n) = self.npcs.get_mut(&id) {
+                    n.special.next_hit = now + gun.shot_ticks;
+                    n.special.dir.x = (left - 1) as f32;
+                }
+            }
+            _ => {
+                if let Some(aim) = aim {
+                    self.npc_turn_toward(id, aim - pos, AIR_TURN_RATE);
+                }
+                if now >= until {
+                    if let Some(n) = self.npcs.get_mut(&id) {
+                        n.special.phase = GUN_IDLE;
+                    }
+                }
+            }
+        }
+    }
+
+    /// The helicopter, gunship and dropship: hover at the spawn height with a slow bob, keep
+    /// AIR_BAND from the nearest player in sight and (the armed two) shoot at them.
+    fn tick_aircraft(&mut self, id: u32, now: u64) {
+        let Some(n) = self.npcs.get(&id) else {
+            return;
+        };
+        let (class, pos, hostile, anchor, spawn_tick) = (
+            n.class.clone(),
+            n.pos,
+            npc_hostile_to_players(n),
+            n.special.anchor,
+            n.spawn_tick,
+        );
+        let anchor = match anchor {
+            Some(a) => a,
+            None => {
+                let rotors = match class.as_str() {
+                    "npc_helicopter" => "NPC_AttackHelicopter.Rotors",
+                    "npc_combinegunship" => "NPC_CombineGunship.RotorSound",
+                    _ => "NPC_CombineDropship.RotorLoop",
+                };
+                self.emit_sound(id, rotors.to_string(), 1.0);
+                if let Some(n) = self.npcs.get_mut(&id) {
+                    n.special.anchor = Some(pos);
+                    n.ai.state = crate::ai::NPC_STATE_IDLE;
+                }
+                pos
+            }
+        };
+        let target = hostile
+            .then(|| self.special_nearest_player(pos, pos, AIR_RANGE, None))
+            .flatten();
+        // the hover: hold the spawn height (bobbing) and the band from the enemy
+        let bob =
+            ((now - spawn_tick) as f32 / AIR_BOB_TICKS * std::f32::consts::TAU).sin() * AIR_BOB;
+        let want_z = anchor.z + bob;
+        let mut vel = Vec3::new(0.0, 0.0, (want_z - pos.z).clamp(-60.0, 60.0));
+        if let Some(p) = target.and_then(|t| self.players.get(&t)) {
+            let to = (p.state.origin - pos).truncate();
+            let dist = to.length();
+            if dist > 1e-3 {
+                let along = to / dist;
+                if dist > AIR_BAND.1 {
+                    vel += along.extend(0.0) * AIR_SPEED;
+                } else if dist < AIR_BAND.0 {
+                    vel -= along.extend(0.0) * AIR_SPEED;
+                }
+            }
+        }
+        if vel.length_squared() > 1e-3 {
+            let (mins, maxs) = (self.npcs[&id].mins, self.npcs[&id].maxs);
+            let want = pos + vel * TICK;
+            let tr =
+                self.collision
+                    .trace_box(pos, want, mins, maxs, gm_collision::MASK_PLAYERSOLID);
+            if let Some(n) = self.npcs.get_mut(&id) {
+                n.pos = if tr.start_solid { want } else { tr.end };
+                n.ai.state = if target.is_some() {
+                    crate::ai::NPC_STATE_COMBAT
+                } else {
+                    crate::ai::NPC_STATE_IDLE
+                };
+            }
+        }
+        match class.as_str() {
+            "npc_helicopter" => self.tick_heavy_gun(id, now, &HELI_GUN, target),
+            "npc_combinegunship" => self.tick_heavy_gun(id, now, &GUNSHIP_GUN, target),
+            _ => {
+                if let Some(t) = target.and_then(|t| self.players.get(&t)) {
+                    let dir = t.state.origin - pos;
+                    self.npc_turn_toward(id, dir, AIR_TURN_RATE);
+                }
+            }
+        }
+    }
+
+    /// The strider's minigun at the nearest player in sight (its body stands where it is, as
+    /// measured; the skewer is its melee move).
+    fn tick_strider_gun(&mut self, id: u32, now: u64) {
+        let Some(n) = self.npcs.get(&id) else {
+            return;
+        };
+        if !npc_hostile_to_players(n) || n.held {
+            return;
+        }
+        let pos = n.pos;
+        let target = self.special_nearest_player(pos, pos, AIR_RANGE, None);
+        self.tick_heavy_gun(id, now, &STRIDER_GUN, target);
     }
 }

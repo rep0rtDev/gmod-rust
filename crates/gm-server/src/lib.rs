@@ -15801,6 +15801,12 @@ impl<'w> Server<'w> {
         if n.target == Some(attacker) {
             n.last_enemy_damage = tick;
         }
+        if bullet && npc_special::npc_bullet_proof(&n.class) {
+            return false;
+        }
+        if n.class == "npc_combinedropship" {
+            return false;
+        }
         // the rollermine has no health to lose: a bullet spins it (its shell rings), a blast
         // or fire sets it off a moment later (`npc_special::ROLLER_DETONATE_PHASE`)
         if n.class == "npc_rollermine" && n.special.phase != npc_special::ROLLER_EXPLODING_PHASE {
@@ -17370,7 +17376,11 @@ impl<'w> Server<'w> {
         let npc_bodies: Vec<(u32, gm_sandbox::PropBody)> = self
             .npcs
             .iter()
-            .filter(|(_, n)| n.dead_at.is_none() && n.body.is_none())
+            .filter(|(_, n)| {
+                n.dead_at.is_none()
+                    && n.body.is_none()
+                    && !npc_special::npc_aircraft_class(&n.class)
+            })
             .map(|(&i, n)| {
                 let hulls = vec![vec![
                     (Vec3::X, n.maxs.x),
@@ -17399,7 +17409,11 @@ impl<'w> Server<'w> {
         let ids: Vec<u32> = self
             .npcs
             .iter()
-            .filter(|(_, n)| n.dead_at.is_none() && n.body.is_none())
+            .filter(|(_, n)| {
+                n.dead_at.is_none()
+                    && n.body.is_none()
+                    && !npc_special::npc_aircraft_class(&n.class)
+            })
             .map(|(id, _)| *id)
             .collect();
         let now = self.tick_count;
@@ -18753,7 +18767,8 @@ impl<'w> Server<'w> {
         if n.dead_at.is_some() || n.passive || !npc_hostile_to_players(n) || n.ai.scripted {
             return;
         }
-        if npc_special::npc_stationary_class(&n.class) {
+        if npc_special::npc_stationary_class(&n.class) || npc_special::npc_aircraft_class(&n.class)
+        {
             return;
         }
         // cover and reload timers run whether or not the enemy is in sight (the run to the
