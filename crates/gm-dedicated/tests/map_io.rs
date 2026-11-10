@@ -793,3 +793,227 @@ fn logic_and_math_entities_pass_values_through_their_outputs() {
         kind(&server, "cmp")
     );
 }
+
+fn def_at(class: &str, kv: &[(&str, &str)], origin: Vec3) -> gm_server::mapio::MapEntityDef {
+    gm_server::mapio::MapEntityDef {
+        classname: class.into(),
+        kv: kv
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect(),
+        origin,
+        angles: Vec3::ZERO,
+        hulls: Vec::new(),
+        mins: Vec3::ZERO,
+        maxs: Vec3::ZERO,
+    }
+}
+
+#[test]
+fn point_template_spawns_its_props_on_force_spawn_and_the_maker_offsets_them() {
+    let Some((world, mount)) = load() else {
+        return;
+    };
+    let mut server = gm_server::Server::new(&world.collision, world.physics, world.world_body);
+    let model = "models/props_junk/wood_crate001a.mdl";
+    server.register_model(model, gm_dedicated::model_info(&mount, model).unwrap());
+    let defs = vec![
+        def_at(
+            "prop_physics",
+            &[
+                ("targetname", "tpl_crate"),
+                ("model", "models/props_junk/wood_crate001a.mdl"),
+            ],
+            Vec3::new(100.0, 0.0, 100.0),
+        ),
+        def_at(
+            "point_template",
+            &[("targetname", "tpl"), ("Template01", "tpl_crate")],
+            Vec3::new(0.0, 0.0, 100.0),
+        ),
+        def_at(
+            "env_entity_maker",
+            &[
+                ("targetname", "maker"),
+                ("EntityTemplate", "tpl"),
+                ("PostSpawnSpeed", "300"),
+                ("PostSpawnDirection", "0 0 0"),
+            ],
+            Vec3::new(-800.0, -800.0, 300.0),
+        ),
+    ];
+    server.set_map_entities(defs, world.surface);
+    let idle = std::collections::BTreeMap::new();
+    server.tick(&idle);
+    // the templated prop is not in the map (the dedicated loader also leaves it out of
+    // map_props); its definition is kept
+    assert_eq!(server.sandbox.props().len(), 0);
+    assert_eq!(server.map_io.templates.len(), 1);
+    let id_of = |server: &gm_server::Server, name: &str| {
+        server
+            .map_io
+            .entities
+            .iter()
+            .find(|e| e.targetname == name)
+            .map(|e| e.id)
+            .unwrap()
+    };
+    let tpl = id_of(&server, "tpl");
+    server.map_input(tpl, "ForceSpawn", "", 0);
+    server.tick(&idle);
+    let props = server.sandbox.props();
+    assert_eq!(props.len(), 1, "ForceSpawn spawns the template's prop");
+    let p = &props[0];
+    assert!(p.model.contains("wood_crate001a"));
+    assert!(
+        (p.pos - Vec3::new(100.0, 0.0, 100.0)).length() < 2.0,
+        "at its own place: {:?}",
+        p.pos
+    );
+    let (class, name) = server.activator_identity(p.id);
+    assert_eq!(
+        (class.as_str(), name.as_str()),
+        ("prop_physics", "tpl_crate")
+    );
+    // the maker spawns it at its own place plus the template offset, moving at PostSpawnSpeed
+    let maker = id_of(&server, "maker");
+    server.map_input(maker, "ForceSpawn", "", 0);
+    server.tick(&idle);
+    let props = server.sandbox.props();
+    assert_eq!(props.len(), 2);
+    let p = &props[1];
+    assert!(
+        (p.pos - Vec3::new(-700.0, -800.0, 300.0)).length() < 20.0,
+        "maker + offset: {:?}",
+        p.pos
+    );
+    let (id, start) = (p.id, p.pos);
+    for _ in 0..10 {
+        server.tick(&idle);
+    }
+    let p = server.sandbox.props().iter().find(|p| p.id == id).unwrap();
+    assert!(
+        p.pos.x - start.x > 20.0,
+        "PostSpawnSpeed along +x: {:?} -> {:?}",
+        start,
+        p.pos
+    );
+}
+
+#[test]
+fn trigger_filtername_rejects_the_filtered_activator() {
+    let Some((world, _mount)) = load() else {
+        return;
+    };
+    let mut server = gm_server::Server::new(&world.collision, world.physics, world.world_body);
+    // a trigger for everything (0x40) at the player's spawn, filtered to NPCs only, chained
+    // to a relay so the touch leaves a trace; a filter_multi with Negated inverts it
+    let spawn = Vec3::new(823.235, -500.0, -143.0);
+    let mut trig = def_at(
+        "trigger_multiple",
+        &[
+            ("targetname", "trig"),
+            ("spawnflags", "64"),
+            ("filtername", "only_npc"),
+            ("OnStartTouch", "relay,Trigger,,0,-1"),
+        ],
+        spawn,
+    );
+    trig.mins = Vec3::splat(-64.0);
+    trig.maxs = Vec3::new(64.0, 64.0, 128.0);
+    // a box hull (entity space) so the trigger has a volume
+    let (lo, hi) = (trig.mins, trig.maxs);
+    trig.hulls = vec![gm_server::mapio::HullDef {
+        planes: vec![
+            (Vec3::X, hi.x),
+            (Vec3::NEG_X, -lo.x),
+            (Vec3::Y, hi.y),
+            (Vec3::NEG_Y, -lo.y),
+            (Vec3::Z, hi.z),
+            (Vec3::NEG_Z, -lo.z),
+        ],
+        points: (0..8)
+            .map(|i| {
+                Vec3::new(
+                    if i & 1 == 0 { lo.x } else { hi.x },
+                    if i & 2 == 0 { lo.y } else { hi.y },
+                    if i & 4 == 0 { lo.z } else { hi.z },
+                )
+            })
+            .collect(),
+        phys_points: Vec::new(),
+    }];
+    let mut trig2 = trig.clone();
+    trig2
+        .kv
+        .retain(|(k, _)| k != "filtername" && k != "targetname" && k != "OnStartTouch");
+    trig2.kv.push(("targetname".into(), "trig2".into()));
+    trig2.kv.push(("filtername".into(), "not_npc".into()));
+    trig2
+        .kv
+        .push(("OnStartTouch".into(), "relay2,Trigger,,0,-1".into()));
+    let defs = vec![
+        trig,
+        trig2,
+        def_at(
+            "filter_activator_class",
+            &[("targetname", "only_npc"), ("filterclass", "npc_*")],
+            Vec3::ZERO,
+        ),
+        def_at(
+            "filter_multi",
+            &[
+                ("targetname", "not_npc"),
+                ("Filter01", "only_npc"),
+                ("Negated", "1"),
+            ],
+            Vec3::ZERO,
+        ),
+        def_at(
+            "logic_relay",
+            &[
+                ("targetname", "relay"),
+                ("OnTrigger", "relay,Disable,,0,-1"),
+            ],
+            Vec3::ZERO,
+        ),
+        def_at(
+            "logic_relay",
+            &[
+                ("targetname", "relay2"),
+                ("OnTrigger", "relay2,Disable,,0,-1"),
+            ],
+            Vec3::ZERO,
+        ),
+    ];
+    server.set_map_entities(defs, world.surface);
+    assert!(server.map_io.passes_filter("not_npc", "player", ""));
+    assert!(!server.map_io.passes_filter("only_npc", "player", ""));
+    assert!(server.map_io.passes_filter("only_npc", "npc_citizen", ""));
+    assert!(server.map_io.passes_filter("nonexistent", "player", ""));
+    server.add_player(1, spawn, Vec3::ZERO);
+    let idle = std::collections::BTreeMap::from([(1, gm_server::PlayerCmd::default())]);
+    for _ in 0..5 {
+        server.tick(&idle);
+    }
+    let relay_enabled = |server: &gm_server::Server, name: &str| {
+        let e = server
+            .map_io
+            .entities
+            .iter()
+            .find(|e| e.targetname == name)
+            .unwrap();
+        match e.kind {
+            gm_server::mapio::Kind::Relay { enabled, .. } => enabled,
+            _ => panic!("relay"),
+        }
+    };
+    assert!(
+        relay_enabled(&server, "relay"),
+        "the npc-only trigger ignored the player"
+    );
+    assert!(
+        !relay_enabled(&server, "relay2"),
+        "the negated filter let the player through"
+    );
+}

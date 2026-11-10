@@ -87,9 +87,30 @@ pub fn load_world(mount: &gm_content::Mount, map: &str) -> Result<LoadedWorld> {
             }
         }
     }
+    // a point_template's Template01..16 props are spawned by ForceSpawn, not at load
+    // (unless its spawnflag 1 keeps them in the map)
+    let templated: Vec<String> = bsp
+        .entities
+        .iter()
+        .filter(|e| e.classname() == "point_template")
+        .filter(|e| {
+            e.get("spawnflags")
+                .and_then(|f| f.parse::<u32>().ok())
+                .unwrap_or(0)
+                & 1
+                == 0
+        })
+        .flat_map(|e| (1..=16).filter_map(move |k| e.get(&format!("Template{k:02}"))))
+        .map(|n| n.trim().to_ascii_lowercase())
+        .filter(|n| !n.is_empty())
+        .collect();
     let map_props: Vec<MapProp> = bsp
         .entities
         .iter()
+        .filter(|e| {
+            !e.get("targetname")
+                .is_some_and(|n| templated.contains(&n.trim().to_ascii_lowercase()))
+        })
         .filter_map(|e| {
             let c = e.classname();
             let dynamic = matches!(c, "prop_dynamic" | "prop_dynamic_override");

@@ -11,6 +11,7 @@ use crate::Server;
 use glam::{Quat, Vec3};
 use gm_collision::Convex;
 use gm_physics::{BodyHandle, Surface};
+use std::collections::HashMap;
 
 /// Map entity ids start here (above the sandbox's and below the projectiles').
 pub const MAP_ENT_ID_BASE: u32 = 0x2000_0000;
@@ -409,6 +410,13 @@ pub struct MapIo {
     /// Convexes of the solid moving brushes, rebuilt when a pose changes.
     convexes: Vec<Convex>,
     convexes_dirty: bool,
+    /// A `point_template`'s `Template01..16` entities (template id, their definition), kept
+    /// for `ForceSpawn`; removed from the map at load unless spawnflag 1 keeps them.
+    pub templates: Vec<(u32, MapEntityDef)>,
+    /// Next id for an entity spawned from a template.
+    next_id: u32,
+    /// `targetname` of the props spawned from templates, for the activator filters.
+    pub prop_names: HashMap<u32, String>,
 }
 
 const TICK: f32 = gm_core::tick::DEFAULT_TICK_INTERVAL;
@@ -681,6 +689,57 @@ impl MapIo {
             .collect()
     }
 
+    /// `PassesFilter` of the `filter_*` entity named `filter` for an activator of `class` and
+    /// targetname `name`: `filter_activator_name` (`filtername`, `*` suffix wildcard),
+    /// `filter_activator_class` (`filterclass`), `filter_multi` (`Filter01..10`, `filtertype`
+    /// 0 all / 1 any), each inverted by `Negated`; no or unknown filter passes.
+    pub fn passes_filter(&self, filter: &str, class: &str, name: &str) -> bool {
+        self.passes_filter_depth(filter, class, name, 0)
+    }
+
+    fn passes_filter_depth(&self, filter: &str, class: &str, name: &str, depth: u32) -> bool {
+        let filter = filter.trim();
+        if filter.is_empty() || depth > 8 {
+            return true;
+        }
+        let Some(f) = self
+            .entities
+            .iter()
+            .find(|e| e.alive && e.targetname.eq_ignore_ascii_case(filter))
+        else {
+            return true;
+        };
+        let matches = |pattern: &str, s: &str| match pattern.trim().strip_suffix('*') {
+            Some(prefix) => s
+                .to_ascii_lowercase()
+                .starts_with(&prefix.to_ascii_lowercase()),
+            None => pattern.trim().eq_ignore_ascii_case(s),
+        };
+        let negated = f.def.num("Negated", 0.0) != 0.0;
+        let pass = match f.classname.as_str() {
+            "filter_activator_name" => matches(f.def.get("filtername").unwrap_or(""), name),
+            "filter_activator_class" => matches(f.def.get("filterclass").unwrap_or(""), class),
+            "filter_multi" => {
+                let subs: Vec<&str> = (1..=10)
+                    .filter_map(|i| f.def.get(&format!("Filter{i:02}")))
+                    .filter(|n| !n.trim().is_empty())
+                    .collect();
+                let any = f.def.num("filtertype", 0.0) != 0.0;
+                if subs.is_empty() {
+                    true
+                } else if any {
+                    subs.iter()
+                        .any(|n| self.passes_filter_depth(n, class, name, depth + 1))
+                } else {
+                    subs.iter()
+                        .all(|n| self.passes_filter_depth(n, class, name, depth + 1))
+                }
+            }
+            _ => return true,
+        };
+        pass != negated
+    }
+
     /// The solid moving brushes as player-trace convexes.
     pub fn convexes(&mut self) -> &[Convex] {
         if self.convexes_dirty {
@@ -785,6 +844,36 @@ impl Server<'_> {
             e.dirty = false;
             io.entities.push(e);
         }
+        // point_template: its Template01..16 entities are kept as definitions for ForceSpawn
+        // and, unless spawnflag 1 ("don't remove template entities"), leave the map
+        let mut remove = Vec::new();
+        for i in 0..io.entities.len() {
+            if io.entities[i].classname != "point_template" {
+                continue;
+            }
+            let keep = io.entities[i].flags & 1 != 0;
+            let names: Vec<String> = (1..=16)
+                .filter_map(|k| io.entities[i].def.get(&format!("Template{k:02}")))
+                .map(|n| n.trim().to_ascii_lowercase())
+                .filter(|n| !n.is_empty())
+                .collect();
+            for j in 0..io.entities.len() {
+                if j != i && names.contains(&io.entities[j].targetname.to_ascii_lowercase()) {
+                    io.templates
+                        .push((io.entities[i].id, io.entities[j].def.clone()));
+                    if !keep {
+                        remove.push(j);
+                    }
+                }
+            }
+        }
+        for j in remove {
+            io.entities[j].alive = false;
+            if let Some(b) = io.entities[j].body.take() {
+                self.physics.remove_body(b);
+            }
+        }
+        io.next_id = MAP_ENT_ID_BASE + io.entities.len() as u32;
         io.convexes_dirty = true;
         self.map_io = io;
     }
@@ -1340,6 +1429,9 @@ impl Server<'_> {
         let was_moving = e.moving();
         let mut ambient: Option<(bool, f32)> = None;
         let mut env = false;
+        // (template id, spawn base for an env_entity_maker) of a ForceSpawn to run after
+        let mut force_spawn: Option<(String, Option<(Vec3, Quat)>)> = None;
+        let mut test_activator = false;
         match &mut e.kind {
             Kind::Mover {
                 state,
@@ -1570,6 +1662,22 @@ impl Server<'_> {
                 let _ = before;
             }
             Kind::Logic => match (e.classname.as_str(), input_lc.as_str()) {
+                ("point_template", "forcespawn") => {
+                    force_spawn = Some((e.targetname.clone(), None));
+                }
+                ("env_entity_maker", "forcespawn") => {
+                    let template = e.def.get("EntityTemplate").unwrap_or("").to_string();
+                    force_spawn = Some((template, Some((e.pos, e.rot))));
+                }
+                ("env_entity_maker", "forcespawnatentityorigin") => {
+                    let template = e.def.get("EntityTemplate").unwrap_or("").to_string();
+                    force_spawn = Some((template, Some((e.pos, e.rot))));
+                    env = true;
+                }
+                (
+                    "filter_activator_name" | "filter_activator_class" | "filter_multi",
+                    "testactivator",
+                ) => test_activator = true,
                 (c, _) if c.starts_with("env_") => env = true,
                 ("logic_case", "invalue") => {
                     let wanted = param.trim();
@@ -1801,6 +1909,46 @@ impl Server<'_> {
                 });
             }
         }
+        if test_activator {
+            let (class, name) = self.activator_identity(activator);
+            let filter = self.map_io.entities[idx].targetname.clone();
+            let out = if self.map_io.passes_filter(&filter, &class, &name) {
+                "OnPass"
+            } else {
+                "OnFail"
+            };
+            self.map_io.fire_output(now, idx, out, activator);
+        }
+        if let Some((template, base)) = force_spawn {
+            let base = match (base, input_lc.as_str()) {
+                // ForceSpawnAtEntityOrigin: the named entity's place instead of the maker's
+                (Some((_, rot)), "forcespawnatentityorigin") => {
+                    let at = self
+                        .map_io
+                        .find_by_name(param)
+                        .first()
+                        .and_then(|id| self.map_io.get(*id))
+                        .map(|t| t.pos)
+                        .or_else(|| self.players.get(&activator).map(|p| p.state.origin));
+                    match at {
+                        Some(p) => Some((p, rot)),
+                        None => {
+                            self.map_io
+                                .fire_output(now, idx, "OnEntityFailedSpawn", activator);
+                            return;
+                        }
+                    }
+                }
+                (b, _) => b,
+            };
+            let spawned = self.spawn_template(&template, base, idx);
+            let out = if spawned > 0 {
+                "OnEntitySpawned"
+            } else {
+                "OnEntityFailedSpawn"
+            };
+            self.map_io.fire_output(now, idx, out, activator);
+        }
         for (name, value) in valued {
             self.map_io
                 .fire_output_value(now, idx, &name, activator, &value);
@@ -1808,6 +1956,107 @@ impl Server<'_> {
         for name in events {
             self.map_io.fire_output(now, idx, name, activator);
         }
+    }
+
+    /// Classname and targetname of a map I/O activator, for the `filter_*` entities:
+    /// players are `player`, NPCs and props their class, templated props keep their name.
+    pub fn activator_identity(&self, id: u32) -> (String, String) {
+        if self.players.contains_key(&id) {
+            return ("player".to_string(), String::new());
+        }
+        if let Some(n) = self.npcs.get(&id) {
+            return (n.class.clone(), String::new());
+        }
+        if let Some(e) = self.map_io.get(id) {
+            return (e.classname.clone(), e.targetname.clone());
+        }
+        if self.sandbox.props().iter().any(|p| p.id == id) {
+            let name = self.map_io.prop_names.get(&id).cloned().unwrap_or_default();
+            return ("prop_physics".to_string(), name);
+        }
+        (String::new(), String::new())
+    }
+
+    /// Spawns the `point_template` named `template`'s entities: at their own places, or, for
+    /// an env_entity_maker, at `base` keeping their offsets from the template (rotated with
+    /// the maker). Props become server props (with `PostSpawnSpeed` along the maker's
+    /// `PostSpawnDirection`); other entities are built anew with fresh ids. Returns the count.
+    fn spawn_template(
+        &mut self,
+        template: &str,
+        base: Option<(Vec3, Quat)>,
+        maker: usize,
+    ) -> usize {
+        let Some(pt) = self.map_io.entities.iter().find(|e| {
+            e.classname == "point_template" && e.targetname.eq_ignore_ascii_case(template.trim())
+        }) else {
+            return 0;
+        };
+        let (pt_id, pt_pos) = (pt.id, pt.pos);
+        let defs: Vec<MapEntityDef> = self
+            .map_io
+            .templates
+            .iter()
+            .filter(|(owner, _)| *owner == pt_id)
+            .map(|(_, d)| d.clone())
+            .collect();
+        let maker_def = &self.map_io.entities[maker].def;
+        let post_speed = maker_def.num("PostSpawnSpeed", 0.0);
+        let post_dir =
+            parse_vec3(maker_def.get("PostSpawnDirection").unwrap_or("")).unwrap_or(Vec3::ZERO);
+        let mut spawned = 0;
+        for def in defs {
+            let (pos, angles) = match base {
+                None => (def.origin, def.angles),
+                Some((bp, brot)) => {
+                    let (_, yaw, _) = brot.to_euler(glam::EulerRot::ZYX);
+                    (
+                        bp + brot * (def.origin - pt_pos),
+                        def.angles + Vec3::new(0.0, yaw.to_degrees(), 0.0),
+                    )
+                }
+            };
+            let c = def.classname.as_str();
+            if c.starts_with("prop_physics") || c.starts_with("prop_dynamic") {
+                let Some(model) = def.get("model").map(str::to_string) else {
+                    continue;
+                };
+                let frozen = c.starts_with("prop_dynamic");
+                let Some(id) = self.script_spawn_prop(0, &model, pos, angles, frozen) else {
+                    continue;
+                };
+                let flags = def.num("spawnflags", 0.0) as u32;
+                if flags & 0x30 != 0 {
+                    self.set_break_flags(id, flags, def.num("PressureDelay", 0.0));
+                }
+                if let Some(name) = def.get("targetname") {
+                    self.map_io.prop_names.insert(id, name.to_string());
+                }
+                if post_speed > 0.0 && !frozen {
+                    let dir = match base {
+                        Some((_, brot)) => brot * angles_dir(post_dir),
+                        None => angles_dir(post_dir),
+                    };
+                    if let Some(b) = self.bodies.get(&id).copied() {
+                        self.physics.set_asleep(b, false);
+                        self.physics.set_velocity(b, dir * post_speed, Vec3::ZERO);
+                    }
+                }
+                spawned += 1;
+            } else {
+                let mut def = def;
+                def.origin = pos;
+                def.angles = angles;
+                let id = self.map_io.next_id;
+                self.map_io.next_id += 1;
+                let mut e = build(def, id);
+                e.dirty = false;
+                self.map_io.entities.push(e);
+                self.map_io.convexes_dirty = true;
+                spawned += 1;
+            }
+        }
+        spawned
     }
 
     /// Advances the movers, touches the triggers, fires the timers, delivers due inputs.
@@ -2196,10 +2445,18 @@ impl Server<'_> {
                 .filter(|_| all || flags & 1 != 0)
                 .chain(npcs.iter().filter(|_| all || flags & 2 != 0))
                 .chain(props.iter().filter(|_| all || flags & (8 | 4) != 0));
+            let filter = e.def.get("filtername").unwrap_or("").to_string();
             for (id, lo, hi) in candidates {
                 if e.overlaps_box(*lo, *hi) {
                     inside.push(*id);
                 }
+            }
+            if !filter.trim().is_empty() {
+                // the trigger's `filtername` filter: a rejected toucher never starts a touch
+                inside.retain(|id| {
+                    let (class, name) = self.activator_identity(*id);
+                    self.map_io.passes_filter(&filter, &class, &name)
+                });
             }
             let started: Vec<u32> = inside
                 .iter()
