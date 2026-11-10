@@ -27,6 +27,9 @@ pub struct Material {
     pub water_fog: Option<([f32; 3], f32, f32)>,
     /// `Water`: `$bottommaterial`, the material of the same volume seen from inside.
     pub bottom_material: Option<String>,
+    /// `Water` with `$abovewater 0`: the volume's underside, drawn only while the eye is below
+    /// the surface (seen from above it would paint the refraction copy over the real surface).
+    pub below_water: bool,
     /// `$detail`: a tiling texture multiplied into the base.
     pub detail: Option<Detail>,
     /// `$basetexturetransform2` as a 2x3 uv matrix (row-major 2x2 then translation).
@@ -263,6 +266,7 @@ pub fn load_path(mount: &Mount, name: &str, vmt_path: &str) -> Result<Material> 
         // Refract (sprites/heatwave) reads the same $normalmap / $refractamount
         if mat.water || shader == "refract" {
             mat.bottom_material = get("$bottommaterial");
+            mat.below_water = mat.water && matches!(get("$abovewater").as_deref(), Some("0"));
             mat.bumpmap = get("$normalmap").or_else(|| get("$bumpmap"));
             mat.reflect_entities = matches!(get("$reflectentities").as_deref(), Some("1"));
             let amount = |k: &str, d: f32| get(k).and_then(|v| v.parse::<f32>().ok()).unwrap_or(d);

@@ -638,6 +638,8 @@ struct Batch {
     nocull: bool,
     /// `Water`: drawn in the water pass over the scene depth.
     water: bool,
+    /// `$abovewater 0`: only while the eye is below the surface (`centre.z`).
+    below_water: bool,
     centre: Vec3,
 }
 
@@ -3014,6 +3016,7 @@ impl WorldRenderer {
                 translucent: mat.translucent,
                 nocull: mat.nocull,
                 water: mat.water || is_mirror(mat),
+                below_water: mat.below_water,
                 centre,
             });
             indices_all.extend_from_slice(idx);
@@ -3989,7 +3992,9 @@ impl WorldRenderer {
         let water: Vec<&Batch> = self
             .batches
             .iter()
-            .filter(|b| b.sky == sky && b.water)
+            .filter(|b| {
+                b.sky == sky && b.water && !(b.below_water && camera.position.z > b.centre.z)
+            })
             .collect();
         if !water.is_empty() && self.clip_for(false).is_none() {
             let mut state = self.reflect.lock().unwrap();
