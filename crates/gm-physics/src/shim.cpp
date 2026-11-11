@@ -535,6 +535,7 @@ public:
 	// (docs/spec/physics.md); GMP_PUSH_FRACTION overrides for experiments
 	float push_fraction = getenv("GMP_PUSH_FRACTION") ? (float)atof(getenv("GMP_PUSH_FRACTION")) : 0.075f;
 	bool debug = getenv("GMP_IMPACT_DEBUG") != nullptr;
+	bool no_impact = getenv("GMP_NO_IMPACT") != nullptr; // experiment knob: Jolt's own contacts only, see docs/spec/physics.md
 	std::unordered_map<JPH::uint64, std::vector<size_t>> contact_points; // pair -> hull vertex indices that already impacted
 	// resting contact anchors: a body pushed while at rest keeps its tangential velocity in the
 	// push step (no friction) and is caught at its leading edge the step after
@@ -623,7 +624,7 @@ public:
 		float elasticity = std::min(1.0f, std::max(0.0f, s1.elasticity * s2.elasticity));
 		s.mCombinedFriction = friction;
 		s.mCombinedRestitution = 0.0f;
-		if (!enabled || m.mRelativeContactPointsOn1.empty()) return;
+		if (!enabled || no_impact || m.mRelativeContactPointsOn1.empty()) return;
 		// a manifold against the world whose normal is not the world surface normal under
 		// the contact point is an edge contact at a seam between two brushes (the normal
 		// turns from tick to tick: (-0.87,-0.49) then (-0.46,-0.89) on `phys_drop_tilted`);

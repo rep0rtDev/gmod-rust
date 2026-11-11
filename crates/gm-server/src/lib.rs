@@ -13573,8 +13573,9 @@ impl<'w> Server<'w> {
         }
         let hit = self.tool_hit(player)?;
         let mut pos = hit.pos + hit.normal * offset;
+        let bodies = self.prop_bodies();
         // `Spawn_SENT` (commands.lua): a spawn point behind a brush comes halfway back out
-        if let Some(oob) = gm_sandbox::trace_line(self.collision, &[], hit.pos, pos) {
+        if let Some(oob) = gm_sandbox::trace_line(self.collision, &bodies, hit.pos, pos) {
             pos = oob.pos + oob.normal * (hit.pos.distance(oob.pos) / 2.0);
         }
         if !self.models.contains_key(model) {
@@ -13590,8 +13591,8 @@ impl<'w> Server<'w> {
                 let mut hi = Vec3::ZERO;
                 lo[axis] = b.min[axis];
                 hi[axis] = b.max[axis];
-                let down = gm_sandbox::trace_line(self.collision, &[], pos, pos + lo);
-                let up = gm_sandbox::trace_line(self.collision, &[], pos, pos + hi);
+                let down = gm_sandbox::trace_line(self.collision, &bodies, pos, pos + lo);
+                let up = gm_sandbox::trace_line(self.collision, &bodies, pos, pos + hi);
                 match (down, up) {
                     (Some(_), Some(_)) => {}
                     (Some(d), None) => pos += d.pos - (pos + lo),
