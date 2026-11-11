@@ -798,6 +798,12 @@ pub struct WorldRenderer {
     light: crate::light::ModelLight,
     /// Lighting by model position (8 u cells), rebuilt as models move.
     light_cache: std::cell::RefCell<HashMap<[i32; 3], crate::light::LocalLight>>,
+    /// Frame counter for [`model_cache`](Self::model_cache), stepped by [`draw`](Self::draw).
+    frame: std::cell::Cell<u64>,
+    /// The frame's skinned entity meshes on the GPU: the shadow, reflection and main passes
+    /// all draw the same items, so they are skinned and uploaded once per frame, keyed by
+    /// the frame and the items slice (pointer, length).
+    model_cache: std::cell::RefCell<Option<ModelCacheEntry>>,
     sky2d: Option<SkyCube>,
 }
 
@@ -3468,6 +3474,8 @@ impl WorldRenderer {
             white_uv,
             light,
             light_cache: Default::default(),
+            frame: Default::default(),
+            model_cache: Default::default(),
         })
     }
 
@@ -3489,6 +3497,7 @@ impl WorldRenderer {
         scene_src: Option<&wgpu::Texture>,
         reflect_items: &[DrawItem<'_>],
     ) {
+        self.frame.set(self.frame.get() + 1);
         let mut vps = [None; DEPTH_LAYERS];
         for (slot, (_, l)) in self.flashlights.iter().take(SHADOW_LAYERS).enumerate() {
             vps[slot] =
@@ -4248,23 +4257,7 @@ impl WorldRenderer {
         u.view_proj = vp.to_cols_array_2d();
         gpu.queue
             .write_buffer(&self.camera_buffer, 0, bytemuck::bytes_of(&u));
-        let (mverts, midx, mdraws) = self.model_mesh(items);
-        let model_buffers = (!mdraws.is_empty()).then(|| {
-            (
-                gpu.device
-                    .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                        label: Some("flashlight model vertices"),
-                        contents: bytemuck::cast_slice(&mverts),
-                        usage: wgpu::BufferUsages::VERTEX,
-                    }),
-                gpu.device
-                    .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                        label: Some("flashlight model indices"),
-                        contents: bytemuck::cast_slice(&midx),
-                        usage: wgpu::BufferUsages::INDEX,
-                    }),
-            )
-        });
+        let model_buffers = self.model_buffers(gpu, items);
         let mut encoder = gpu
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
@@ -4295,10 +4288,10 @@ impl WorldRenderer {
                 pass.set_bind_group(1, &b.bind_group, &[]);
                 pass.draw_indexed(b.first_index..b.first_index + b.index_count, 0, 0..1);
             }
-            if let Some((vb, ib)) = &model_buffers {
-                pass.set_vertex_buffer(0, vb.slice(..));
-                pass.set_index_buffer(ib.slice(..), wgpu::IndexFormat::Uint32);
-                for (bg, first, count) in &mdraws {
+            if let Some((bufs, mdraws)) = &model_buffers {
+                pass.set_vertex_buffer(0, bufs.vb.slice(..));
+                pass.set_index_buffer(bufs.ib.slice(..), wgpu::IndexFormat::Uint32);
+                for (bg, first, count) in mdraws {
                     pass.set_bind_group(1, *bg, &[]);
                     pass.draw_indexed(*first..*first + *count, 0, 0..1);
                 }
@@ -4322,10 +4315,7 @@ impl WorldRenderer {
         if items.is_empty() || dir == Vec3::ZERO {
             return None;
         }
-        let (mverts, midx, mdraws) = self.model_mesh(items);
-        if mdraws.is_empty() {
-            return None;
-        }
+        let (bufs, mdraws) = self.model_buffers(gpu, items)?;
         let up = if dir.z.abs() > 0.99 { Vec3::X } else { Vec3::Z };
         let eye = camera.position - dir * (SUN_SHADOW_RANGE * 0.5);
         let vp = Mat4::orthographic_rh(
@@ -4340,20 +4330,6 @@ impl WorldRenderer {
         u.view_proj = vp.to_cols_array_2d();
         gpu.queue
             .write_buffer(&self.camera_buffer, 0, bytemuck::bytes_of(&u));
-        let vb = gpu
-            .device
-            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("sun shadow model vertices"),
-                contents: bytemuck::cast_slice(&mverts),
-                usage: wgpu::BufferUsages::VERTEX,
-            });
-        let ib = gpu
-            .device
-            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("sun shadow model indices"),
-                contents: bytemuck::cast_slice(&midx),
-                usage: wgpu::BufferUsages::INDEX,
-            });
         let mut encoder = gpu
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
@@ -4375,8 +4351,8 @@ impl WorldRenderer {
             });
             pass.set_pipeline(&self.shadow_pipeline);
             pass.set_bind_group(0, &self.shadow_camera_bind_group, &[]);
-            pass.set_vertex_buffer(0, vb.slice(..));
-            pass.set_index_buffer(ib.slice(..), wgpu::IndexFormat::Uint32);
+            pass.set_vertex_buffer(0, bufs.vb.slice(..));
+            pass.set_index_buffer(bufs.ib.slice(..), wgpu::IndexFormat::Uint32);
             for (bg, first, count) in &mdraws {
                 pass.set_bind_group(1, *bg, &[]);
                 pass.draw_indexed(*first..*first + *count, 0, 0..1);
@@ -5652,10 +5628,7 @@ impl WorldRenderer {
     /// The items skinned, placed and lit into world vertices: the vertices, indices and one
     /// (material bind group, first index, count) per part.
     #[allow(clippy::type_complexity)]
-    fn model_mesh<'a>(
-        &self,
-        items: &[DrawItem<'a>],
-    ) -> (Vec<Vertex>, Vec<u32>, Vec<(&'a wgpu::BindGroup, u32, u32)>) {
+    fn model_mesh(&self, items: &[DrawItem<'_>]) -> (Vec<Vertex>, Vec<u32>, Vec<ModelDraw>) {
         let mut verts: Vec<Vertex> = Vec::new();
         let mut idx: Vec<u32> = Vec::new();
         let mut draws = Vec::new();
@@ -5663,7 +5636,7 @@ impl WorldRenderer {
         if cache.len() > 4096 {
             cache.clear();
         }
-        for item in items {
+        for (item_index, item) in items.iter().enumerate() {
             let (m, xf) = (item.model, &item.transform);
             // the game lights a model from its origin: ambient cube of the leaf + direct lights
             let origin = xf.transform_point3(Vec3::ZERO);
@@ -5692,7 +5665,9 @@ impl WorldRenderer {
                     .unwrap_or((Vec3::Z, Vec3::ZERO)),
                 None => (Vec3::ZERO, Vec3::ZERO),
             };
-            for (bg, pv, pi, half_lambert, part_unlit, player_tint, eye) in &m.parts {
+            for (part, (_, pv, pi, half_lambert, part_unlit, player_tint, eye)) in
+                m.parts.iter().enumerate()
+            {
                 let tint = if *player_tint { item.tint } else { Vec3::ONE };
                 let tint = tint.extend(item.dissolve);
                 // an eyeball looking at the item's target: the iris re-projected per frame
@@ -5738,10 +5713,67 @@ impl WorldRenderer {
                 }
                 let first = idx.len() as u32;
                 idx.extend(pi.iter().map(|i| i + base));
-                draws.push((bg, first, pi.len() as u32));
+                draws.push(ModelDraw {
+                    item: item_index,
+                    part,
+                    first,
+                    count: pi.len() as u32,
+                });
             }
         }
         (verts, idx, draws)
+    }
+
+    /// The items' skinned meshes as GPU buffers plus their draws with the part's material
+    /// bind group, built once per frame for a given items slice (see `model_cache`); None
+    /// when there is nothing to draw.
+    fn model_buffers<'a>(
+        &self,
+        gpu: &Gpu,
+        items: &[DrawItem<'a>],
+    ) -> Option<(std::rc::Rc<ModelBuffers>, Vec<PartDraw<'a>>)> {
+        if items.is_empty() {
+            return None;
+        }
+        let key = (self.frame.get(), items.as_ptr() as usize, items.len());
+        let cached = self
+            .model_cache
+            .borrow()
+            .as_ref()
+            .filter(|(f, p, n, _)| (*f, *p, *n) == key)
+            .map(|(_, _, _, b)| b.clone());
+        let bufs = match cached {
+            Some(b) => b,
+            None => {
+                let (verts, idx, draws) = self.model_mesh(items);
+                if draws.is_empty() {
+                    return None;
+                }
+                let vb = gpu
+                    .device
+                    .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                        label: Some("model vertices"),
+                        contents: bytemuck::cast_slice(&verts),
+                        usage: wgpu::BufferUsages::VERTEX,
+                    });
+                let ib = gpu
+                    .device
+                    .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                        label: Some("model indices"),
+                        contents: bytemuck::cast_slice(&idx),
+                        usage: wgpu::BufferUsages::INDEX,
+                    });
+                let b = std::rc::Rc::new(ModelBuffers { vb, ib, draws });
+                *self.model_cache.borrow_mut() = Some((key.0, key.1, key.2, b.clone()));
+                b
+            }
+        };
+        let draws = bufs
+            .draws
+            .iter()
+            .map(|d| (&items[d.item].model.parts[d.part].0, d.first, d.count))
+            .collect();
+        Some((bufs, draws))
     }
 
     pub fn draw_models(
@@ -5759,21 +5791,10 @@ impl WorldRenderer {
             alpha,
             ..
         } = *target;
-        let (verts, idx, draws) = self.model_mesh(items);
-        if draws.is_empty() {
+        let Some((bufs, draws)) = self.model_buffers(gpu, items) else {
             return;
-        }
+        };
         let device = &gpu.device;
-        let vb = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("model vertices"),
-            contents: bytemuck::cast_slice(&verts),
-            usage: wgpu::BufferUsages::VERTEX,
-        });
-        let ib = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("model indices"),
-            contents: bytemuck::cast_slice(&idx),
-            usage: wgpu::BufferUsages::INDEX,
-        });
         gpu.queue.write_buffer(
             &self.camera_buffer,
             0,
@@ -5820,8 +5841,8 @@ impl WorldRenderer {
                 &self.pipeline
             });
             pass.set_bind_group(0, &self.camera_bind_group, &[]);
-            pass.set_vertex_buffer(0, vb.slice(..));
-            pass.set_index_buffer(ib.slice(..), wgpu::IndexFormat::Uint32);
+            pass.set_vertex_buffer(0, bufs.vb.slice(..));
+            pass.set_index_buffer(bufs.ib.slice(..), wgpu::IndexFormat::Uint32);
             for (bg, first, count) in draws {
                 pass.set_bind_group(1, bg, &[]);
                 pass.draw_indexed(first..first + count, 0, 0..1);
@@ -5830,6 +5851,28 @@ impl WorldRenderer {
         gpu.queue.submit([enc.finish()]);
     }
 }
+
+/// One part of a skinned item in a frame's model buffers: `items[item].model.parts[part]`
+/// over `count` indices from `first`.
+struct ModelDraw {
+    item: usize,
+    part: usize,
+    first: u32,
+    count: u32,
+}
+
+/// A frame's skinned entity meshes (see `World::model_buffers`).
+struct ModelBuffers {
+    vb: wgpu::Buffer,
+    ib: wgpu::Buffer,
+    draws: Vec<ModelDraw>,
+}
+
+/// `World::model_cache`: (frame, items pointer, items length, buffers).
+type ModelCacheEntry = (u64, usize, usize, std::rc::Rc<ModelBuffers>);
+
+/// A part draw: its material bind group, first index, index count.
+type PartDraw<'a> = (&'a wgpu::BindGroup, u32, u32);
 
 /// Bounding box of the 3D skybox faces, used to sort props into the skybox pass.
 fn skybox_faces_bounds(bsp: &Bsp<'_>, faces: &HashSet<usize>) -> Option<([f32; 3], [f32; 3])> {
