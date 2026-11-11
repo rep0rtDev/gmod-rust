@@ -1506,6 +1506,9 @@ struct App {
     last_frame: Instant,
     /// Smoothed frame rate for `cl_showfps` (CFPSPanel: 0.9 of the old, 0.1 of this frame).
     fps_avg: f32,
+    /// Smoothed frame stage times in ms for `cl_showfps 2`: step (sim + net), render prep,
+    /// swapchain acquire, scene build (entities / animation / items), draw + UI + submit.
+    prof: [f32; 5],
     /// Last HDR auto-exposure probe.
     exposure_at: Instant,
     /// The game's main menu over the game (Escape): `menu.html` with the in-game NavBar.
@@ -5505,6 +5508,14 @@ impl App {
     }
 
     fn render(&mut self) {
+        let prof_start = Instant::now();
+        let mut prof_last = prof_start;
+        let mut laps = [0f32; 4];
+        let mut lap = |i: usize| {
+            let now = Instant::now();
+            laps[i] = (now - prof_last).as_secs_f32() * 1000.0;
+            prof_last = now;
+        };
         self.sync_scripted_weapons();
         if self.wsel.is_some()
             && self
@@ -5753,6 +5764,7 @@ impl App {
                 .collect();
             Self::render_spawn_icons(&paths, &self.mount, g);
         }
+        lap(0);
         let frame = match g.surface.get_current_texture() {
             wgpu::CurrentSurfaceTexture::Success(f)
             | wgpu::CurrentSurfaceTexture::Suboptimal(f) => f,
@@ -5763,6 +5775,7 @@ impl App {
             }
         };
         let view = frame.texture.create_view(&Default::default());
+        lap(1);
         // with bloom the scene goes offscreen and Post composites it onto the frame
         let bloom = g.world.hdr && self.settings.mat_bloomscale;
         let scene = if bloom {
@@ -7809,6 +7822,7 @@ impl App {
             g.world.env_sun.as_ref().map_or(g.world.sun, |s| s.dir),
         )
         .or(g.world.map_sky_paint);
+        lap(2);
         // the world draws the entity models itself, between its opaque and translucent
         // surfaces (and into the water reflection)
         g.world.draw(
@@ -8170,6 +8184,11 @@ impl App {
             }
         }
         g.gpu.queue.present(frame);
+        lap(3);
+        for (i, ms) in laps.into_iter().enumerate() {
+            let p = &mut self.prof[i + 1];
+            *p = if *p <= 0.0 { ms } else { *p * 0.9 + ms * 0.1 };
+        }
         self.frames += 1;
         let el = self.fps_at.elapsed().as_secs_f32();
         if el >= 1.0 {
@@ -8183,6 +8202,13 @@ impl App {
                 w.entities.len(),
                 self.vm_of(self.weapon).map_or("none", |v| v.name)
             ));
+            if std::env::var_os("GM_PROF").is_some() {
+                let p = self.prof;
+                eprintln!(
+                    "prof ms: step {:.2} prep {:.2} acquire {:.2} scene {:.2} draw+ui {:.2}",
+                    p[0], p[1], p[2], p[3], p[4]
+                );
+            }
             self.frames = 0;
             self.fps_at = Instant::now();
         }
@@ -9106,6 +9132,19 @@ impl App {
                         text: format!("{fps:3} fps on {}", self.map_name),
                         color,
                     });
+                    if self.settings.cl_showfps >= 2 {
+                        let p = self.prof;
+                        items.push(UiItem::Text {
+                            font: label_font.clone(),
+                            x: 2.0 * s,
+                            y: 22.0 * s,
+                            text: format!(
+                                "ms: step {:.1}  prep {:.1}  acquire {:.1}  scene {:.1}  draw+ui {:.1}",
+                                p[0], p[1], p[2], p[3], p[4]
+                            ),
+                            color,
+                        });
+                    }
                 }
                 if !hidden("CHudHealth") {
                     panel(
@@ -9785,6 +9824,18 @@ impl App {
     }
 }
 
+impl App {
+    /// Stage `i` took since `from`: folded into the smoothed profile (0.9 / 0.1).
+    fn prof_lap(&mut self, i: usize, from: Instant) {
+        let ms = from.elapsed().as_secs_f32() * 1000.0;
+        self.prof[i] = if self.prof[i] <= 0.0 {
+            ms
+        } else {
+            self.prof[i] * 0.9 + ms * 0.1
+        };
+    }
+}
+
 impl ApplicationHandler for App {
     fn resumed(&mut self, el: &ActiveEventLoop) {
         self.sounds.mixer.set_master(self.settings.volume);
@@ -10367,7 +10418,9 @@ impl ApplicationHandler for App {
     }
 
     fn about_to_wait(&mut self, _: &ActiveEventLoop) {
+        let t = Instant::now();
         self.step();
+        self.prof_lap(0, t);
         if let Some(sv) = &mut self.servers {
             sv.poll();
         }
@@ -10824,6 +10877,7 @@ fn run() -> Result<()> {
         gameui,
         last_frame: Instant::now(),
         fps_avg: 0.0,
+        prof: [0.0; 5],
         exposure_at: Instant::now(),
         last: Instant::now(),
         acc: 0.0,
