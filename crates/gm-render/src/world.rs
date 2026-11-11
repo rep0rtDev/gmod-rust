@@ -1746,9 +1746,17 @@ impl DynModel {
         self.skeleton
             .as_ref()
             .and_then(|sk| sk.seq(name))
-            .map(|(_, s)| s.fade_out)
-            .filter(|f| *f > 0.0)
-            .unwrap_or(0.2)
+            .map_or(0.2, |(_, s)| s.fade_out.max(0.0))
+    }
+
+    /// The sequence's `fadeintime` (0.2 s when the model gives none): `CSequenceTransitioner`
+    /// fades the sequence just left over `min(its fadeouttime, the new one's fadeintime)`, so a
+    /// `fadein 0` sequence (most weapons' fire) cuts in sharply.
+    pub fn sequence_fade_in(&self, name: &str) -> f32 {
+        self.skeleton
+            .as_ref()
+            .and_then(|sk| sk.seq(name))
+            .map_or(0.2, |(_, s)| s.fade_in.max(0.0))
     }
 
     fn bone_world_full(

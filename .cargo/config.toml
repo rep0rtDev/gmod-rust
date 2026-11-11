@@ -5,3 +5,9 @@ rustflags = ["-C", "link-arg=-Wl,-rpath,$ORIGIN"]
 
 [target.'cfg(target_os = "macos")']
 rustflags = ["-C", "link-arg=-Wl,-rpath,@executable_path"]
+
+# Native C++ dependencies (Jolt through joltc-sys) are built for the baseline x86-64 + SSE4.2
+# instead of Jolt's default AVX2 / FMA, so the binaries run on pre-Haswell CPUs too.
+[env]
+CMAKE_TOOLCHAIN_FILE_x86_64-unknown-linux-gnu = { value = "cmake/baseline-x86-64.cmake", relative = true }
+CMAKE_TOOLCHAIN_FILE_x86_64-pc-windows-gnu = { value = "cmake/x86_64-pc-windows-gnu.cmake", relative = true }

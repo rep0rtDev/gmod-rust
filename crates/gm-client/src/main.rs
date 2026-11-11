@@ -564,17 +564,16 @@ const fn vm(
 /// Slots on the number keys 1..9, 0; the physgun is slot 0 (key 1).
 /// `GRAVGUN_SLOT` / `CAMERA_SLOT` index this table (`slot_constants_match_the_table`).
 const WEAPONS: [Viewmodel; 14] = [
-    Viewmodel {
-        hold: Some("hold_idle"),
-        ..vm(
-            "weapon_physgun",
-            "physgun",
-            "models/weapons/c_superphyscannon.mdl",
-            "idle",
-            "draw",
-            "fire",
-        )
-    },
+    // the game's physgun only ever plays idle / draw / ACT_VM_SECONDARYATTACK (the recordings
+    // of gap-report #77): the model's hold_idle stays unused, the prongs are the `active` pose
+    vm(
+        "weapon_physgun",
+        "physgun",
+        "models/weapons/c_superphyscannon.mdl",
+        "idle",
+        "draw",
+        "fire",
+    ),
     vm(
         "gmod_tool",
         "toolgun",
@@ -4527,17 +4526,23 @@ impl App {
     }
 
     /// `CSequenceTransitioner`: the sequence the viewmodel just left, frozen at the cycle it was
-    /// at, with its weight easing out over that sequence's `fadeouttime`.
+    /// at, its weight going linearly to zero over `min(its fadeouttime, the new sequence's
+    /// fadeintime)` (`CheckForSequenceChange` / `UpdateCurrent`); a zero time is a hard cut.
     fn vm_transition(
         prev: Option<(&'static str, f32, Instant)>,
-        fade_of: impl Fn(&str) -> f32,
+        current: &str,
+        fade_of: impl Fn(&str, &str) -> f32,
     ) -> Option<(&'static str, f32, f32)> {
         let (seq, t, at) = prev?;
-        let x = (at.elapsed().as_secs_f32() / fade_of(seq).max(0.001)).clamp(0.0, 1.0);
+        let fade = fade_of(seq, current);
+        if fade <= 0.0 {
+            return None;
+        }
+        let x = (at.elapsed().as_secs_f32() / fade).clamp(0.0, 1.0);
         if x >= 1.0 {
             return None;
         }
-        Some((seq, t, 1.0 - (3.0 * x * x - 2.0 * x * x * x)))
+        Some((seq, t, 1.0 - x))
     }
 
     /// The toolgun's predicted trace: the game's tool trace from the eye along the view
@@ -5424,10 +5429,13 @@ impl App {
                         s.fade,
                     );
                 } else {
+                    // own sounds (footsteps, ...) play at the listener like the game's
+                    // predicted ones; the server's tick-old feet position would trail behind
+                    let own = self.sim.client.player_id == Some(s.ent);
                     self.sounds.play_at(
                         &self.mount,
                         &s.name,
-                        Some(s.pos),
+                        (!own).then_some(s.pos),
                         s.volume,
                         s.ent,
                         s.looping,
@@ -5538,7 +5546,8 @@ impl App {
                         // the alt-fire sequences (the AR2's IR_fire2 launching the ball) carry
                         // no muzzle flash in the game: their event is skipped
                         (5001, _) | (_, "AE_MUZZLEFLASH")
-                            if vm.alt.is_some_and(|alt| alt == seq) => {}
+                            if vm.alt.is_some_and(|alt| alt == seq)
+                                || matches!(vm.class, "weapon_physgun" | "weapon_physcannon") => {}
                         (5001, _) | (_, "AE_MUZZLEFLASH") => {
                             self.fx_muzzle_until =
                                 Some(Instant::now() + std::time::Duration::from_millis(60));
@@ -6364,7 +6373,9 @@ impl App {
                 seq,
                 t,
                 &[("active", self.claw_pose)],
-                Self::vm_transition(vm_prev, |s| m.sequence_fade_out(s)),
+                Self::vm_transition(vm_prev, seq, |p, c| {
+                    m.sequence_fade_out(p).min(m.sequence_fade_in(c))
+                }),
             )?;
             let a = m.attachment(name, &w)?;
             let mt = gm_render::world::model_transform(camera.position, self.view);
@@ -7112,7 +7123,9 @@ impl App {
                         seq,
                         t,
                         &[("active", self.claw_pose)],
-                        Self::vm_transition(vm_prev, |s| m.sequence_fade_out(s)),
+                        Self::vm_transition(vm_prev, seq, |p, c| {
+                            m.sequence_fade_out(p).min(m.sequence_fade_in(c))
+                        }),
                     )?;
                     let a = m.attachment_at(1, &w)?;
                     let mut a = gm_render::world::model_transform(camera.position, self.view) * a;
@@ -7786,7 +7799,9 @@ impl App {
                     seq,
                     t,
                     &[("active", self.claw_pose)],
-                    Self::vm_transition(vm_prev, |s| m.sequence_fade_out(s)),
+                    Self::vm_transition(vm_prev, seq, |p, c| {
+                        m.sequence_fade_out(p).min(m.sequence_fade_in(c))
+                    }),
                 );
                 let pose = world.as_ref().map(|w| m.skin_matrices(w));
                 let hands = g.models.get(&hands_key).and_then(|h| h.as_ref());
@@ -10229,7 +10244,62 @@ impl ApplicationHandler for App {
     }
 }
 
+/// Startup: everything printed also lands in `gm-client.log` next to the executable (a crash
+/// before the first console line left nothing to read), panics are written there too, and an
+/// error keeps the console window open long enough to be read.
 fn main() -> Result<()> {
+    let log_path = std::env::current_exe()
+        .ok()
+        .and_then(|p| p.parent().map(|d| d.join("gm-client.log")))
+        .unwrap_or_else(|| std::path::PathBuf::from("gm-client.log"));
+    let log = std::fs::File::create(&log_path).ok();
+    if let Some(mut f) = log.as_ref() {
+        use std::io::Write;
+        let _ = writeln!(
+            f,
+            "gm-client {} starting: {:?}",
+            env!("CARGO_PKG_VERSION"),
+            std::env::args().collect::<Vec<_>>()
+        );
+    }
+    #[cfg(target_arch = "x86_64")]
+    if !std::arch::is_x86_feature_detected!("sse4.2") {
+        let msg = "this CPU has no SSE4.2: the game needs an x86-64 CPU with SSE4.2 (2008+)";
+        if let Some(mut f) = log.as_ref() {
+            use std::io::Write;
+            let _ = writeln!(f, "error: {msg}");
+        }
+        eprintln!("error: {msg}");
+        std::thread::sleep(std::time::Duration::from_secs(15));
+        bail!("{msg}");
+    }
+    let log_for_panic = log_path.clone();
+    let default_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        use std::io::Write;
+        let bt = std::backtrace::Backtrace::force_capture();
+        if let Ok(mut f) = std::fs::OpenOptions::new()
+            .append(true)
+            .open(&log_for_panic)
+        {
+            let _ = writeln!(f, "panic: {info}\n{bt}");
+        }
+        default_hook(info);
+        std::thread::sleep(std::time::Duration::from_secs(15));
+    }));
+    let result = run();
+    if let Err(e) = &result {
+        use std::io::Write;
+        if let Ok(mut f) = std::fs::OpenOptions::new().append(true).open(&log_path) {
+            let _ = writeln!(f, "error: {e:?}");
+        }
+        eprintln!("error: {e:?}\n(details in {})", log_path.display());
+        std::thread::sleep(std::time::Duration::from_secs(15));
+    }
+    result
+}
+
+fn run() -> Result<()> {
     let arg_f = |i: usize| std::env::args().nth(i).and_then(|v| v.parse::<f32>().ok());
     let argv: Vec<String> = std::env::args().collect();
     let connect = argv
@@ -12845,7 +12915,14 @@ impl HudPanelAnim {
 fn register_ui_fonts(mount: &gm_content::Mount, ui: &mut UiRenderer, gpu: &Gpu, height: u32) {
     // the HL2 HUD fonts of resource/ClientScheme.res: `tall` is absolute pixels (the layout
     // scales with the screen, the glyphs do not); only the `yres` blocks step at 600 lines
-    let tall = height >= 600;
+    // the `yres` blocks of resource/ClientScheme.res: the first row whose range holds the
+    // screen height (the HUD text grows in steps with the resolution, the digits do not)
+    let yres = |rows: &[(u32, f32)]| -> f32 {
+        rows.iter()
+            .rev()
+            .find(|(min, _)| height >= *min)
+            .map_or(rows[0].1, |(_, px)| *px)
+    };
     // the HUD's `Slice` materials: the default crosshair sheet, the zoom overlay and the
     // rounded-box corners of PaintBackgroundType 2 (ui.md 1.7)
     for m in [
@@ -12870,12 +12947,25 @@ fn register_ui_fonts(mount: &gm_content::Mount, ui: &mut UiRenderer, gpu: &Gpu, 
         glow(5),
     );
     ui.register_font(gpu, mount, "HudNumbersSmall", "HalfLife2", 16.0);
-    let hud_default = if tall { 13.0 } else { 9.0 };
+    let hud_default = yres(&[
+        (1, 9.0),
+        (600, 13.0),
+        (768, 14.0),
+        (1024, 20.0),
+        (1201, 28.0),
+        (1601, 40.0),
+    ]);
     if !ui.register_font(gpu, mount, "HudDefault", "Verdana", hud_default) {
         ui.register_font(gpu, mount, "HudDefault", "Roboto-Bold", hud_default);
     }
     // ChatFont / TargetID: Verdana 700 with a drop shadow, 12 px below 600 lines, 14 at 600+
-    let chat = if tall { 14.0 } else { 12.0 };
+    let chat = yres(&[
+        (1, 12.0),
+        (600, 14.0),
+        (768, 15.0),
+        (1024, 17.0),
+        (1200, 22.0),
+    ]);
     for name in ["ChatFont", "TargetID"] {
         if !ui.register_font(gpu, mount, name, "Verdana", chat) {
             ui.register_font(gpu, mount, name, "Roboto-Bold", chat);
@@ -12913,7 +13003,14 @@ fn register_ui_fonts(mount: &gm_content::Mount, ui: &mut UiRenderer, gpu: &Gpu, 
     // HL2 weapon selection and crosshair: halflife2.ttf glyph fonts, Verdana labels
     ui.register_font(gpu, mount, "WeaponIcons", "HalfLife2", 64.0);
     ui.register_font(gpu, mount, "Crosshairs", "HalfLife2", 40.0);
-    let selection_text = if tall { 10.0 } else { 8.0 };
+    let selection_text = yres(&[
+        (1, 8.0),
+        (600, 10.0),
+        (768, 12.0),
+        (1024, 16.0),
+        (1201, 18.0),
+        (1441, 28.0),
+    ]);
     for (name, px) in [
         ("HudSelectionNumbers", 11.0),
         ("HudSelectionText", selection_text),

@@ -13572,10 +13572,33 @@ impl<'w> Server<'w> {
             return None;
         }
         let hit = self.tool_hit(player)?;
-        let pos = hit.pos + hit.normal * offset;
+        let mut pos = hit.pos + hit.normal * offset;
+        // `Spawn_SENT` (commands.lua): a spawn point behind a brush comes halfway back out
+        if let Some(oob) = gm_sandbox::trace_line(self.collision, &[], hit.pos, pos) {
+            pos = oob.pos + oob.normal * (hit.pos.distance(oob.pos) / 2.0);
+        }
         if !self.models.contains_key(model) {
             let loaded = self.model_loader.as_mut().and_then(|f| f(model))?;
             self.register_model(model, loaded);
+        }
+        // `TryFixPropPosition`: per axis, trace from the origin to both OBB faces; one hit
+        // (not both, that is inside a wall) pushes the entity out by the overlap - the item
+        // 16 u over the floor whose collision box reaches further down ends up on it
+        if let Some(b) = self.models.get(model).map(|m| m.bounds) {
+            for axis in 0..3 {
+                let mut lo = Vec3::ZERO;
+                let mut hi = Vec3::ZERO;
+                lo[axis] = b.min[axis];
+                hi[axis] = b.max[axis];
+                let down = gm_sandbox::trace_line(self.collision, &[], pos, pos + lo);
+                let up = gm_sandbox::trace_line(self.collision, &[], pos, pos + hi);
+                match (down, up) {
+                    (Some(_), Some(_)) => {}
+                    (Some(d), None) => pos += d.pos - (pos + lo),
+                    (None, Some(u)) => pos += u.pos - (pos + hi),
+                    (None, None) => {}
+                }
+            }
         }
         let id = self
             .sandbox
@@ -26693,6 +26716,7 @@ impl<'w> Server<'w> {
             name: name.clone(),
             pos: feet,
             volume: step.volume,
+            ent: player,
             ..Default::default()
         });
     }

@@ -37,6 +37,11 @@ cargo test --workspace
 
 Integration tests that need the game set `GMOD_DIR` to your Garry's Mod install directory and are skipped otherwise.
 
+The C++ dependencies (Jolt through `joltc-sys`) are compiled for the baseline x86-64 + SSE4.2
+through the toolchain files in `cmake/` (selected by `.cargo/config.toml`): Jolt's own default
+is AVX2 / FMA, which kills the binaries on pre-Haswell CPUs with an illegal instruction before
+anything is printed. The Windows cross build (llvm-mingw) uses `cmake/x86_64-pc-windows-gnu.cmake`.
+
 ## Running
 
 ```

@@ -663,9 +663,26 @@ pub fn model_info(mount: &gm_content::Mount, model: &str) -> Result<gm_server::M
             sequence_frame0(mount, model, &mdl_data, &mdl, None).as_deref(),
         ),
         ragdoll,
-        bounds: gm_sandbox::ModelBounds {
-            min: Vec3::from(mdl.header.hull_min),
-            max: Vec3::from(mdl.header.hull_max),
+        // the spawn placement works from the collision bounds (`OBBMins/Maxs` after
+        // `PhysicsInit`, the PHY's hull points); the header's `$bbox` is often all zero
+        // and placed the model's centre on the floor
+        bounds: {
+            let pts: Vec<Vec3> = solid
+                .convexes
+                .iter()
+                .flat_map(|c| c.points.iter().map(|&p| Vec3::from(p)))
+                .collect();
+            if pts.is_empty() {
+                gm_sandbox::ModelBounds {
+                    min: Vec3::from(mdl.header.hull_min),
+                    max: Vec3::from(mdl.header.hull_max),
+                }
+            } else {
+                gm_sandbox::ModelBounds {
+                    min: pts.iter().copied().fold(Vec3::MAX, Vec3::min),
+                    max: pts.iter().copied().fold(Vec3::MIN, Vec3::max),
+                }
+            }
         },
         hulls,
         hull_planes,

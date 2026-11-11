@@ -34,11 +34,13 @@ fn main() {
                 0.0
             };
             println!(
-                "{file} {} act={} w={} fps={fps} frames={frames} period={period:.4}s loop={} speed={speed:.1}",
+                "{file} {} act={} w={} fps={fps} frames={frames} period={period:.4}s loop={} speed={speed:.1} fade={:.2}/{:.2}",
                 q.name,
                 q.activity_name,
                 q.act_weight,
-                flags & 1 != 0
+                flags & 1 != 0,
+                q.fade_in,
+                q.fade_out
             );
             for e in &q.events {
                 println!(

@@ -38,19 +38,12 @@ fn main() {
         .define("JPH_PROFILE_ENABLED", None)
         .define("JPH_OBJECT_LAYER_BITS", "16");
     if std::env::var("CARGO_CFG_TARGET_ARCH").as_deref() == Ok("x86_64") {
-        for d in [
-            "JPH_USE_SSE4_1",
-            "JPH_USE_SSE4_2",
-            "JPH_USE_AVX",
-            "JPH_USE_AVX2",
-            "JPH_USE_LZCNT",
-            "JPH_USE_TZCNT",
-            "JPH_USE_F16C",
-            "JPH_USE_FMADD",
-        ] {
+        // the same ISA Jolt itself is built with (cmake/baseline-x86-64.cmake): baseline
+        // x86-64 + SSE4.2, so the binaries run on pre-Haswell CPUs
+        for d in ["JPH_USE_SSE4_1", "JPH_USE_SSE4_2"] {
             build.define(d, None);
         }
-        for f in ["-mavx2", "-mbmi", "-mpopcnt", "-mlzcnt", "-mf16c", "-mfma"] {
+        for f in ["-msse4.2", "-mpopcnt"] {
             build.flag(f);
         }
     }
