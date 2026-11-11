@@ -114,6 +114,12 @@ pub struct InterpPose {
     pub extrapolated: bool,
     /// prop_ragdoll: the interpolated pose of every physics object.
     pub bones: Vec<crate::msg::BonePose>,
+    /// The server animator's sequence and its cycle at `anim_tick`, the snapshot at or before
+    /// the render time: the renderer runs it on from there at the playback rate, so the
+    /// animation advances every frame instead of stepping once per snapshot.
+    pub sequence: String,
+    pub cycle: f32,
+    pub anim_tick: f32,
 }
 
 impl Interpolator {
@@ -179,6 +185,9 @@ impl Interpolator {
                 angvel: e.angvel,
                 extrapolated: true,
                 bones: e.bones.clone(),
+                sequence: e.sequence.clone(),
+                cycle: e.cycle,
+                anim_tick: newest.0 as f32,
             });
         }
         let after = self
@@ -195,6 +204,9 @@ impl Interpolator {
                 angvel: eb.angvel,
                 extrapolated: false,
                 bones: eb.bones.clone(),
+                sequence: eb.sequence.clone(),
+                cycle: eb.cycle,
+                anim_tick: *tb as f32,
             });
         }
         let (ta, a) = &self.snapshots[after - 1];
@@ -206,6 +218,9 @@ impl Interpolator {
                 angvel: eb.angvel,
                 extrapolated: false,
                 bones: eb.bones.clone(),
+                sequence: eb.sequence.clone(),
+                cycle: eb.cycle,
+                anim_tick: *tb as f32,
             });
         };
         let f = ((render_tick - *ta as f32) / (*tb as f32 - *ta as f32).max(1.0)).clamp(0.0, 1.0);
@@ -234,6 +249,21 @@ impl Interpolator {
             angvel: ea.angvel.lerp(eb.angvel, f),
             extrapolated: false,
             bones,
+            sequence: if ea.sequence == eb.sequence {
+                ea.sequence.clone()
+            } else {
+                eb.sequence.clone()
+            },
+            cycle: if ea.sequence == eb.sequence {
+                ea.cycle
+            } else {
+                eb.cycle
+            },
+            anim_tick: if ea.sequence == eb.sequence {
+                *ta as f32
+            } else {
+                *tb as f32
+            },
         })
     }
 }

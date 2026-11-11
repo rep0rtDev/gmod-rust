@@ -1728,6 +1728,19 @@ impl DynModel {
         self.bone_world_full(name, time, merge, params, gesture, None)
     }
 
+    /// `bone_world_gesture` with a `CSequenceTransitioner` layer: the sequence the model just
+    /// left (`prev`: name, its cycle time, weight 1 -> 0) blended under the current one.
+    pub fn bone_world_gesture_transition(
+        &self,
+        name: &str,
+        time: f32,
+        params: &[(&str, f32)],
+        gesture: Option<(&str, f32)>,
+        prev: Option<(&str, f32, f32)>,
+    ) -> Option<Vec<Mat4>> {
+        self.bone_world_full(name, time, None, params, gesture, prev)
+    }
+
     /// [`bone_world`](Self::bone_world) with the sequence just left blended in the way
     /// `CSequenceTransitioner` does: `prev` = (sequence, seconds into it when it was left, its
     /// weight now), mixed into the local pose before the bone hierarchy.

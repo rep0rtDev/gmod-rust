@@ -1307,6 +1307,10 @@ struct App {
     /// The viewmodel's bob and sway state (`CalcViewModelView`).
     vm_view: VmView,
     vm_prev: Option<(&'static str, f32, Instant)>,
+    /// Per server entity: the sequence seen last frame with its time, and the one it left
+    /// (name, time it stopped at, when) for the `CSequenceTransitioner` blend.
+    ent_anim_last: HashMap<u32, (String, f32)>,
+    ent_anim_prev: HashMap<u32, (String, f32, Instant)>,
     /// `PlayerSnap::vm_serial` of the last server viewmodel event played.
     vm_serial_seen: u8,
     /// Tracers in flight: shooter, end, birth (a 128 u streak at 5000 u/s from the muzzle).
@@ -6128,10 +6132,17 @@ impl App {
                         .as_ref()?;
                     // the server animator's clock: its cycle at the snapshot, run on at its
                     // rate for the render time since; the gesture layer at its cycle
-                    let since = (rt - self.sim.client.world.tick as f32).max(0.0)
-                        * gm_core::tick::DEFAULT_TICK_INTERVAL;
-                    let (len, looping) = m.sequence_length(&e.sequence)?;
-                    let t = e.cycle * len + e.playback_rate * since;
+                    let (seq, cycle, at_tick) = p.as_ref().map_or(
+                        (
+                            e.sequence.as_str(),
+                            e.cycle,
+                            self.sim.client.world.tick as f32,
+                        ),
+                        |p| (p.sequence.as_str(), p.cycle, p.anim_tick),
+                    );
+                    let since = (rt - at_tick).max(0.0) * gm_core::tick::DEFAULT_TICK_INTERVAL;
+                    let (len, looping) = m.sequence_length(seq)?;
+                    let t = cycle * len + e.playback_rate * since;
                     let t = if looping {
                         t.rem_euclid(len.max(1e-3))
                     } else {
@@ -6139,11 +6150,30 @@ impl App {
                     };
                     let gesture = e.gesture.as_ref().and_then(|g| {
                         let (glen, _) = m.sequence_length(&g.sequence)?;
-                        Some((g.sequence.as_str(), g.cycle * glen))
+                        Some((g.sequence.as_str(), (g.cycle * glen + since).min(glen)))
                     });
                     let params: Vec<(&str, f32)> =
                         e.pose.iter().map(|(n, v)| (n.as_str(), *v)).collect();
-                    let local = m.bone_world_gesture(&e.sequence, t, None, &params, gesture)?;
+                    // `CSequenceTransitioner` for the server's animator: a sequence change
+                    // blends out the old one over min(its fadeout, the new one's fadein)
+                    match self.ent_anim_last.get(&e.id) {
+                        Some((last, lt)) if last != seq => {
+                            self.ent_anim_prev
+                                .insert(e.id, (last.clone(), *lt, Instant::now()));
+                        }
+                        _ => {}
+                    }
+                    self.ent_anim_last.insert(e.id, (seq.to_string(), t));
+                    let prev = self.ent_anim_prev.get(&e.id).and_then(|(ps, pt, at)| {
+                        let fade = m.sequence_fade_out(ps).min(m.sequence_fade_in(seq));
+                        let x = if fade <= 0.0 {
+                            1.0
+                        } else {
+                            (at.elapsed().as_secs_f32() / fade).min(1.0)
+                        };
+                        (x < 1.0).then_some((ps.as_str(), *pt, 1.0 - x))
+                    });
+                    let local = m.bone_world_gesture_transition(seq, t, &params, gesture, prev)?;
                     let place = gm_render::world::model_transform(pos, ang)
                         * glam::Mat4::from_scale(Vec3::splat(e.model_scale.max(0.01)));
                     let world: Vec<glam::Mat4> = local.iter().map(|b| place * *b).collect();
@@ -6264,7 +6294,27 @@ impl App {
                                 (t < len).then_some((*g, t))
                             })
                         });
-                    let world = m.bone_world_gesture(&seq, t, None, &params, gesture);
+                    // the player animator's sequence changes (idle / walk / run, crouch) blend
+                    // through the `CSequenceTransitioner` layer like the server entities
+                    let key = u32::MAX - p.id;
+                    match self.ent_anim_last.get(&key) {
+                        Some((last, lt)) if *last != seq => {
+                            self.ent_anim_prev
+                                .insert(key, (last.clone(), *lt, Instant::now()));
+                        }
+                        _ => {}
+                    }
+                    self.ent_anim_last.insert(key, (seq.clone(), t));
+                    let prev = self.ent_anim_prev.get(&key).and_then(|(ps, pt, at)| {
+                        let fade = m.sequence_fade_out(ps).min(m.sequence_fade_in(&seq));
+                        let x = if fade <= 0.0 {
+                            1.0
+                        } else {
+                            (at.elapsed().as_secs_f32() / fade).min(1.0)
+                        };
+                        (x < 1.0).then_some((ps.as_str(), *pt, 1.0 - x))
+                    });
+                    let world = m.bone_world_gesture_transition(&seq, t, &params, gesture, prev);
                     let pose = world.as_ref().map(|w| m.skin_matrices(w));
                     let (origin, yaw) = match self.sim.player_interp.sample(p.id, rt) {
                         Some(s) => (s.pos, s.angles.y),
@@ -10603,6 +10653,8 @@ fn run() -> Result<()> {
         fx_shells_at: Instant::now(),
         vm_view: VmView::new(),
         vm_prev: None,
+        ent_anim_last: HashMap::new(),
+        ent_anim_prev: HashMap::new(),
         vm_serial_seen: 0,
         fx_tracers: Vec::new(),
         fx_ar2_impacts: Vec::new(),
