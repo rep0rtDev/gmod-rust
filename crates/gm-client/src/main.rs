@@ -1284,6 +1284,12 @@ struct App {
     noclip: bool,
     /// `impulse N` fired by a bind, sent with the next command.
     impulse: u8,
+    /// `thirdperson` / `firstperson`: the camera behind the player (cam_idealdist 150).
+    thirdperson: bool,
+    /// `r_drawviewmodel`.
+    draw_viewmodel: bool,
+    /// `cl_showpos`: pos / ang / vel under the fps line.
+    show_pos: bool,
     /// Mouse counts since the last command while rotating a held prop (physgun + E): the view
     /// stays locked (`DIROVERRIDE`) and the counts go to the server as `mouse_x` / `mouse_y`.
     rotate_delta: (f32, f32),
@@ -5844,6 +5850,29 @@ impl App {
             let (p, y) = (self.view.x.to_radians(), self.view.y.to_radians());
             let fwd = Vec3::new(p.cos() * y.cos(), p.cos() * y.sin(), -p.sin());
             camera.position = ent.pos - fwd * 160.0 + Vec3::Z * 24.0;
+        } else if self.thirdperson
+            && self
+                .sim
+                .client
+                .world
+                .players
+                .iter()
+                .find(|p| Some(p.id) == me)
+                .is_some_and(|p| p.alive)
+        {
+            // `thirdperson`: cam_idealdist 150 behind the eye, pulled in by a 14 u hull trace
+            // (CInput::CAM_Think)
+            let (p, y) = (self.view.x.to_radians(), self.view.y.to_radians());
+            let fwd = Vec3::new(p.cos() * y.cos(), p.cos() * y.sin(), -p.sin());
+            let eye = camera.position;
+            let tr = self.sim.collision.trace_box(
+                eye,
+                eye - fwd * 150.0,
+                Vec3::splat(-14.0),
+                Vec3::splat(14.0),
+                gm_collision::MASK_SOLID,
+            );
+            camera.position = if tr.start_solid { eye } else { tr.end };
         }
         // dead: C_BasePlayer::CalcDeathCamView (Source SDK, srcds cannot show it) - the view
         // angles freeze at death, the eye starts at the ragdoll's `eyes` attachment (the root
@@ -6271,7 +6300,7 @@ impl App {
             })
             .collect();
         for p in &self.sim.client.world.players {
-            if Some(p.id) == me || !p.alive {
+            if (Some(p.id) == me && !self.thirdperson) || !p.alive {
                 continue;
             }
             let player_model = g.models.get(&player_model_key(p)).and_then(|m| m.as_ref());
@@ -7882,6 +7911,7 @@ impl App {
             }
         }
         // viewmodel: own projection (narrower fov, near plane at 1 u) over a cleared depth buffer
+        let vm = vm.filter(|_| self.draw_viewmodel && !self.thirdperson);
         if let (Some(vm), Some((seq, t))) = (vm, vm_seq) {
             // the crossbow's viewmodel wears skin 1 (the glowing bolt) while loaded (#105)
             let me_clip = self
@@ -8757,15 +8787,22 @@ impl App {
             }
             // sandbox HUD: health and suit boxes at the bottom left; an element a script's
             // `HUDShouldDraw` answered false for this frame is skipped
-            let hidden = |name: &str| {
-                // gmod_camera's HUDShouldDraw: only the weapon selection and the chat (#96)
-                (self.weapon == CAMERA_SLOT && name != "CHudWeaponSelection" && name != "CHudChat")
-                    || self
-                        .sim
-                        .hud_draws
-                        .iter()
-                        .any(|d| matches!(d, gm_script::DrawCmd::HideHud { name: n } if n == name))
-            };
+            let hud_off = self
+                .utility_values
+                .get("cl_drawhud")
+                .is_some_and(|v| v == "0");
+            let hidden =
+                |name: &str| {
+                    // `cl_drawhud 0` hides every element; gmod_camera's HUDShouldDraw: only the weapon
+                    // selection and the chat (#96)
+                    hud_off
+                        || (self.weapon == CAMERA_SLOT
+                            && name != "CHudWeaponSelection"
+                            && name != "CHudChat")
+                        || self.sim.hud_draws.iter().any(
+                            |d| matches!(d, gm_script::DrawCmd::HideHud { name: n } if n == name),
+                        )
+                };
             let me = self.sim.client.player_id;
             if let Some(p) = self
                 .sim
@@ -9185,6 +9222,36 @@ impl App {
                                 w[0], w[1], w[2]
                             ),
                             color,
+                        });
+                    }
+                }
+                // cl_showpos 1 (CFPSPanel): pos / ang / vel under the fps line
+                if self.show_pos {
+                    let vel = self
+                        .sim
+                        .client
+                        .world
+                        .players
+                        .iter()
+                        .find(|p| Some(p.id) == me)
+                        .map_or(0.0, |p| p.velocity.length());
+                    let y0 = match self.settings.cl_showfps {
+                        0 => 2.0,
+                        1 => 22.0,
+                        _ => 62.0,
+                    };
+                    let lines = [
+                        format!("pos:  {:.2} {:.2} {:.2}", o.x, o.y, o.z),
+                        format!("ang:  {:.2} {:.2} {:.2}", self.view.x, self.view.y, 0.0),
+                        format!("vel:  {vel:.2}"),
+                    ];
+                    for (i, text) in lines.into_iter().enumerate() {
+                        items.push(UiItem::Text {
+                            font: label_font.clone(),
+                            x: 2.0 * s,
+                            y: (y0 + 20.0 * i as f32) * s,
+                            text,
+                            color: [1.0, 1.0, 1.0, 1.0],
                         });
                     }
                 }
@@ -9840,6 +9907,54 @@ impl App {
             }
             // the engine's own console commands
             "echo" => self.console.log(rest.join(" ")),
+            "thirdperson" => self.thirdperson = true,
+            "firstperson" => self.thirdperson = false,
+            cmd @ ("r_drawviewmodel" | "cl_showpos" | "cl_drawhud") => {
+                let cur = match cmd {
+                    "r_drawviewmodel" => self.draw_viewmodel,
+                    "cl_showpos" => self.show_pos,
+                    _ => self
+                        .utility_values
+                        .get("cl_drawhud")
+                        .is_none_or(|v| v != "0"),
+                };
+                match rest.first() {
+                    Some(v) => {
+                        let on = v.trim().parse::<f32>().unwrap_or(0.0) != 0.0;
+                        match cmd {
+                            "r_drawviewmodel" => self.draw_viewmodel = on,
+                            "cl_showpos" => self.show_pos = on,
+                            _ => {
+                                self.utility_values
+                                    .insert("cl_drawhud".to_string(), u8::from(on).to_string());
+                            }
+                        }
+                        self.console
+                            .log(format!("\"{cmd}\" = \"{}\"", u8::from(on)));
+                    }
+                    None => self
+                        .console
+                        .log(format!("\"{cmd}\" = \"{}\"", u8::from(cur))),
+                }
+            }
+            "impulse" if !rest.is_empty() => {
+                self.impulse = rest[0].parse::<u8>().unwrap_or(0);
+            }
+            "map" if !rest.is_empty() => self.relaunch(Some(rest[0]), None),
+            "connect" if !rest.is_empty() => self.relaunch(None, Some(rest[0])),
+            "retry" => {
+                let argv: Vec<String> = std::env::args().collect();
+                match argv
+                    .iter()
+                    .position(|a| a == "--connect")
+                    .and_then(|i| argv.get(i + 1))
+                {
+                    Some(addr) => self.relaunch(None, Some(addr)),
+                    None => self
+                        .console
+                        .log("Can't retry, no previous connection".to_string()),
+                }
+            }
             "toggleconsole" => self.toggle_console(),
             "screenshot" | "jpeg" => self.cam_photo_pending = true,
             "r_cleardecals" => {
@@ -10878,6 +10993,9 @@ fn run() -> Result<()> {
         tool_settings: BTreeMap::new(),
         noclip: false,
         impulse: 0,
+        thirdperson: false,
+        draw_viewmodel: true,
+        show_pos: false,
         rotate_delta: (0.0, 0.0),
         wheel_delta: 0.0,
         vm_anim: None,
