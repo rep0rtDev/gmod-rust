@@ -1290,6 +1290,8 @@ struct App {
     draw_viewmodel: bool,
     /// `cl_showpos`: pos / ang / vel under the fps line.
     show_pos: bool,
+    /// `alias <name> <commands>`: run when `<name>` is typed or bound.
+    aliases: BTreeMap<String, String>,
     /// Mouse counts since the last command while rotating a held prop (physgun + E): the view
     /// stays locked (`DIROVERRIDE`) and the counts go to the server as `mouse_x` / `mouse_y`.
     rotate_delta: (f32, f32),
@@ -9743,7 +9745,25 @@ impl App {
         }
     }
 
+    /// A console line: `;` separates commands (outside quotes), an alias stands for its
+    /// commands (one level, so an alias cannot loop on itself).
     fn run_console(&mut self, el: &ActiveEventLoop, line: &str) {
+        for part in split_console_line(line) {
+            let verb = part.split_whitespace().next().unwrap_or("");
+            if verb != "alias" {
+                if let Some(body) = self.aliases.get(verb).cloned() {
+                    self.console.log(format!("] {part}"));
+                    for sub in split_console_line(&body) {
+                        self.run_console_one(el, &sub);
+                    }
+                    continue;
+                }
+            }
+            self.run_console_one(el, &part);
+        }
+    }
+
+    fn run_console_one(&mut self, el: &ActiveEventLoop, line: &str) {
         let line = line.trim();
         if line.is_empty() {
             return;
@@ -9759,6 +9779,87 @@ impl App {
         match verb {
             "quit" | "exit" => el.exit(),
             "clear" => self.console.lines.clear(),
+            "version" => self.console.log(format!(
+                "gmod-rust {} ({})",
+                env!("CARGO_PKG_VERSION"),
+                option_env!("GMR_GIT_SHA").unwrap_or("dev")
+            )),
+            "alias" => match rest.first() {
+                None => {
+                    if self.aliases.is_empty() {
+                        self.console.log("no aliases".to_string());
+                    }
+                    for (k, v) in &self.aliases {
+                        self.console.log(format!("{k} : {v}"));
+                    }
+                }
+                Some(name) if rest.len() == 1 => {
+                    self.aliases.remove(*name);
+                }
+                Some(name) => {
+                    let body = rest[1..].join(" ").trim_matches('"').to_string();
+                    self.aliases.insert(name.to_string(), body);
+                }
+            },
+            "find" | "cvarlist" => {
+                let needle = rest.first().map_or(String::new(), |s| s.to_lowercase());
+                let mut out: Vec<String> = Vec::new();
+                for (k, v) in self.settings.cvars() {
+                    if k.contains(needle.as_str()) {
+                        out.push(format!("{k} : {v} : client"));
+                    }
+                }
+                for (k, v) in &self.sim.client.world.cvars {
+                    if k.contains(needle.as_str()) {
+                        out.push(format!("{k} : {v} : server"));
+                    }
+                }
+                for c in CLIENT_COMMANDS {
+                    if c.contains(needle.as_str()) {
+                        out.push(format!("{c} : cmd"));
+                    }
+                }
+                out.sort();
+                let n = out.len();
+                for l in out {
+                    self.console.log(l);
+                }
+                self.console.log(format!("{n} convars/concommands"));
+            }
+            "toggle" if !rest.is_empty() => {
+                // `toggle cvar` flips 0/1, `toggle cvar a b c` steps through the values
+                let key = rest[0].to_lowercase();
+                let values: Vec<&str> = if rest.len() > 1 {
+                    rest[1..].to_vec()
+                } else {
+                    vec!["0", "1"]
+                };
+                let cur = self.any_cvar_value(&key).unwrap_or_default();
+                let i = values.iter().position(|v| *v == cur.as_str());
+                let next = values[i.map_or(0, |i| (i + 1) % values.len())];
+                self.set_any_cvar(&key, next);
+            }
+            "incrementvar" if rest.len() >= 4 => {
+                let key = rest[0].to_lowercase();
+                let n = |i: usize| rest[i].parse::<f32>().unwrap_or(0.0);
+                let (lo, hi, delta) = (n(1), n(2), n(3));
+                let cur = self
+                    .any_cvar_value(&key)
+                    .and_then(|v| v.parse::<f32>().ok())
+                    .unwrap_or(0.0);
+                let mut v = cur + delta;
+                if v > hi {
+                    v = lo;
+                } else if v < lo {
+                    v = hi;
+                }
+                let text = if v.fract() == 0.0 {
+                    format!("{}", v as i64)
+                } else {
+                    format!("{v}")
+                };
+                self.set_any_cvar(&key, &text);
+            }
             "spawn" => self.sim.client.command(Command::Spawn {
                 model: rest.first().unwrap_or(&SPAWN_MODEL).to_string(),
             }),
@@ -10045,7 +10146,117 @@ impl App {
     }
 }
 
+/// The console commands the client answers itself (`find`).
+const CLIENT_COMMANDS: &[&str] = &[
+    "alias",
+    "bind",
+    "bot",
+    "cl_drawhud",
+    "cl_showpos",
+    "cleanup",
+    "clear",
+    "connect",
+    "disconnect",
+    "echo",
+    "ent_fire",
+    "exec",
+    "find",
+    "firstperson",
+    "gm_spawnsent",
+    "gmod_cleanup",
+    "gmod_spawnnpc",
+    "gmod_spawnvehicle",
+    "gmod_undo",
+    "help",
+    "impulse",
+    "incrementvar",
+    "invnext",
+    "invprev",
+    "jpeg",
+    "kill",
+    "map",
+    "noclip",
+    "playercolor",
+    "playermodel",
+    "property",
+    "quit",
+    "r_cleardecals",
+    "r_drawviewmodel",
+    "retry",
+    "say",
+    "say_team",
+    "screenshot",
+    "slot1",
+    "slot2",
+    "slot3",
+    "slot4",
+    "slot5",
+    "slot6",
+    "spawn",
+    "thirdperson",
+    "toggle",
+    "toggleconsole",
+    "tool",
+    "unbind",
+    "unbindall",
+    "undo",
+    "version",
+    "weapon",
+    "weaponcolor",
+];
+
+/// `a; b "c;d"` -> `a`, `b "c;d"`: the engine's command separator, quotes kept whole.
+fn split_console_line(line: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut cur = String::new();
+    let mut quoted = false;
+    for ch in line.chars() {
+        match ch {
+            '"' => {
+                quoted = !quoted;
+                cur.push(ch);
+            }
+            ';' if !quoted => out.push(std::mem::take(&mut cur)),
+            _ => cur.push(ch),
+        }
+    }
+    out.push(cur);
+    out.into_iter()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect()
+}
+
 impl App {
+    /// The value of a client cvar, else of a server one as last replicated.
+    fn any_cvar_value(&self, key: &str) -> Option<String> {
+        self.settings.cvar_value(key).or_else(|| {
+            self.sim
+                .client
+                .world
+                .cvars
+                .iter()
+                .find(|(k, _)| *k == key)
+                .map(|(_, v)| v.clone())
+        })
+    }
+
+    /// `key value` for a client cvar, or sent up for a server one.
+    fn set_any_cvar(&mut self, key: &str, value: &str) {
+        if self.settings.cvar_value(key).is_some() {
+            let mut pending = self.settings.clone();
+            pending.set_cvar(key, value);
+            self.apply_settings(pending);
+            if let Some(now) = self.settings.cvar_value(key) {
+                self.console.log(format!("\"{key}\" = \"{now}\""));
+            }
+        } else {
+            self.sim.client.command(Command::Console {
+                line: format!("{key} {value}"),
+            });
+        }
+    }
+
     /// Stage `i` took since `from`: folded into the smoothed profile (0.9 / 0.1).
     fn prof_lap(&mut self, i: usize, from: Instant) {
         let ms = from.elapsed().as_secs_f32() * 1000.0;
@@ -10996,6 +11207,7 @@ fn run() -> Result<()> {
         thirdperson: false,
         draw_viewmodel: true,
         show_pos: false,
+        aliases: BTreeMap::new(),
         rotate_delta: (0.0, 0.0),
         wheel_delta: 0.0,
         vm_anim: None,

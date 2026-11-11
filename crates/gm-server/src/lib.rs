@@ -8929,6 +8929,8 @@ pub struct Server<'w> {
     pub physics_paused: bool,
     /// `phys_timescale`: the physics step runs at this fraction of the tick.
     pub physics_time_scale: f32,
+    /// `host_timescale`: scales the movement tick and the physics step together.
+    pub host_timescale: f32,
     pub prop_hits: Vec<PropHit>,
 
     pub spawn_points: Vec<SpawnPoint>,
@@ -9054,7 +9056,8 @@ pub const PHYS_CVARS: [(&str, &str); 3] = [
 ];
 
 /// Movement / game cvars the Utilities panel and the console set (defaults = `MoveConfig`).
-pub const SV_CVARS: [(&str, &str); 10] = [
+pub const SV_CVARS: [(&str, &str); 11] = [
+    ("host_timescale", "1"),
     ("sv_friction", "8"),
     ("sv_stopspeed", "10"),
     ("sv_accelerate", "10"),
@@ -9163,6 +9166,7 @@ impl<'w> Server<'w> {
             players_hurt_players: true,
             physics_paused: false,
             physics_time_scale: 1.0,
+            host_timescale: 1.0,
             prop_hits: Vec::new(),
 
             spawn_points: Vec::new(),
@@ -9491,6 +9495,15 @@ impl<'w> Server<'w> {
             "sv_noclipspeed" => self.mover.cfg.noclip_speed = num,
             "sv_noclipaccelerate" => self.mover.cfg.noclip_accelerate = num,
             "mp_falldamage" => self.fall_damage_progressive = num != 0.0,
+            "host_timescale" => {
+                let ts = if num.is_finite() && num > 0.0 {
+                    num
+                } else {
+                    1.0
+                };
+                self.host_timescale = ts;
+                self.mover.cfg.time_scale = ts;
+            }
             _ => {}
         }
         self.cvar_changes.push((name.to_string(), old, v));
@@ -24721,7 +24734,7 @@ impl<'w> Server<'w> {
         // the impulse before the floor acts on it in the same tick (`shoot_prop_crossbow_drum`)
         if !self.physics_paused {
             let base = self.physics.tick_interval;
-            self.physics.tick_interval = base * self.physics_time_scale;
+            self.physics.tick_interval = base * self.physics_time_scale * self.host_timescale;
             self.physics.step();
             self.physics.tick_interval = base;
         }

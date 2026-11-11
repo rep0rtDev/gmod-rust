@@ -709,7 +709,7 @@ impl ServerNet {
                 }
                 out
             }
-            "kick" | "ban" => match player_arg(&rest) {
+            "kick" | "kickid" | "ban" => match player_arg(&rest) {
                 Some(p) if p == admin => vec![format!("{verb} {p}: not yourself")],
                 Some(p) => {
                     let ban = verb == "ban";
@@ -895,7 +895,7 @@ impl ServerNet {
                 };
                 vec![format!("{verb}mode {}", if on { "ON" } else { "OFF" })]
             }
-            "kill" => {
+            "kill" | "explode" => {
                 server.player_kill_command(admin);
                 Vec::new()
             }
