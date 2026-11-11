@@ -352,6 +352,12 @@ pub fn load_path(mount: &Mount, name: &str, vmt_path: &str) -> Result<Material> 
         mat.alpha_test = matches!(get("$alphatest").as_deref(), Some("1"));
         mat.translucent = matches!(get("$translucent").as_deref(), Some("1")) && !mat.alpha_test;
         mat.additive = matches!(get("$additive").as_deref(), Some("1"));
+        // Sprite shader: `$spriterendermode` 3 (kRenderGlow) and 5 (kRenderTransAdd) draw
+        // additively like `$additive 1` (sprites/redglow1 = the RPG laser dot)
+        if mat.shader == "sprite" && matches!(get("$spriterendermode").as_deref(), Some("3" | "5"))
+        {
+            mat.additive = true;
+        }
         mat.nocull = matches!(get("$nocull").as_deref(), Some("1"));
         mat.selfillum = matches!(get("$selfillum").as_deref(), Some("1"));
         mat.weapon_color_tint = proxy_result(params, "playerweaponcolor", "$selfillumtint");

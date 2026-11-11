@@ -1507,8 +1507,10 @@ struct App {
     /// Smoothed frame rate for `cl_showfps` (CFPSPanel: 0.9 of the old, 0.1 of this frame).
     fps_avg: f32,
     /// Smoothed frame stage times in ms for `cl_showfps 2`: step (sim + net), render prep,
-    /// swapchain acquire, scene build (entities / animation / items), draw + UI + submit.
-    prof: [f32; 5],
+    /// swapchain acquire, scene build (entities / animation / items), world + models draw,
+    /// blended passes (decals / sprites / beams), viewmodel + 3D2D, UI build, post + UI draw,
+    /// present.
+    prof: [f32; 10],
     /// Last HDR auto-exposure probe.
     exposure_at: Instant,
     /// The game's main menu over the game (Escape): `menu.html` with the in-game NavBar.
@@ -5510,7 +5512,7 @@ impl App {
     fn render(&mut self) {
         let prof_start = Instant::now();
         let mut prof_last = prof_start;
-        let mut laps = [0f32; 4];
+        let mut laps = [0f32; 9];
         let mut lap = |i: usize| {
             let now = Instant::now();
             laps[i] = (now - prof_last).as_secs_f32() * 1000.0;
@@ -7836,11 +7838,13 @@ impl App {
             &items,
         );
         if !modulate.is_empty() {
+            lap(3);
             g.world.draw_modulate(&g.gpu, &camera, &target, &modulate);
         }
         if !additive.is_empty() {
             g.world.draw_alpha(&g.gpu, &camera, &target, &alpha);
             g.world.draw_additive(&g.gpu, &camera, &target, &additive);
+            lap(4);
         }
         if !refract.is_empty() {
             g.world
@@ -8129,7 +8133,9 @@ impl App {
                 }
             }
         }
+        lap(5);
         let ui_items = self.ui_items(o, camera.view_proj(aspect));
+        lap(6);
         let g = self.gfx.as_ref().unwrap();
         if bloom {
             g.post.apply(&g.gpu, &view, g.world.bloom_amount);
@@ -8152,6 +8158,7 @@ impl App {
         }
         let g = self.gfx.as_ref().unwrap();
         g.ui.draw(&g.gpu, &view, g.config.width, g.config.height, &ui_items);
+        lap(7);
         let g = self.gfx.as_ref().unwrap();
         if std::mem::take(&mut self.cam_photo_pending) {
             // the game's `jpeg` console command writes screenshots/<map>NNNN.jpg; we have a PNG
@@ -8184,7 +8191,7 @@ impl App {
             }
         }
         g.gpu.queue.present(frame);
-        lap(3);
+        lap(8);
         for (i, ms) in laps.into_iter().enumerate() {
             let p = &mut self.prof[i + 1];
             *p = if *p <= 0.0 { ms } else { *p * 0.9 + ms * 0.1 };
@@ -8205,8 +8212,9 @@ impl App {
             if std::env::var_os("GM_PROF").is_some() {
                 let p = self.prof;
                 eprintln!(
-                    "prof ms: step {:.2} prep {:.2} acquire {:.2} scene {:.2} draw+ui {:.2}",
-                    p[0], p[1], p[2], p[3], p[4]
+                    "prof ms: step {:.2} prep {:.2} acquire {:.2} scene {:.2} world {:.2} \
+                     blend {:.2} vm {:.2} uibuild {:.2} uidraw {:.2} present {:.2}",
+                    p[0], p[1], p[2], p[3], p[4], p[5], p[6], p[7], p[8], p[9]
                 );
             }
             self.frames = 0;
@@ -9139,8 +9147,9 @@ impl App {
                             x: 2.0 * s,
                             y: 22.0 * s,
                             text: format!(
-                                "ms: step {:.1}  prep {:.1}  acquire {:.1}  scene {:.1}  draw+ui {:.1}",
-                                p[0], p[1], p[2], p[3], p[4]
+                                "ms: step {:.2} prep {:.2} acquire {:.2} scene {:.2} world {:.2} \
+                                 blend {:.2} vm {:.2} uibuild {:.2} uidraw {:.2} present {:.2}",
+                                p[0], p[1], p[2], p[3], p[4], p[5], p[6], p[7], p[8], p[9]
                             ),
                             color,
                         });
@@ -10877,7 +10886,7 @@ fn run() -> Result<()> {
         gameui,
         last_frame: Instant::now(),
         fps_avg: 0.0,
-        prof: [0.0; 5],
+        prof: [0.0; 10],
         exposure_at: Instant::now(),
         last: Instant::now(),
         acc: 0.0,
