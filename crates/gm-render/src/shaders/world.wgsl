@@ -520,3 +520,88 @@ fn fs_skypaint(in: VsOut) -> @location(0) vec4<f32> {
     let out = pow(max(col * camera.sky_bottom.w * camera.exposure, vec3<f32>(0.0)), vec3<f32>(2.2 / camera.gamma));
     return vec4<f32>(out, camera.alpha);
 }
+
+// GPU skinning of entity models (`vs_skin`): the vertices stay in the model's rest space,
+// the bones and the item's placement and lighting come in through group 3 (dynamic offsets
+// per draw). The lighting is `LocalLight::shade`: ambient cube plus up to four lights,
+// Lambert or half-Lambert.
+struct SkinParams {
+    model: mat4x4<f32>,
+    cube: array<vec4<f32>, 6>,
+    light_color: array<vec4<f32>, 4>,
+    light_dir: array<vec4<f32>, 4>,
+    tint: vec4<f32>,
+    spec_dir: vec4<f32>,
+    spec_color: vec4<f32>,
+    // cube layer, half-lambert flag, unlit flag, light count
+    misc: vec4<f32>,
+    white_uv: vec4<f32>,
+};
+@group(3) @binding(0) var<uniform> skin: SkinParams;
+@group(3) @binding(1) var<storage, read> bones: array<mat4x4<f32>>;
+
+struct SkinIn {
+    @location(0) position: vec3<f32>,
+    @location(1) normal: vec3<f32>,
+    @location(2) uv: vec2<f32>,
+    @location(3) iris_uv: vec2<f32>,
+    @location(4) bone: vec4<u32>,
+    @location(5) weight: vec3<f32>,
+};
+
+@vertex
+fn vs_skin(in: SkinIn) -> VsOut {
+    var p = in.position;
+    var n = in.normal;
+    var weight = in.weight;
+    var bone = in.bone;
+    if weight.x + weight.y + weight.z > 0.0 {
+        var sp = vec3<f32>(0.0);
+        var sn = vec3<f32>(0.0);
+        for (var i = 0u; i < 3u; i++) {
+            let w = weight[i];
+            if w > 0.0 {
+                let m = bones[bone[i]];
+                sp += (m * vec4<f32>(in.position, 1.0)).xyz * w;
+                sn += (m * vec4<f32>(in.normal, 0.0)).xyz * w;
+            }
+        }
+        p = sp;
+        n = sn;
+    }
+    let world = (skin.model * vec4<f32>(p, 1.0)).xyz;
+    let wn = normalize((skin.model * vec4<f32>(n, 0.0)).xyz);
+    var shade = vec3<f32>(1.0);
+    if skin.misc.z < 0.5 {
+        let sq = wn * wn;
+        shade = sq.x * select(skin.cube[1].rgb, skin.cube[0].rgb, wn.x >= 0.0)
+            + sq.y * select(skin.cube[3].rgb, skin.cube[2].rgb, wn.y >= 0.0)
+            + sq.z * select(skin.cube[5].rgb, skin.cube[4].rgb, wn.z >= 0.0);
+        let count = u32(skin.misc.w);
+        for (var i = 0u; i < 4u; i++) {
+            if i < count {
+                let d = dot(wn, skin.light_dir[i].xyz);
+                var f = max(d, 0.0);
+                if skin.misc.y > 0.5 {
+                    let hl = d * 0.5 + 0.5;
+                    f = hl * hl;
+                }
+                shade += skin.light_color[i].rgb * f;
+            }
+        }
+    }
+    var out: VsOut;
+    out.clip = camera.view_proj * vec4<f32>(world, 1.0);
+    out.uv = in.uv;
+    out.lm_uv = select(skin.white_uv.xy, in.iris_uv, in.iris_uv.x > -0.5);
+    out.color = shade;
+    out.tint = skin.tint;
+    out.world = world;
+    out.alpha = 0.0;
+    out.lm_page = 0.0;
+    out.normal = wn;
+    out.cube = skin.misc.x;
+    out.spec_dir = skin.spec_dir.xyz;
+    out.spec_color = skin.spec_color.xyz;
+    return out;
+}

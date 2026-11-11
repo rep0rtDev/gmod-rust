@@ -757,6 +757,14 @@ pub struct WorldRenderer {
     depth_layout: wgpu::BindGroupLayout,
     /// Additive, no depth write: beams and glow sprites.
     additive_pipeline: wgpu::RenderPipeline,
+    /// GPU skinning of entity models (`vs_skin`): the per-draw params / bones layout, the
+    /// opaque, translucent and depth-only pipelines, the frame's buffers and draw list.
+    skin_layout: wgpu::BindGroupLayout,
+    skin_pipeline: wgpu::RenderPipeline,
+    skin_translucent_pipeline: wgpu::RenderPipeline,
+    skin_shadow_pipeline: wgpu::RenderPipeline,
+    skin_buffers: std::cell::RefCell<Option<SkinBuffers>>,
+    skin_frame: std::cell::RefCell<Option<SkinFrame>>,
     /// Alpha-blended ad-hoc geometry (constraint ropes: `keyframe_rope` cables).
     alpha_pipeline: wgpu::RenderPipeline,
     /// DecalModulate: colour * 2 * decal (bullet holes).
@@ -1398,6 +1406,8 @@ pub struct DynModel {
     /// differ from it (the crossbow bolt lies along -y in the file, +x once posed). None when
     /// that pose is the identity.
     rest_skin: Option<Vec<Mat4>>,
+    /// The parts' rest-space vertices on the GPU for `vs_skin`, built on first draw.
+    skin_mesh: std::cell::OnceCell<SkinMesh>,
 }
 
 impl DynModel {
@@ -3157,6 +3167,107 @@ impl WorldRenderer {
         let sky_pipeline = make_pipeline("sky", "fs_main", None, true, false);
         let skypaint_pipeline = make_pipeline("skypaint", "fs_skypaint", None, true, false);
         let nocull_pipeline = make_pipeline("world nocull", "fs_main", None, true, false);
+        // entity models skinned on the GPU: group 3 carries the per-draw params (uniform,
+        // dynamic offset) and the bones (storage, dynamic offset)
+        let skin_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("skin"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::VERTEX,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: true,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::VERTEX,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: true,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+            ],
+        });
+        let skin_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("skin"),
+            bind_group_layouts: &[
+                Some(&camera_layout),
+                Some(&material_layout),
+                None,
+                Some(&skin_layout),
+            ],
+            ..Default::default()
+        });
+        let make_skin = |label: &str,
+                         blend: Option<wgpu::BlendState>,
+                         depth_write: bool,
+                         shadow: bool| {
+            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some(label),
+                layout: Some(&skin_pipeline_layout),
+                vertex: wgpu::VertexState {
+                    module: &shader,
+                    entry_point: Some("vs_skin"),
+                    compilation_options: Default::default(),
+                    buffers: &[Some(wgpu::VertexBufferLayout {
+                        array_stride: std::mem::size_of::<SkinVertex>() as u64,
+                        step_mode: wgpu::VertexStepMode::Vertex,
+                        attributes: &wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3, 2 => Float32x2, 3 => Float32x2, 4 => Uint8x4, 5 => Float32x3],
+                    })],
+                },
+                primitive: wgpu::PrimitiveState {
+                    topology: wgpu::PrimitiveTopology::TriangleList,
+                    front_face: wgpu::FrontFace::Cw,
+                    cull_mode: if shadow { None } else { Some(wgpu::Face::Back) },
+                    ..Default::default()
+                },
+                depth_stencil: Some(wgpu::DepthStencilState {
+                    format: wgpu::TextureFormat::Depth32Float,
+                    depth_write_enabled: Some(depth_write),
+                    depth_compare: Some(wgpu::CompareFunction::Less),
+                    stencil: Default::default(),
+                    bias: if shadow {
+                        wgpu::DepthBiasState {
+                            constant: 2,
+                            slope_scale: 2.0,
+                            clamp: 0.0,
+                        }
+                    } else {
+                        Default::default()
+                    },
+                }),
+                multisample: wgpu::MultisampleState {
+                    count: if shadow { 1 } else { quality.msaa },
+                    ..Default::default()
+                },
+                fragment: (!shadow).then_some(wgpu::FragmentState {
+                    module: &shader,
+                    entry_point: Some("fs_main"),
+                    compilation_options: Default::default(),
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format: color_format,
+                        blend,
+                        write_mask: wgpu::ColorWrites::ALL,
+                    })],
+                }),
+                multiview_mask: None,
+                cache: None,
+            })
+        };
+        let skin_pipeline = make_skin("skin", None, true, false);
+        let skin_translucent_pipeline = make_skin(
+            "skin translucent",
+            Some(wgpu::BlendState::ALPHA_BLENDING),
+            false,
+            false,
+        );
+        let skin_shadow_pipeline = make_skin("skin depth", None, true, true);
         // depth only, from the flashlight, into the (single-sampled) shadow map
         let shadow_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("flashlight depth"),
@@ -3449,6 +3560,12 @@ impl WorldRenderer {
             refract_pipeline,
             depth_layout,
             additive_pipeline,
+            skin_layout,
+            skin_pipeline,
+            skin_translucent_pipeline,
+            skin_shadow_pipeline,
+            skin_buffers: Default::default(),
+            skin_frame: Default::default(),
             alpha_pipeline,
             modulate_pipeline,
             translucent_pipeline,
@@ -4298,6 +4415,7 @@ impl WorldRenderer {
         gpu.queue
             .write_buffer(&self.camera_buffer, 0, bytemuck::bytes_of(&u));
         let model_buffers = self.model_buffers(gpu, items);
+        let skin = self.skin_draws(gpu, items);
         let mut encoder = gpu
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
@@ -4336,6 +4454,13 @@ impl WorldRenderer {
                     pass.draw_indexed(*first..*first + *count, 0, 0..1);
                 }
             }
+            self.draw_skinned(
+                &mut pass,
+                items,
+                &skin,
+                &self.skin_shadow_pipeline,
+                &self.shadow_camera_bind_group,
+            );
         }
         gpu.queue.submit(Some(encoder.finish()));
         vp
@@ -4355,7 +4480,11 @@ impl WorldRenderer {
         if items.is_empty() || dir == Vec3::ZERO {
             return None;
         }
-        let (bufs, mdraws) = self.model_buffers(gpu, items)?;
+        let cpu = self.model_buffers(gpu, items);
+        let skin = self.skin_draws(gpu, items);
+        if cpu.is_none() && skin.is_empty() {
+            return None;
+        }
         let up = if dir.z.abs() > 0.99 { Vec3::X } else { Vec3::Z };
         let eye = camera.position - dir * (SUN_SHADOW_RANGE * 0.5);
         let vp = Mat4::orthographic_rh(
@@ -4389,14 +4518,23 @@ impl WorldRenderer {
                 }),
                 ..Default::default()
             });
-            pass.set_pipeline(&self.shadow_pipeline);
-            pass.set_bind_group(0, &self.shadow_camera_bind_group, &[]);
-            pass.set_vertex_buffer(0, bufs.vb.slice(..));
-            pass.set_index_buffer(bufs.ib.slice(..), wgpu::IndexFormat::Uint32);
-            for (bg, first, count) in &mdraws {
-                pass.set_bind_group(1, *bg, &[]);
-                pass.draw_indexed(*first..*first + *count, 0, 0..1);
+            if let Some((bufs, mdraws)) = &cpu {
+                pass.set_pipeline(&self.shadow_pipeline);
+                pass.set_bind_group(0, &self.shadow_camera_bind_group, &[]);
+                pass.set_vertex_buffer(0, bufs.vb.slice(..));
+                pass.set_index_buffer(bufs.ib.slice(..), wgpu::IndexFormat::Uint32);
+                for (bg, first, count) in mdraws {
+                    pass.set_bind_group(1, *bg, &[]);
+                    pass.draw_indexed(*first..*first + *count, 0, 0..1);
+                }
             }
+            self.draw_skinned(
+                &mut pass,
+                items,
+                &skin,
+                &self.skin_shadow_pipeline,
+                &self.shadow_camera_bind_group,
+            );
         }
         gpu.queue.submit(Some(encoder.finish()));
         Some(vp)
@@ -4617,6 +4755,7 @@ impl WorldRenderer {
             skeleton: None,
             bodygroups: Vec::new(),
             rest_skin: None,
+            skin_mesh: Default::default(),
         })
     }
 
@@ -4765,6 +4904,7 @@ impl WorldRenderer {
             skeleton,
             bodygroups,
             rest_skin: None,
+            skin_mesh: Default::default(),
         };
         model.rest_skin = model.default_pose_skin();
         (!model.parts.is_empty()).then_some(model)
@@ -5660,6 +5800,7 @@ impl WorldRenderer {
             skeleton: None,
             bodygroups: Vec::new(),
             rest_skin: None,
+            skin_mesh: Default::default(),
         }
     }
 
@@ -5708,6 +5849,11 @@ impl WorldRenderer {
             for (part, (_, pv, pi, half_lambert, part_unlit, player_tint, eye)) in
                 m.parts.iter().enumerate()
             {
+                // with GPU skinning on, everything but the eyes (re-projected per vertex)
+                // goes through `vs_skin`
+                if eye.is_none() && gpu_skin_enabled() {
+                    continue;
+                }
                 let tint = if *player_tint { item.tint } else { Vec3::ONE };
                 let tint = tint.extend(item.dissolve);
                 // an eyeball looking at the item's target: the iris re-projected per frame
@@ -5831,9 +5977,11 @@ impl WorldRenderer {
             alpha,
             ..
         } = *target;
-        let Some((bufs, draws)) = self.model_buffers(gpu, items) else {
+        let cpu = self.model_buffers(gpu, items);
+        let skin = self.skin_draws(gpu, items);
+        if cpu.is_none() && skin.is_empty() {
             return;
-        };
+        }
         let device = &gpu.device;
         gpu.queue.write_buffer(
             &self.camera_buffer,
@@ -5875,20 +6023,260 @@ impl WorldRenderer {
                 occlusion_query_set: None,
                 multiview_mask: None,
             });
-            pass.set_pipeline(if alpha < 1.0 {
-                &self.translucent_pipeline
-            } else {
-                &self.pipeline
-            });
-            pass.set_bind_group(0, &self.camera_bind_group, &[]);
-            pass.set_vertex_buffer(0, bufs.vb.slice(..));
-            pass.set_index_buffer(bufs.ib.slice(..), wgpu::IndexFormat::Uint32);
-            for (bg, first, count) in draws {
-                pass.set_bind_group(1, bg, &[]);
-                pass.draw_indexed(first..first + count, 0, 0..1);
+            if let Some((bufs, draws)) = &cpu {
+                pass.set_pipeline(if alpha < 1.0 {
+                    &self.translucent_pipeline
+                } else {
+                    &self.pipeline
+                });
+                pass.set_bind_group(0, &self.camera_bind_group, &[]);
+                pass.set_vertex_buffer(0, bufs.vb.slice(..));
+                pass.set_index_buffer(bufs.ib.slice(..), wgpu::IndexFormat::Uint32);
+                for (bg, first, count) in draws {
+                    pass.set_bind_group(1, *bg, &[]);
+                    pass.draw_indexed(*first..*first + *count, 0, 0..1);
+                }
             }
+            self.draw_skinned(
+                &mut pass,
+                items,
+                &skin,
+                if alpha < 1.0 {
+                    &self.skin_translucent_pipeline
+                } else {
+                    &self.skin_pipeline
+                },
+                &self.camera_bind_group,
+            );
         }
         gpu.queue.submit([enc.finish()]);
+    }
+
+    /// The GPU-skinned draws of the frame into an open pass (see [`skin_draws`](Self::skin_draws)).
+    fn draw_skinned(
+        &self,
+        pass: &mut wgpu::RenderPass<'_>,
+        items: &[DrawItem<'_>],
+        draws: &[SkinDraw],
+        pipeline: &wgpu::RenderPipeline,
+        camera: &wgpu::BindGroup,
+    ) {
+        if draws.is_empty() {
+            return;
+        }
+        let sb = self.skin_buffers.borrow();
+        let Some(sb) = sb.as_ref() else {
+            return;
+        };
+        pass.set_pipeline(pipeline);
+        pass.set_bind_group(0, camera, &[]);
+        let mut last_model: *const DynModel = std::ptr::null();
+        for d in draws {
+            let model = items[d.item].model;
+            let Some(mesh) = model.skin_mesh.get() else {
+                continue;
+            };
+            if !std::ptr::eq(model, last_model) {
+                pass.set_vertex_buffer(0, mesh.vb.slice(..));
+                pass.set_index_buffer(mesh.ib.slice(..), wgpu::IndexFormat::Uint32);
+                last_model = model;
+            }
+            pass.set_bind_group(1, &model.parts[d.part].0, &[]);
+            pass.set_bind_group(3, &sb.bind_group, &[d.params_off, d.bones_off]);
+            let (first, count) = mesh.parts[d.part];
+            pass.draw_indexed(first..first + count, 0, 0..1);
+        }
+    }
+
+    /// The frame's GPU-skinned draws for an items slice (cached per frame like
+    /// `model_buffers`): every part without eyes, its params (placement, lights, tint) and
+    /// bones written into `skin_buffers` at the offsets the draws carry.
+    fn skin_draws(&self, gpu: &Gpu, items: &[DrawItem<'_>]) -> std::rc::Rc<Vec<SkinDraw>> {
+        if !gpu_skin_enabled() {
+            return Default::default();
+        }
+        let key = (self.frame.get(), items.as_ptr() as usize, items.len());
+        if let Some((f, p, n, d)) = self.skin_frame.borrow().as_ref() {
+            if (*f, *p, *n) == key {
+                return d.clone();
+            }
+        }
+        let mut draws = Vec::new();
+        let mut params: Vec<u8> = Vec::new();
+        let mut bones: Vec<u8> = Vec::new();
+        let mut cache = self.light_cache.borrow_mut();
+        if cache.len() > 4096 {
+            cache.clear();
+        }
+        for (item_index, item) in items.iter().enumerate() {
+            let m = item.model;
+            if m.parts.iter().all(|p| p.6.is_some()) {
+                continue;
+            }
+            m.skin_mesh.get_or_init(|| SkinMesh::build(gpu, &m.parts));
+            let bones_off = bones.len() as u32;
+            let start = bones.len();
+            bones.resize(start + SKIN_BONES_STRIDE, 0);
+            // without a pose (static props without a rest pose) the bones are the identity
+            let identity = [Mat4::IDENTITY; SKIN_MAX_BONES];
+            let src: &[Mat4] = match item.bones.or(m.rest_skin.as_deref()) {
+                Some(b) if !b.is_empty() && std::env::var_os("GM_SKIN_IDENTITY").is_none() => b,
+                _ => &identity,
+            };
+            if std::env::var_os("GM_SKIN_LOG").is_some() {
+                let max_bone = m
+                    .parts
+                    .iter()
+                    .flat_map(|p| p.1.iter())
+                    .flat_map(|v| v.bones[..(v.num_bones as usize).min(3)].iter())
+                    .max()
+                    .copied();
+                eprintln!(
+                    "skin: item {item_index} parts {} bones {:?} rest {:?} max index {:?} unlit {}",
+                    m.parts.len(),
+                    item.bones.map(<[Mat4]>::len),
+                    m.rest_skin.as_ref().map(Vec::len),
+                    max_bone,
+                    m.unlit
+                );
+            }
+            for (i, m) in src.iter().take(SKIN_MAX_BONES).enumerate() {
+                let at = start + i * 64;
+                bones[at..at + 64].copy_from_slice(bytemuck::cast_slice(&m.to_cols_array()));
+            }
+            let xf = &item.transform;
+            let origin = xf.transform_point3(Vec3::ZERO);
+            let model_cube = self.cubes.nearest(origin);
+            let local = if m.unlit {
+                None
+            } else {
+                let lkey = [
+                    (origin.x / 8.0).floor() as i32,
+                    (origin.y / 8.0).floor() as i32,
+                    (origin.z / 8.0).floor() as i32,
+                ];
+                Some(
+                    cache
+                        .entry(lkey)
+                        .or_insert_with(|| self.light.at(origin, 4))
+                        .clone(),
+                )
+            };
+            let spec = match &local {
+                Some(l) => l
+                    .lights
+                    .iter()
+                    .max_by(|a, b| a.0.length_squared().total_cmp(&b.0.length_squared()))
+                    .map(|&(c, d)| (d, c))
+                    .unwrap_or((Vec3::Z, Vec3::ZERO)),
+                None => (Vec3::ZERO, Vec3::ZERO),
+            };
+            for (part, (_, _, pi, half_lambert, part_unlit, player_tint, eye)) in
+                m.parts.iter().enumerate()
+            {
+                if eye.is_some() || pi.is_empty() {
+                    continue;
+                }
+                let tint = if *player_tint { item.tint } else { Vec3::ONE };
+                let mut sp = SkinParams::zeroed();
+                sp.model = xf.to_cols_array_2d();
+                let mut count = 0;
+                if let Some(l) = &local {
+                    for (dst, c) in sp.cube.iter_mut().zip(&l.cube) {
+                        *dst = c.extend(0.0).to_array();
+                    }
+                    for (i, (c, d)) in l.lights.iter().take(4).enumerate() {
+                        sp.light_color[i] = c.extend(0.0).to_array();
+                        sp.light_dir[i] = d.extend(0.0).to_array();
+                        count += 1;
+                    }
+                }
+                let unlit = local.is_none() || *part_unlit;
+                sp.misc = [
+                    model_cube,
+                    f32::from(*half_lambert),
+                    f32::from(unlit),
+                    count as f32,
+                ];
+                sp.tint = tint.extend(item.dissolve).to_array();
+                sp.spec_dir = spec.0.extend(0.0).to_array();
+                sp.spec_color = spec.1.extend(0.0).to_array();
+                sp.white_uv = [self.white_uv[0], self.white_uv[1], 0.0, 0.0];
+                let params_off = params.len() as u32;
+                params.extend_from_slice(bytemuck::bytes_of(&sp));
+                params.resize(params_off as usize + SKIN_PARAMS_STRIDE, 0);
+                draws.push(SkinDraw {
+                    item: item_index,
+                    part,
+                    params_off,
+                    bones_off,
+                });
+            }
+        }
+        drop(cache);
+        if !draws.is_empty() {
+            self.write_skin_buffers(gpu, &params, &bones);
+        }
+        let rc = std::rc::Rc::new(draws);
+        *self.skin_frame.borrow_mut() = Some((key.0, key.1, key.2, rc.clone()));
+        rc
+    }
+
+    /// Uploads the frame's skin params and bones, growing the buffers (and rebuilding their
+    /// bind group) when they do not fit.
+    fn write_skin_buffers(&self, gpu: &Gpu, params: &[u8], bones: &[u8]) {
+        let mut slot = self.skin_buffers.borrow_mut();
+        if slot
+            .as_ref()
+            .is_none_or(|b| b.params_cap < params.len() || b.bones_cap < bones.len())
+        {
+            let params_cap = params.len().max(64 * 1024).next_power_of_two();
+            let bones_cap = bones.len().max(256 * 1024).next_power_of_two();
+            let params_buf = gpu.device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("skin params"),
+                size: params_cap as u64,
+                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+            let bones_buf = gpu.device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("skin bones"),
+                size: bones_cap as u64,
+                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+            let bind_group = gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("skin"),
+                layout: &self.skin_layout,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                            buffer: &params_buf,
+                            offset: 0,
+                            size: wgpu::BufferSize::new(SKIN_PARAMS_STRIDE as u64),
+                        }),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                            buffer: &bones_buf,
+                            offset: 0,
+                            size: wgpu::BufferSize::new(SKIN_BONES_STRIDE as u64),
+                        }),
+                    },
+                ],
+            });
+            *slot = Some(SkinBuffers {
+                params: params_buf,
+                bones: bones_buf,
+                bind_group,
+                params_cap,
+                bones_cap,
+            });
+        }
+        let b = slot.as_ref().unwrap();
+        gpu.queue.write_buffer(&b.params, 0, params);
+        gpu.queue.write_buffer(&b.bones, 0, bones);
     }
 }
 
@@ -5907,6 +6295,126 @@ struct ModelBuffers {
     ib: wgpu::Buffer,
     draws: Vec<ModelDraw>,
 }
+
+/// `GM_GPU_SKIN=1`: entity models skinned in the vertex shader (`vs_skin`) instead of on the
+/// CPU. Off by default while the path is being verified (an npc_citizen renders wrong).
+fn gpu_skin_enabled() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var_os("GM_GPU_SKIN").is_some())
+}
+
+/// Per-draw uniform of `vs_skin` (see the shader's `SkinParams`).
+#[repr(C)]
+#[derive(Clone, Copy, Pod, Zeroable)]
+struct SkinParams {
+    model: [[f32; 4]; 4],
+    cube: [[f32; 4]; 6],
+    light_color: [[f32; 4]; 4],
+    light_dir: [[f32; 4]; 4],
+    tint: [f32; 4],
+    spec_dir: [f32; 4],
+    spec_color: [f32; 4],
+    misc: [f32; 4],
+    white_uv: [f32; 4],
+}
+
+/// Stride of one `SkinParams` in the params buffer (dynamic offsets align to 256).
+const SKIN_PARAMS_STRIDE: usize = 512;
+/// Bones per item in the bones buffer (an MDL has at most 128) and their byte stride.
+const SKIN_MAX_BONES: usize = 128;
+const SKIN_BONES_STRIDE: usize = SKIN_MAX_BONES * 64;
+
+/// A model vertex as `vs_skin` reads it: rest-space position and normal, up to three bones.
+#[repr(C)]
+#[derive(Clone, Copy, Pod, Zeroable)]
+struct SkinVertex {
+    position: [f32; 3],
+    normal: [f32; 3],
+    uv: [f32; 2],
+    iris_uv: [f32; 2],
+    bones: [u8; 4],
+    weights: [f32; 3],
+}
+
+/// A `DynModel`'s parts on the GPU: one vertex and index buffer, (first index, count) per part.
+struct SkinMesh {
+    vb: wgpu::Buffer,
+    ib: wgpu::Buffer,
+    parts: Vec<(u32, u32)>,
+}
+
+impl SkinMesh {
+    fn build(gpu: &Gpu, parts: &[DynPart]) -> SkinMesh {
+        let mut verts: Vec<SkinVertex> = Vec::new();
+        let mut idx: Vec<u32> = Vec::new();
+        let mut ranges = Vec::new();
+        for (_, pv, pi, ..) in parts {
+            let base = verts.len() as u32;
+            for v in pv {
+                let mut weights = [0f32; 3];
+                let n = (v.num_bones as usize).min(3);
+                weights[..n].copy_from_slice(&v.weights[..n]);
+                verts.push(SkinVertex {
+                    position: v.position,
+                    normal: v.normal,
+                    uv: v.uv,
+                    iris_uv: v.iris_uv,
+                    bones: [v.bones[0], v.bones[1], v.bones[2], 0],
+                    weights,
+                });
+            }
+            let first = idx.len() as u32;
+            idx.extend(pi.iter().map(|i| i + base));
+            ranges.push((first, pi.len() as u32));
+        }
+        // an empty model still needs valid buffers to bind
+        if verts.is_empty() {
+            verts.push(SkinVertex::zeroed());
+        }
+        if idx.is_empty() {
+            idx.push(0);
+        }
+        let vb = gpu
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("skin vertices"),
+                contents: bytemuck::cast_slice(&verts),
+                usage: wgpu::BufferUsages::VERTEX,
+            });
+        let ib = gpu
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("skin indices"),
+                contents: bytemuck::cast_slice(&idx),
+                usage: wgpu::BufferUsages::INDEX,
+            });
+        SkinMesh {
+            vb,
+            ib,
+            parts: ranges,
+        }
+    }
+}
+
+/// The frame's skin params and bones buffers with their bind group.
+struct SkinBuffers {
+    params: wgpu::Buffer,
+    bones: wgpu::Buffer,
+    bind_group: wgpu::BindGroup,
+    params_cap: usize,
+    bones_cap: usize,
+}
+
+/// One GPU-skinned part draw: `items[item].model.parts[part]` with its dynamic offsets.
+struct SkinDraw {
+    item: usize,
+    part: usize,
+    params_off: u32,
+    bones_off: u32,
+}
+
+/// `World::skin_frame`: (frame, items pointer, items length, draws).
+type SkinFrame = (u64, usize, usize, std::rc::Rc<Vec<SkinDraw>>);
 
 /// `World::model_cache`: (frame, items pointer, items length, buffers).
 type ModelCacheEntry = (u64, usize, usize, std::rc::Rc<ModelBuffers>);
