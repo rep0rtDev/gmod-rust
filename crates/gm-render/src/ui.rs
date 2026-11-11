@@ -3,7 +3,7 @@
 //! is Roboto 16 px), VTF textures as images, one alpha-blended pipeline, vertices rebuilt per
 //! frame and drawn in batches per texture.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use ab_glyph::{point, Font, FontArc, ScaleFont};
 use anyhow::{anyhow, Result};
@@ -549,12 +549,16 @@ fn system_fonts() -> &'static [std::path::PathBuf] {
 }
 
 /// A run of vertices drawn with one texture.
-type Batch<'a> = (&'a wgpu::BindGroup, std::ops::Range<u32>);
+/// A run of vertices drawn with one bind group; the flag selects the additive pipeline.
+type Batch<'a> = (&'a wgpu::BindGroup, std::ops::Range<u32>, bool);
 
 pub struct UiRenderer {
     pipeline: wgpu::RenderPipeline,
+    /// `$additive` images (the crosshair sheet): src * alpha + dst, no square around them.
+    additive_pipeline: wgpu::RenderPipeline,
     /// The same items on a plane in the world (3D2D): depth-tested against the scene.
     world_pipeline: wgpu::RenderPipeline,
+    world_additive_pipeline: wgpu::RenderPipeline,
     plane_layout: wgpu::BindGroupLayout,
     layout: wgpu::BindGroupLayout,
     sampler: wgpu::Sampler,
@@ -563,6 +567,7 @@ pub struct UiRenderer {
     fonts: HashMap<String, FontAtlas>,
     /// Loaded images by name; `None` remembers a texture that is not in the content.
     images: HashMap<String, Option<wgpu::BindGroup>>,
+    additive_images: HashSet<String>,
     /// Decoded size of each present image (a background slide's aspect).
     image_sizes: HashMap<String, (u32, u32)>,
 }
@@ -646,39 +651,78 @@ impl UiRenderer {
             bind_group_layouts: &[Some(&layout)],
             ..Default::default()
         });
-        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("ui"),
-            layout: Some(&pipeline_layout),
-            vertex: wgpu::VertexState {
-                module: &shader,
-                entry_point: Some("vs_main"),
-                compilation_options: Default::default(),
-                buffers: &[Some(wgpu::VertexBufferLayout {
-                    array_stride: std::mem::size_of::<Vertex>() as u64,
-                    step_mode: wgpu::VertexStepMode::Vertex,
-                    attributes: &wgpu::vertex_attr_array![0 => Float32x2, 1 => Float32x2, 2 => Float32x4],
-                })],
+        let make = |label: &str,
+                    layout: &wgpu::PipelineLayout,
+                    vs: &str,
+                    depth_stencil: Option<wgpu::DepthStencilState>,
+                    samples: u32,
+                    blend: wgpu::BlendState| {
+            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some(label),
+                layout: Some(layout),
+                vertex: wgpu::VertexState {
+                    module: &shader,
+                    entry_point: Some(vs),
+                    compilation_options: Default::default(),
+                    buffers: &[Some(wgpu::VertexBufferLayout {
+                        array_stride: std::mem::size_of::<Vertex>() as u64,
+                        step_mode: wgpu::VertexStepMode::Vertex,
+                        attributes: &wgpu::vertex_attr_array![0 => Float32x2, 1 => Float32x2, 2 => Float32x4],
+                    })],
+                },
+                primitive: wgpu::PrimitiveState {
+                    topology: wgpu::PrimitiveTopology::TriangleList,
+                    cull_mode: None,
+                    ..Default::default()
+                },
+                depth_stencil,
+                multisample: wgpu::MultisampleState {
+                    count: samples,
+                    ..Default::default()
+                },
+                fragment: Some(wgpu::FragmentState {
+                    module: &shader,
+                    entry_point: Some("fs_main"),
+                    compilation_options: Default::default(),
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format: color_format,
+                        blend: Some(blend),
+                        write_mask: wgpu::ColorWrites::ALL,
+                    })],
+                }),
+                multiview_mask: None,
+                cache: None,
+            })
+        };
+        // `$additive`: colour * alpha added onto the frame, the frame's alpha kept
+        let additive = wgpu::BlendState {
+            color: wgpu::BlendComponent {
+                src_factor: wgpu::BlendFactor::SrcAlpha,
+                dst_factor: wgpu::BlendFactor::One,
+                operation: wgpu::BlendOperation::Add,
             },
-            primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::TriangleList,
-                cull_mode: None,
-                ..Default::default()
+            alpha: wgpu::BlendComponent {
+                src_factor: wgpu::BlendFactor::Zero,
+                dst_factor: wgpu::BlendFactor::One,
+                operation: wgpu::BlendOperation::Add,
             },
-            depth_stencil: None,
-            multisample: Default::default(),
-            fragment: Some(wgpu::FragmentState {
-                module: &shader,
-                entry_point: Some("fs_main"),
-                compilation_options: Default::default(),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format: color_format,
-                    blend: Some(wgpu::BlendState::ALPHA_BLENDING),
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-            }),
-            multiview_mask: None,
-            cache: None,
-        });
+        };
+        let pipeline = make(
+            "ui",
+            &pipeline_layout,
+            "vs_main",
+            None,
+            1,
+            wgpu::BlendState::ALPHA_BLENDING,
+        );
+        let additive_pipeline = make(
+            "ui additive",
+            &pipeline_layout,
+            "vs_main",
+            None,
+            1,
+            additive,
+        );
         let plane_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("ui plane"),
             entries: &[wgpu::BindGroupLayoutEntry {
@@ -697,51 +741,34 @@ impl UiRenderer {
             bind_group_layouts: &[Some(&layout), Some(&plane_layout)],
             ..Default::default()
         });
-        let world_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("ui world"),
-            layout: Some(&world_layout),
-            vertex: wgpu::VertexState {
-                module: &shader,
-                entry_point: Some("vs_world"),
-                compilation_options: Default::default(),
-                buffers: &[Some(wgpu::VertexBufferLayout {
-                    array_stride: std::mem::size_of::<Vertex>() as u64,
-                    step_mode: wgpu::VertexStepMode::Vertex,
-                    attributes: &wgpu::vertex_attr_array![0 => Float32x2, 1 => Float32x2, 2 => Float32x4],
-                })],
-            },
-            primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::TriangleList,
-                cull_mode: None,
-                ..Default::default()
-            },
-            depth_stencil: Some(wgpu::DepthStencilState {
-                format: wgpu::TextureFormat::Depth32Float,
-                depth_write_enabled: Some(false),
-                depth_compare: Some(wgpu::CompareFunction::LessEqual),
-                stencil: Default::default(),
-                bias: Default::default(),
-            }),
-            multisample: wgpu::MultisampleState {
-                count: msaa,
-                ..Default::default()
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: &shader,
-                entry_point: Some("fs_main"),
-                compilation_options: Default::default(),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format: color_format,
-                    blend: Some(wgpu::BlendState::ALPHA_BLENDING),
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-            }),
-            multiview_mask: None,
-            cache: None,
-        });
+        let depth = wgpu::DepthStencilState {
+            format: wgpu::TextureFormat::Depth32Float,
+            depth_write_enabled: Some(false),
+            depth_compare: Some(wgpu::CompareFunction::LessEqual),
+            stencil: Default::default(),
+            bias: Default::default(),
+        };
+        let world_pipeline = make(
+            "ui world",
+            &world_layout,
+            "vs_world",
+            Some(depth.clone()),
+            msaa,
+            wgpu::BlendState::ALPHA_BLENDING,
+        );
+        let world_additive_pipeline = make(
+            "ui world additive",
+            &world_layout,
+            "vs_world",
+            Some(depth),
+            msaa,
+            additive,
+        );
         Ok(UiRenderer {
             pipeline,
+            additive_pipeline,
             world_pipeline,
+            world_additive_pipeline,
             plane_layout,
             layout,
             sampler,
@@ -749,6 +776,7 @@ impl UiRenderer {
             default,
             fonts: HashMap::new(),
             images: HashMap::new(),
+            additive_images: HashSet::new(),
             image_sizes: HashMap::new(),
         })
     }
@@ -851,14 +879,10 @@ impl UiRenderer {
             self.image_sizes
                 .insert(name.to_string(), (img.width, img.height));
         }
-        let loaded = decoded.map(|mut img| {
-            if additive {
-                // one alpha-blended pipeline: an additive sprite keeps its colour and
-                // fades in by brightness, which is src + dst up to the clamp
-                for px in img.pixels.as_chunks_mut::<4>().0 {
-                    px[3] = px[0].max(px[1]).max(px[2]);
-                }
-            }
+        if additive {
+            self.additive_images.insert(name.to_string());
+        }
+        let loaded = decoded.map(|img| {
             let texture = upload_rgba(
                 gpu,
                 &img.pixels,
@@ -910,10 +934,7 @@ impl UiRenderer {
     }
 
     /// Vertices of `items` in order with one batch per run of the same texture.
-    fn build(
-        &self,
-        items: &[UiItem],
-    ) -> (Vec<Vertex>, Vec<(&wgpu::BindGroup, std::ops::Range<u32>)>) {
+    fn build(&self, items: &[UiItem]) -> (Vec<Vertex>, Vec<Batch<'_>>) {
         // vertices in item order, split into batches wherever the texture changes
         let mut vertices: Vec<Vertex> = Vec::new();
         let mut batches: Vec<Batch<'_>> = Vec::new();
@@ -970,6 +991,7 @@ impl UiRenderer {
         }
         fn push_batch<'a>(
             bg: &'a wgpu::BindGroup,
+            additive: bool,
             from: u32,
             to: u32,
             batches: &mut Vec<Batch<'a>>,
@@ -978,10 +1000,12 @@ impl UiRenderer {
                 return;
             }
             match batches.last_mut() {
-                Some((last, range)) if std::ptr::eq(*last, bg) && range.end == from => {
+                Some((last, range, add))
+                    if std::ptr::eq(*last, bg) && *add == additive && range.end == from =>
+                {
                     range.end = to
                 }
-                _ => batches.push((bg, from..to)),
+                _ => batches.push((bg, from..to, additive)),
             }
         }
         for item in items {
@@ -1071,7 +1095,12 @@ impl UiRenderer {
                     bg
                 }
             };
-            push_batch(bg, from, vertices.len() as u32, &mut batches);
+            let additive = matches!(
+                item,
+                UiItem::Slice { material, .. } | UiItem::Image { material, .. }
+                    if self.additive_images.contains(material)
+            );
+            push_batch(bg, additive, from, vertices.len() as u32, &mut batches);
         }
         (vertices, batches)
     }
@@ -1121,9 +1150,13 @@ impl UiRenderer {
                 occlusion_query_set: None,
                 multiview_mask: None,
             });
-            pass.set_pipeline(&self.pipeline);
             pass.set_vertex_buffer(0, vb.slice(..));
-            for (bg, range) in &batches {
+            for (bg, range, additive) in &batches {
+                pass.set_pipeline(if *additive {
+                    &self.additive_pipeline
+                } else {
+                    &self.pipeline
+                });
                 pass.set_bind_group(0, *bg, &[]);
                 pass.draw(range.clone(), 0..1);
             }
@@ -1170,7 +1203,7 @@ impl UiRenderer {
             });
             let shifted = batches
                 .into_iter()
-                .map(|(b, r)| (b, r.start + base..r.end + base))
+                .map(|(b, r, add)| (b, r.start + base..r.end + base, add))
                 .collect();
             draws.push((bg, shifted));
         }
@@ -1209,11 +1242,15 @@ impl UiRenderer {
                 occlusion_query_set: None,
                 multiview_mask: None,
             });
-            pass.set_pipeline(&self.world_pipeline);
             pass.set_vertex_buffer(0, vb.slice(..));
             for (plane_bg, batches) in &draws {
                 pass.set_bind_group(1, plane_bg, &[]);
-                for (bg, range) in batches {
+                for (bg, range, additive) in batches {
+                    pass.set_pipeline(if *additive {
+                        &self.world_additive_pipeline
+                    } else {
+                        &self.world_pipeline
+                    });
                     pass.set_bind_group(0, *bg, &[]);
                     pass.draw(range.clone(), 0..1);
                 }
