@@ -7645,9 +7645,11 @@ impl App {
                         camera.position + fwd * 8192.0,
                         gm_collision::MASK_SOLID,
                     );
-                    let (v, i) =
-                        g.world
-                            .sprite_quad(hit.end - fwd * 1.0, 6.0, [1.0, 0.2, 0.2], &camera);
+                    // `CLaserDot::DrawModel`: the redglow1 sprite 16 u wide in white (the
+                    // texture is the red), a unit off the surface
+                    let (v, i) = g
+                        .world
+                        .sprite_quad(hit.end - fwd * 1.0, 16.0, [1.0; 3], &camera);
                     additive.push((m, v, i));
                 }
                 if let Some(m) = &g.fx_laserbeam {
@@ -9784,9 +9786,16 @@ impl App {
             }),
             // a weapon by class, scripted ones included (their index follows the stock table)
             "weapon" if !rest.is_empty() => {
+                // the client's slot of the class: the built-in viewmodels, then the scripted
+                // ones in the server's order (`weapon_classes` is the wire order, not slots)
                 let class = rest.join(" ");
-                let classes = gm_net::msg::weapon_classes(&self.sim.client.world.weapon_defs);
-                match classes.iter().position(|c| *c == class) {
+                let slot = WEAPONS.iter().position(|w| w.class == class).or_else(|| {
+                    self.scripted_vms
+                        .iter()
+                        .position(|v| v.class == class)
+                        .map(|i| i + WEAPONS.len())
+                });
+                match slot {
                     Some(i) if i < 255 => self.select_weapon(i as u8),
                     _ => self.console.log(format!("unknown weapon {class}")),
                 }

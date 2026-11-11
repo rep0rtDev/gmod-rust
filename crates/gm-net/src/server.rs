@@ -926,7 +926,22 @@ impl ServerNet {
                     .join(" ")
             )],
             "" => Vec::new(),
-            other => vec![format!("{other}: unknown command (help)")],
+            // a server cvar by name, as the engine's console: `sv_gravity` prints it,
+            // `sv_gravity 800` sets it
+            other => match (server.cvar(other).map(str::to_owned), rest.first()) {
+                (Some(v), None) => vec![format!("\"{other}\" = \"{v}\"")],
+                (Some(_), Some(v)) => {
+                    if server.set_cvar(other, v) {
+                        vec![format!(
+                            "\"{other}\" = \"{}\"",
+                            server.cvar(other).unwrap_or_default()
+                        )]
+                    } else {
+                        vec![format!("{other}: bad value {v}")]
+                    }
+                }
+                (None, _) => vec![format!("{other}: unknown command (help)")],
+            },
         }
     }
 
