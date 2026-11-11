@@ -12,3 +12,6 @@ set(USE_LZCNT OFF CACHE BOOL "" FORCE)
 set(USE_TZCNT OFF CACHE BOOL "" FORCE)
 set(USE_F16C OFF CACHE BOOL "" FORCE)
 set(USE_FMADD OFF CACHE BOOL "" FORCE)
+# Jolt's -Wall -Werror trips on new clang warnings (clang 21: memcpy of a non-trivially copyable
+# type in ContactConstraintManager.cpp); its warnings are not ours to fix
+set(ENABLE_ALL_WARNINGS OFF CACHE BOOL "" FORCE)
