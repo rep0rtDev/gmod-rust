@@ -6281,8 +6281,14 @@ impl App {
                     0.0
                 };
                 if let Some((_, skin)) = rag_poses.iter().find(|(id, _)| *id == e.id) {
+                    // the eyeposer's target (local to the `eyes` attachment) through the posed
+                    // skeleton
+                    let look = e.eye_target.and_then(|local| {
+                        let world = ragdoll_bone_matrices(model, &e.bones, pos, ang, &e.manips)?;
+                        Some(model.attachment("eyes", &world)?.transform_point3(local))
+                    });
                     return Some(DrawItem {
-                        look: None,
+                        look,
                         dissolve,
                         tint: Vec3::ONE,
                         model,
@@ -6290,9 +6296,19 @@ impl App {
                         bones: Some(skin.as_slice()),
                     });
                 }
-                let look =
-                    (!e.sequence.is_empty() && e.dissolve == 0 && pos.distance(look_at) < 600.0)
-                        .then_some(look_at);
+                let look = (!e.sequence.is_empty() && e.dissolve == 0)
+                    .then(|| {
+                        Self::npc_look_target(
+                            &self.sim.client.world,
+                            self.sim.client.player_id,
+                            e.id,
+                            pos,
+                            ang,
+                            look_at,
+                            rt,
+                        )
+                    })
+                    .flatten();
                 Some(DrawItem {
                     look,
                     dissolve,
@@ -10265,6 +10281,61 @@ fn split_console_line(line: &str) -> Vec<String> {
 }
 
 impl App {
+    /// CAI_BaseActor's view targets, approximated per client: an NPC glances at the players and
+    /// NPCs inside its 45 degree forward cone within 512 u, picking a new one (or none) every
+    /// 1.5-3.5 s; a player closer than 128 u in the cone always holds its gaze. Deterministic in
+    /// (entity, time slot) so the choice does not flicker between frames.
+    fn npc_look_target(
+        world: &gm_net::ClientWorld,
+        me: Option<u32>,
+        id: u32,
+        pos: Vec3,
+        ang: Vec3,
+        local_eye: Vec3,
+        rt: f32,
+    ) -> Option<Vec3> {
+        let (sy, cy) = ang.y.to_radians().sin_cos();
+        let fwd = Vec3::new(cy, sy, 0.0);
+        let eye = pos + Vec3::Z * 64.0;
+        let in_cone = |at: Vec3| {
+            let d = at - eye;
+            let len = d.length();
+            (16.0..512.0).contains(&len) && d.dot(fwd) / len > 0.707
+        };
+        if in_cone(local_eye) && local_eye.distance(eye) < 128.0 {
+            return Some(local_eye);
+        }
+        let mut cands: Vec<Vec3> = Vec::new();
+        if in_cone(local_eye) {
+            cands.push(local_eye);
+        }
+        for p in &world.players {
+            let at = p.origin + Vec3::Z * 64.0;
+            if Some(p.id) != me && p.alive && in_cone(at) {
+                cands.push(at);
+            }
+        }
+        for o in world.entities.values() {
+            let at = o.pos + Vec3::Z * 64.0;
+            if o.id != id && !o.sequence.is_empty() && o.dissolve == 0 && in_cone(at) {
+                cands.push(at);
+            }
+        }
+        if cands.is_empty() {
+            return None;
+        }
+        // xorshift of the id: the entity's own glance period and phase
+        let mut h = u64::from(id).wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1;
+        h ^= h >> 12;
+        h ^= h << 25;
+        h ^= h >> 27;
+        let period = 1.5 + (h % 1000) as f32 / 1000.0 * 2.0;
+        let secs = rt * gm_move::MoveConfig::default().tick_interval + (h % 97) as f32;
+        let slot = (secs / period) as u64;
+        let pick = (h ^ slot.wrapping_mul(0x2545_F491_4F6C_DD1D)) % (cands.len() as u64 + 1);
+        cands.get(pick as usize).copied()
+    }
+
     /// The value of a client cvar, else of a server one as last replicated.
     fn any_cvar_value(&self, key: &str) -> Option<String> {
         self.settings.cvar_value(key).or_else(|| {
