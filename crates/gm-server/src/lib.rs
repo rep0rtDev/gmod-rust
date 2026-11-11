@@ -9053,6 +9053,19 @@ pub const PHYS_CVARS: [(&str, &str); 3] = [
     ("gm_phys_paused", "0"),
 ];
 
+/// Movement / game cvars the Utilities panel and the console set (defaults = `MoveConfig`).
+pub const SV_CVARS: [(&str, &str); 10] = [
+    ("sv_friction", "8"),
+    ("sv_stopspeed", "10"),
+    ("sv_accelerate", "10"),
+    ("sv_airaccelerate", "10"),
+    ("sv_maxvelocity", "3500"),
+    ("sv_stepsize", "18"),
+    ("sv_noclipspeed", "5"),
+    ("sv_noclipaccelerate", "5"),
+    ("mp_falldamage", "0"),
+    ("sv_cheats", "0"),
+];
 pub const SBOX_CVARS: [(&str, &str); 24] = [
     ("sbox_maxprops", "200"),
     ("sbox_maxragdolls", "10"),
@@ -9169,6 +9182,7 @@ impl<'w> Server<'w> {
             cvars: SBOX_CVARS
                 .iter()
                 .chain(PHYS_CVARS.iter())
+                .chain(SV_CVARS.iter())
                 .map(|(n, d)| (n.to_string(), Cvar::replicated(d)))
                 .collect(),
             archived_cvars: BTreeMap::new(),
@@ -9288,10 +9302,12 @@ impl<'w> Server<'w> {
         } else {
             None
         };
+        // `sbox_godmode`: the sandbox's PlayerShouldTakeDamage says no for everyone
+        let godmode = self.cvar("sbox_godmode").is_some_and(|v| v != "0");
         let Some(p) = self.players.get_mut(&id) else {
             return 0.0;
         };
-        if !p.alive || amount <= 0.0 || p.god {
+        if !p.alive || amount <= 0.0 || p.god || godmode {
             return 0.0;
         }
         let mut to_health = amount;
@@ -9466,6 +9482,15 @@ impl<'w> Server<'w> {
                 }
             }
             "gm_phys_paused" => self.physics_paused = num != 0.0,
+            "sv_friction" => self.mover.cfg.friction = num,
+            "sv_stopspeed" => self.mover.cfg.stop_speed = num,
+            "sv_accelerate" => self.mover.cfg.accelerate = num,
+            "sv_airaccelerate" => self.mover.cfg.air_accelerate = num,
+            "sv_maxvelocity" => self.mover.cfg.max_velocity = num,
+            "sv_stepsize" => self.mover.cfg.step_size = num,
+            "sv_noclipspeed" => self.mover.cfg.noclip_speed = num,
+            "sv_noclipaccelerate" => self.mover.cfg.noclip_accelerate = num,
+            "mp_falldamage" => self.fall_damage_progressive = num != 0.0,
             _ => {}
         }
         self.cvar_changes.push((name.to_string(), old, v));
@@ -9823,10 +9848,16 @@ impl<'w> Server<'w> {
         if self.ask(Request::Loadout { player: id }) == Verdict::Cancel {
             return;
         }
+        // `sbox_weapons 0`: the sandbox loadout keeps only the physgun, tool gun and camera
+        let hl2_weapons = self.cvar("sbox_weapons").is_none_or(|v| v != "0");
         let Some(p) = self.players.get_mut(&id) else {
             return;
         };
-        p.weapons = LOADOUT.iter().map(|w| w.to_string()).collect();
+        p.weapons = LOADOUT
+            .iter()
+            .filter(|w| hl2_weapons || !w.starts_with("weapon_") || **w == SPAWN_WEAPON)
+            .map(|w| w.to_string())
+            .collect();
         p.active_weapon = SPAWN_WEAPON.to_string();
         p.inventory.give_loadout();
         p.inventory.select(SPAWN_WEAPON);
