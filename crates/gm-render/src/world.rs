@@ -763,7 +763,13 @@ pub struct WorldRenderer {
     skin_pipeline: wgpu::RenderPipeline,
     skin_translucent_pipeline: wgpu::RenderPipeline,
     skin_shadow_pipeline: wgpu::RenderPipeline,
-    skin_buffers: std::cell::RefCell<Option<SkinBuffers>>,
+    /// One set of skin buffers per items slice skinned this frame (`skin_cursor` indexes),
+    /// so every pass of a frame keeps its own params/bones until the frame's submit.
+    skin_buffers: std::cell::RefCell<Vec<Option<SkinBuffers>>>,
+    skin_cursor: std::cell::Cell<usize>,
+    /// Camera uniform ring: every pass pushes its own slot (`push_camera`) and binds it by
+    /// dynamic offset, so passes never overwrite each other's camera.
+    camera_cursor: std::cell::Cell<u32>,
     skin_frame: std::cell::RefCell<Option<SkinFrame>>,
     /// Alpha-blended ad-hoc geometry (constraint ropes: `keyframe_rope` cables).
     alpha_pipeline: wgpu::RenderPipeline,
@@ -2497,8 +2503,10 @@ impl WorldRenderer {
                     visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
                     ty: wgpu::BindingType::Buffer {
                         ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
+                        has_dynamic_offset: true,
+                        min_binding_size: wgpu::BufferSize::new(
+                            std::mem::size_of::<CameraUniform>() as u64,
+                        ),
                     },
                     count: None,
                 },
@@ -2655,7 +2663,7 @@ impl WorldRenderer {
         });
         let camera_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("camera"),
-            size: std::mem::size_of::<CameraUniform>() as u64,
+            size: CAMERA_STRIDE * CAMERA_SLOTS,
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
@@ -2726,7 +2734,11 @@ impl WorldRenderer {
             entries: &[
                 wgpu::BindGroupEntry {
                     binding: 0,
-                    resource: camera_buffer.as_entire_binding(),
+                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                        buffer: &camera_buffer,
+                        offset: 0,
+                        size: wgpu::BufferSize::new(std::mem::size_of::<CameraUniform>() as u64),
+                    }),
                 },
                 wgpu::BindGroupEntry {
                     binding: 1,
@@ -2787,7 +2799,11 @@ impl WorldRenderer {
             entries: &[
                 wgpu::BindGroupEntry {
                     binding: 0,
-                    resource: camera_buffer.as_entire_binding(),
+                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                        buffer: &camera_buffer,
+                        offset: 0,
+                        size: wgpu::BufferSize::new(std::mem::size_of::<CameraUniform>() as u64),
+                    }),
                 },
                 wgpu::BindGroupEntry {
                     binding: 1,
@@ -3566,6 +3582,8 @@ impl WorldRenderer {
             skin_shadow_pipeline,
             skin_buffers: Default::default(),
             skin_frame: Default::default(),
+            skin_cursor: Default::default(),
+            camera_cursor: Default::default(),
             alpha_pipeline,
             modulate_pipeline,
             translucent_pipeline,
@@ -3619,6 +3637,8 @@ impl WorldRenderer {
         reflect_items: &[DrawItem<'_>],
     ) {
         self.frame.set(self.frame.get() + 1);
+        self.camera_cursor.set(0);
+        self.skin_cursor.set(0);
         let t0 = std::time::Instant::now();
         let mut vps = [None; DEPTH_LAYERS];
         for (slot, (_, l)) in self.flashlights.iter().take(SHADOW_LAYERS).enumerate() {
@@ -4023,11 +4043,7 @@ impl WorldRenderer {
             far: SKY_CUBE_HALF * 4.0,
             ..*camera
         };
-        gpu.queue.write_buffer(
-            &self.camera_buffer,
-            0,
-            bytemuck::bytes_of(&self.camera_uniform(&cam, aspect, 1.0, None, None)),
-        );
+        let cam_off = self.push_camera(gpu, &self.camera_uniform(&cam, aspect, 1.0, None, None));
         let mut enc = gpu.device.create_command_encoder(&Default::default());
         {
             let mut pass = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -4058,7 +4074,7 @@ impl WorldRenderer {
             } else {
                 &self.sky_pipeline
             });
-            pass.set_bind_group(0, &self.camera_bind_group, &[]);
+            pass.set_bind_group(0, &self.camera_bind_group, &[cam_off]);
             pass.set_vertex_buffer(0, sky.vertex_buffer.slice(..));
             pass.set_index_buffer(sky.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
             let stars = self
@@ -4099,8 +4115,7 @@ impl WorldRenderer {
             if sky { sky_fog } else { self.view_fog(camera) },
             self.clip_for(sky),
         );
-        gpu.queue
-            .write_buffer(&self.camera_buffer, 0, bytemuck::bytes_of(&cam_uniform));
+        let cam_off = self.push_camera(gpu, &cam_uniform);
         let mut enc = gpu.device.create_command_encoder(&Default::default());
         {
             let mut pass = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -4136,7 +4151,7 @@ impl WorldRenderer {
                 multiview_mask: None,
             });
             pass.set_pipeline(&self.pipeline);
-            pass.set_bind_group(0, &self.camera_bind_group, &[]);
+            pass.set_bind_group(0, &self.camera_bind_group, &[cam_off]);
             pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
             pass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
             for b in self
@@ -4171,8 +4186,6 @@ impl WorldRenderer {
                     },
                     items,
                 );
-                gpu.queue
-                    .write_buffer(&self.camera_buffer, 0, bytemuck::bytes_of(&cam_uniform));
             }
             enc = gpu.device.create_command_encoder(&Default::default());
             let mut pass = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -4198,7 +4211,7 @@ impl WorldRenderer {
                 occlusion_query_set: None,
                 multiview_mask: None,
             });
-            pass.set_bind_group(0, &self.camera_bind_group, &[]);
+            pass.set_bind_group(0, &self.camera_bind_group, &[cam_off]);
             pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
             pass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
             // translucent surfaces after everything opaque, farthest first, no depth write
@@ -4308,7 +4321,7 @@ impl WorldRenderer {
                 multiview_mask: None,
             });
             pass.set_pipeline(&self.water_pipeline);
-            pass.set_bind_group(0, &self.camera_bind_group, &[]);
+            pass.set_bind_group(0, &self.camera_bind_group, &[cam_off]);
             pass.set_bind_group(2, &depth_bind_group, &[]);
             pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
             pass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
@@ -4412,8 +4425,7 @@ impl WorldRenderer {
         let vp = cam.view_proj(1.0);
         let mut u: CameraUniform = bytemuck::Zeroable::zeroed();
         u.view_proj = vp.to_cols_array_2d();
-        gpu.queue
-            .write_buffer(&self.camera_buffer, 0, bytemuck::bytes_of(&u));
+        let cam_off = self.push_camera(gpu, &u);
         let model_buffers = self.model_buffers(gpu, items);
         let skin = self.skin_draws(gpu, items);
         let mut encoder = gpu
@@ -4436,7 +4448,7 @@ impl WorldRenderer {
                 ..Default::default()
             });
             pass.set_pipeline(&self.shadow_pipeline);
-            pass.set_bind_group(0, &self.shadow_camera_bind_group, &[]);
+            pass.set_bind_group(0, &self.shadow_camera_bind_group, &[cam_off]);
             pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
             pass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
             for b in &self.batches {
@@ -4460,6 +4472,7 @@ impl WorldRenderer {
                 &skin,
                 &self.skin_shadow_pipeline,
                 &self.shadow_camera_bind_group,
+                cam_off,
             );
         }
         gpu.queue.submit(Some(encoder.finish()));
@@ -4497,8 +4510,7 @@ impl WorldRenderer {
         ) * Mat4::look_to_rh(eye, dir, up);
         let mut u: CameraUniform = bytemuck::Zeroable::zeroed();
         u.view_proj = vp.to_cols_array_2d();
-        gpu.queue
-            .write_buffer(&self.camera_buffer, 0, bytemuck::bytes_of(&u));
+        let cam_off = self.push_camera(gpu, &u);
         let mut encoder = gpu
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
@@ -4520,7 +4532,7 @@ impl WorldRenderer {
             });
             if let Some((bufs, mdraws)) = &cpu {
                 pass.set_pipeline(&self.shadow_pipeline);
-                pass.set_bind_group(0, &self.shadow_camera_bind_group, &[]);
+                pass.set_bind_group(0, &self.shadow_camera_bind_group, &[cam_off]);
                 pass.set_vertex_buffer(0, bufs.vb.slice(..));
                 pass.set_index_buffer(bufs.ib.slice(..), wgpu::IndexFormat::Uint32);
                 for (bg, first, count) in mdraws {
@@ -4534,6 +4546,7 @@ impl WorldRenderer {
                 &skin,
                 &self.skin_shadow_pipeline,
                 &self.shadow_camera_bind_group,
+                cam_off,
             );
         }
         gpu.queue.submit(Some(encoder.finish()));
@@ -5441,8 +5454,7 @@ impl WorldRenderer {
             self.view_fog(camera),
             self.clip_for(false),
         );
-        gpu.queue
-            .write_buffer(&self.camera_buffer, 0, bytemuck::bytes_of(&cam));
+        let cam_off = self.push_camera(gpu, &cam);
         let mut enc = device.create_command_encoder(&Default::default());
         let mut state = self.reflect.lock().unwrap();
         let size = scene_src.size();
@@ -5510,7 +5522,7 @@ impl WorldRenderer {
                 multiview_mask: None,
             });
             pass.set_pipeline(&self.refract_pipeline);
-            pass.set_bind_group(0, &self.camera_bind_group, &[]);
+            pass.set_bind_group(0, &self.camera_bind_group, &[cam_off]);
             pass.set_bind_group(2, &depth_bind_group, &[]);
             pass.set_vertex_buffer(0, vb.slice(..));
             pass.set_index_buffer(ib.slice(..), wgpu::IndexFormat::Uint32);
@@ -5574,8 +5586,7 @@ impl WorldRenderer {
             self.view_fog(camera),
             self.clip_for(false),
         );
-        gpu.queue
-            .write_buffer(&self.camera_buffer, 0, bytemuck::bytes_of(&cam));
+        let cam_off = self.push_camera(gpu, &cam);
         let mut enc = device.create_command_encoder(&Default::default());
         {
             let mut pass = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -5602,7 +5613,7 @@ impl WorldRenderer {
                 multiview_mask: None,
             });
             pass.set_pipeline(pipeline);
-            pass.set_bind_group(0, &self.camera_bind_group, &[]);
+            pass.set_bind_group(0, &self.camera_bind_group, &[cam_off]);
             pass.set_vertex_buffer(0, vb.slice(..));
             pass.set_index_buffer(ib.slice(..), wgpu::IndexFormat::Uint32);
             for (bg, first, count) in draws {
@@ -5654,8 +5665,7 @@ impl WorldRenderer {
             self.view_fog(camera),
             self.clip_for(false),
         );
-        gpu.queue
-            .write_buffer(&self.camera_buffer, 0, bytemuck::bytes_of(&cam));
+        let cam_off = self.push_camera(gpu, &cam);
         let mut enc = device.create_command_encoder(&Default::default());
         {
             let mut pass = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -5682,7 +5692,7 @@ impl WorldRenderer {
                 multiview_mask: None,
             });
             pass.set_pipeline(&self.modulate_pipeline);
-            pass.set_bind_group(0, &self.camera_bind_group, &[]);
+            pass.set_bind_group(0, &self.camera_bind_group, &[cam_off]);
             pass.set_vertex_buffer(0, vb.slice(..));
             pass.set_index_buffer(ib.slice(..), wgpu::IndexFormat::Uint32);
             for (bg, first, count) in draws {
@@ -5983,16 +5993,15 @@ impl WorldRenderer {
             return;
         }
         let device = &gpu.device;
-        gpu.queue.write_buffer(
-            &self.camera_buffer,
-            0,
-            bytemuck::bytes_of(&self.camera_uniform(
+        let cam_off = self.push_camera(
+            gpu,
+            &self.camera_uniform(
                 camera,
                 aspect,
                 alpha,
                 self.view_fog(camera),
                 self.clip_for(false),
-            )),
+            ),
         );
         let mut enc = device.create_command_encoder(&Default::default());
         {
@@ -6029,7 +6038,7 @@ impl WorldRenderer {
                 } else {
                     &self.pipeline
                 });
-                pass.set_bind_group(0, &self.camera_bind_group, &[]);
+                pass.set_bind_group(0, &self.camera_bind_group, &[cam_off]);
                 pass.set_vertex_buffer(0, bufs.vb.slice(..));
                 pass.set_index_buffer(bufs.ib.slice(..), wgpu::IndexFormat::Uint32);
                 for (bg, first, count) in draws {
@@ -6047,6 +6056,7 @@ impl WorldRenderer {
                     &self.skin_pipeline
                 },
                 &self.camera_bind_group,
+                cam_off,
             );
         }
         gpu.queue.submit([enc.finish()]);
@@ -6060,16 +6070,18 @@ impl WorldRenderer {
         draws: &[SkinDraw],
         pipeline: &wgpu::RenderPipeline,
         camera: &wgpu::BindGroup,
+        cam_off: u32,
     ) {
         if draws.is_empty() {
             return;
         }
+        let slot = self.skin_frame.borrow().as_ref().map_or(0, |e| e.4);
         let sb = self.skin_buffers.borrow();
-        let Some(sb) = sb.as_ref() else {
+        let Some(sb) = sb.get(slot).and_then(|b| b.as_ref()) else {
             return;
         };
         pass.set_pipeline(pipeline);
-        pass.set_bind_group(0, camera, &[]);
+        pass.set_bind_group(0, camera, &[cam_off]);
         let mut last_model: *const DynModel = std::ptr::null();
         for d in draws {
             let model = items[d.item].model;
@@ -6096,7 +6108,7 @@ impl WorldRenderer {
             return Default::default();
         }
         let key = (self.frame.get(), items.as_ptr() as usize, items.len());
-        if let Some((f, p, n, d)) = self.skin_frame.borrow().as_ref() {
+        if let Some((f, p, n, d, _)) = self.skin_frame.borrow().as_ref() {
             if (*f, *p, *n) == key {
                 return d.clone();
             }
@@ -6197,18 +6209,27 @@ impl WorldRenderer {
             }
         }
         drop(cache);
-        if !draws.is_empty() {
-            self.write_skin_buffers(gpu, &params, &bones);
-        }
+        let slot = if draws.is_empty() {
+            0
+        } else {
+            self.write_skin_buffers(gpu, &params, &bones)
+        };
         let rc = std::rc::Rc::new(draws);
-        *self.skin_frame.borrow_mut() = Some((key.0, key.1, key.2, rc.clone()));
+        *self.skin_frame.borrow_mut() = Some((key.0, key.1, key.2, rc.clone(), slot));
         rc
     }
 
     /// Uploads the frame's skin params and bones, growing the buffers (and rebuilding their
     /// bind group) when they do not fit.
-    fn write_skin_buffers(&self, gpu: &Gpu, params: &[u8], bones: &[u8]) {
-        let mut slot = self.skin_buffers.borrow_mut();
+    /// Writes params/bones into this frame's next skin buffer set; returns its index.
+    fn write_skin_buffers(&self, gpu: &Gpu, params: &[u8], bones: &[u8]) -> usize {
+        let idx = self.skin_cursor.get();
+        self.skin_cursor.set(idx + 1);
+        let mut all = self.skin_buffers.borrow_mut();
+        if all.len() <= idx {
+            all.resize_with(idx + 1, || None);
+        }
+        let slot = &mut all[idx];
         if slot
             .as_ref()
             .is_none_or(|b| b.params_cap < params.len() || b.bones_cap < bones.len())
@@ -6260,6 +6281,17 @@ impl WorldRenderer {
         let b = slot.as_ref().unwrap();
         gpu.queue.write_buffer(&b.params, 0, params);
         gpu.queue.write_buffer(&b.bones, 0, bones);
+        idx
+    }
+
+    /// Writes a camera uniform into the ring's next slot; returns its dynamic offset.
+    fn push_camera(&self, gpu: &Gpu, u: &CameraUniform) -> u32 {
+        let i = self.camera_cursor.get();
+        self.camera_cursor.set((i + 1) % CAMERA_SLOTS as u32);
+        let off = i as u64 * CAMERA_STRIDE;
+        gpu.queue
+            .write_buffer(&self.camera_buffer, off, bytemuck::bytes_of(u));
+        off as u32
     }
 }
 
@@ -6402,7 +6434,12 @@ struct SkinDraw {
 }
 
 /// `World::skin_frame`: (frame, items pointer, items length, draws).
-type SkinFrame = (u64, usize, usize, std::rc::Rc<Vec<SkinDraw>>);
+type SkinFrame = (u64, usize, usize, std::rc::Rc<Vec<SkinDraw>>, usize);
+
+/// The camera ring: 256 B slots (the largest `min_uniform_buffer_offset_alignment`), enough
+/// for every pass of a frame (sky, world, translucent, water, shadows, reflection, models).
+const CAMERA_STRIDE: u64 = 256;
+const CAMERA_SLOTS: u64 = 64;
 
 /// `World::model_cache`: (frame, items pointer, items length, buffers).
 type ModelCacheEntry = (u64, usize, usize, std::rc::Rc<ModelBuffers>);
