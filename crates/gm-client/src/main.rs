@@ -10533,20 +10533,36 @@ impl ApplicationHandler for App {
         if let Some(a) = &mut self.addons {
             a.poll();
         }
+        // `fps_max`: like the engine's host loop (FilterTime), a frame is not started before
+        // its slot; `thread::sleep` wakes late by the OS timer period (Windows: about 1 ms,
+        // which turned a 300 fps cap into 250), so the last stretch is spun, and the next slot
+        // counts from this one's deadline, not from when we woke up
+        let mut frame_at = Instant::now();
         if self.settings.fps_max > 0.0 {
             let min = std::time::Duration::from_secs_f32(1.0 / self.settings.fps_max);
-            let since = self.last_frame.elapsed();
-            if since < min {
-                std::thread::sleep(min - since);
+            let deadline = self.last_frame + min;
+            let spin = std::time::Duration::from_micros(1500);
+            loop {
+                let now = Instant::now();
+                if now >= deadline {
+                    frame_at = deadline.max(now - min);
+                    break;
+                }
+                let left = deadline - now;
+                if left > spin {
+                    std::thread::sleep(left - spin);
+                } else {
+                    std::hint::spin_loop();
+                }
             }
         }
-        let dt = self.last_frame.elapsed().as_secs_f32().max(1e-4);
+        let dt = (frame_at - self.last_frame).as_secs_f32().max(1e-4);
         self.fps_avg = if self.fps_avg <= 0.0 {
             1.0 / dt
         } else {
             self.fps_avg * 0.9 + 0.1 / dt
         };
-        self.last_frame = Instant::now();
+        self.last_frame = frame_at;
         if let Some(g) = &self.gfx {
             g.window.request_redraw();
         }
