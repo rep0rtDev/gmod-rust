@@ -1291,6 +1291,9 @@ struct App {
     wheel_delta: f32,
     /// One-shot viewmodel sequence playing (draw, fire) and when it started.
     vm_anim: Option<(&'static str, Instant)>,
+    /// When the last `SelectWeapon` went out: until the server has had a round trip to
+    /// answer, its snapshot's active weapon is the old one and not a correction.
+    weapon_sent: Option<Instant>,
     /// Last frame's viewmodel (sequence, seconds into it) and the sequence left before it with
     /// the time it was left at and when (`CSequenceTransitioner` fade-out).
     vm_last: Option<(&'static str, f32)>,
@@ -4510,6 +4513,41 @@ impl App {
         self.sim.client.command(Command::SelectWeapon {
             class: vm.class.to_string(),
         });
+        self.weapon_sent = Some(Instant::now());
+    }
+
+    /// The server's active weapon wins: a refused or lost `SelectWeapon`, or a switch the
+    /// server made itself, left the viewmodel on one weapon while the shots, the ammo and the
+    /// muzzle flash came from another (a crowbar firing like the pistol).
+    fn reconcile_weapon(&mut self) {
+        if self
+            .weapon_sent
+            .is_some_and(|t| t.elapsed().as_secs_f32() < 0.5)
+        {
+            return;
+        }
+        let classes = gm_net::msg::weapon_classes(&self.sim.client.world.weapon_defs);
+        let me = self.sim.client.player_id;
+        let Some(server) = self
+            .sim
+            .client
+            .world
+            .players
+            .iter()
+            .find(|p| Some(p.id) == me)
+            .and_then(|p| classes.get(p.active as usize))
+        else {
+            return;
+        };
+        if viewmodel(self.weapon).is_some_and(|v| v.class == server) {
+            return;
+        }
+        if let Some(idx) = WEAPONS.iter().position(|v| v.class == server) {
+            self.weapon = idx as u8;
+            if let Some(vm) = viewmodel(self.weapon) {
+                self.vm_anim = Some((vm.draw, Instant::now()));
+            }
+        }
     }
 
     /// Sequence and time for the viewmodel this frame: the one-shot sequence while it lasts,
@@ -5644,6 +5682,7 @@ impl App {
             self.camera_fov()
         };
         let weapon_color = self.local_weapon_color();
+        self.reconcile_weapon();
         let Some(g) = &mut self.gfx else { return };
         // light styles 1..=12 animate at 10 Hz from the engine's pattern strings (render.md
         // §9, gap-report #150); the rest are the server's values
@@ -10556,6 +10595,7 @@ fn run() -> Result<()> {
         rotate_delta: (0.0, 0.0),
         wheel_delta: 0.0,
         vm_anim: None,
+        weapon_sent: None,
         vm_last: None,
         vm_event_t: None,
         fx_brass_pending: None,
@@ -12935,9 +12975,20 @@ fn register_ui_fonts(mount: &gm_content::Mount, ui: &mut UiRenderer, gpu: &Gpu, 
     ] {
         ui.load_image(gpu, mount, m);
     }
-    ui.register_font(gpu, mount, "HudNumbers", "HalfLife2", 32.0);
+    // the numeric displays sit in HudLayout.res panels laid out on 640x480 and scaled by the
+    // screen height, and their HalfLife2 digits fill the panel at every resolution (2K: the
+    // 36 u panel is 108 px tall), so these fonts scale with the layout, not by a yres table
+    let hud_scale = height as f32 / 480.0;
+    ui.register_font(gpu, mount, "HudNumbers", "HalfLife2", 32.0 * hud_scale);
     let glow = |blur| gm_render::ui::FontFx { blur, scanlines: 2 };
-    ui.register_font_fx(gpu, mount, "HudNumbersGlow", "HalfLife2", 32.0, glow(4));
+    ui.register_font_fx(
+        gpu,
+        mount,
+        "HudNumbersGlow",
+        "HalfLife2",
+        32.0 * hud_scale,
+        glow(4),
+    );
     ui.register_font_fx(
         gpu,
         mount,
@@ -12946,7 +12997,7 @@ fn register_ui_fonts(mount: &gm_content::Mount, ui: &mut UiRenderer, gpu: &Gpu, 
         64.0,
         glow(5),
     );
-    ui.register_font(gpu, mount, "HudNumbersSmall", "HalfLife2", 16.0);
+    ui.register_font(gpu, mount, "HudNumbersSmall", "HalfLife2", 16.0 * hud_scale);
     let hud_default = yres(&[
         (1, 9.0),
         (600, 13.0),
