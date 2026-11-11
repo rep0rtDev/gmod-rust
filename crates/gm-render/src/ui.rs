@@ -563,6 +563,9 @@ pub struct UiRenderer {
     layout: wgpu::BindGroupLayout,
     sampler: wgpu::Sampler,
     screen_buffer: wgpu::Buffer,
+    /// The frame's UI vertices: one growable buffer rewritten per frame (`draw` runs once a
+    /// frame, so a single slot is safe with the frame's one submit).
+    vertex_buffer: std::cell::RefCell<Option<(wgpu::Buffer, u64)>>,
     default: FontAtlas,
     fonts: HashMap<String, FontAtlas>,
     /// Loaded images by name; `None` remembers a texture that is not in the content.
@@ -773,6 +776,7 @@ impl UiRenderer {
             layout,
             sampler,
             screen_buffer,
+            vertex_buffer: Default::default(),
             default,
             fonts: HashMap::new(),
             images: HashMap::new(),
@@ -1126,13 +1130,25 @@ impl UiRenderer {
                 pad: [0.0; 2],
             }),
         );
-        let vb = gpu
-            .device
-            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("ui vertices"),
-                contents: bytemuck::cast_slice(&vertices),
-                usage: wgpu::BufferUsages::VERTEX,
-            });
+        let bytes: &[u8] = bytemuck::cast_slice(&vertices);
+        let mut slot = self.vertex_buffer.borrow_mut();
+        if slot
+            .as_ref()
+            .is_none_or(|(_, cap)| *cap < bytes.len() as u64)
+        {
+            let cap = (bytes.len() as u64).max(64 * 1024).next_power_of_two();
+            *slot = Some((
+                gpu.device.create_buffer(&wgpu::BufferDescriptor {
+                    label: Some("ui vertices"),
+                    size: cap,
+                    usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+                    mapped_at_creation: false,
+                }),
+                cap,
+            ));
+        }
+        let vb = &slot.as_ref().unwrap().0;
+        gpu.queue.write_buffer(vb, 0, bytes);
         {
             let mut pass = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("ui"),
