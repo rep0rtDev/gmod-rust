@@ -159,8 +159,16 @@ fn chair_spawns_seats_and_releases_the_player() {
     );
     assert!(server.exit_vehicle(1));
     // measured: the first free exit point is 90 u along the chair's axis (behind it) and
-    // 11.4 u up, the player faces that way; the per-side law is `server_vehicle_exit_*`
-    let out = server.players[&1].state.origin - chair;
+    // 11.4 u up from the chair's origin at that moment (it settles and shifts a little under
+    // the seated player), the player faces that way; the per-side law is `server_vehicle_exit_*`
+    let chair_now = server
+        .sandbox
+        .props()
+        .iter()
+        .find(|p| p.id == id)
+        .unwrap()
+        .pos;
+    let out = server.players[&1].state.origin - chair_now;
     let flat = Vec3::new(out.x, out.y, 0.0);
     assert!(
         (flat.length() - 90.0).abs() < 0.5 && (out.z - 11.4).abs() < 0.1,
