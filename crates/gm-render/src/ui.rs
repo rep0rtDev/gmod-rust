@@ -1108,6 +1108,7 @@ impl UiRenderer {
     pub fn draw(
         &self,
         gpu: &Gpu,
+        enc: &mut wgpu::CommandEncoder,
         color: &wgpu::TextureView,
         width: u32,
         height: u32,
@@ -1132,7 +1133,6 @@ impl UiRenderer {
                 contents: bytemuck::cast_slice(&vertices),
                 usage: wgpu::BufferUsages::VERTEX,
             });
-        let mut enc = gpu.device.create_command_encoder(&Default::default());
         {
             let mut pass = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("ui"),
@@ -1161,15 +1161,16 @@ impl UiRenderer {
                 pass.draw(range.clone(), 0..1);
             }
         }
-        gpu.queue.submit([enc.finish()]);
     }
 
     /// 3D2D: `planes` are (plane-to-world matrix, items) pairs; pixel coordinates on the plane
     /// go through the matrix and the camera, depth-tested against the scene's depth without
     /// writing it (a decal on the world, drawn in order, alpha-blended).
+    #[allow(clippy::too_many_arguments)]
     pub fn draw_world(
         &self,
         gpu: &Gpu,
+        enc: &mut wgpu::CommandEncoder,
         color: &wgpu::TextureView,
         resolve: Option<&wgpu::TextureView>,
         depth: &wgpu::TextureView,
@@ -1217,7 +1218,6 @@ impl UiRenderer {
                 contents: bytemuck::cast_slice(&all),
                 usage: wgpu::BufferUsages::VERTEX,
             });
-        let mut enc = gpu.device.create_command_encoder(&Default::default());
         {
             let mut pass = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("ui world"),
@@ -1256,7 +1256,6 @@ impl UiRenderer {
                 }
             }
         }
-        gpu.queue.submit([enc.finish()]);
     }
 }
 

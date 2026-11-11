@@ -295,7 +295,13 @@ impl Post {
     }
 
     /// Bright pass -> blur -> composite the scene plus `scale` x bloom onto `target`.
-    pub fn apply(&self, gpu: &Gpu, target: &wgpu::TextureView, scale: f32) {
+    pub fn apply(
+        &self,
+        gpu: &Gpu,
+        enc: &mut wgpu::CommandEncoder,
+        target: &wgpu::TextureView,
+        scale: f32,
+    ) {
         gpu.queue.write_buffer(
             &self.params[3],
             0,
@@ -305,11 +311,6 @@ impl Post {
                 threshold: THRESHOLD,
             }),
         );
-        let mut enc = gpu
-            .device
-            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("post"),
-            });
         let passes: [(&wgpu::RenderPipeline, &wgpu::BindGroup, &wgpu::TextureView); 4] = [
             (&self.bright, &self.groups[0], &self.quarter[0]),
             (&self.blur, &self.groups[1], &self.quarter[1]),
@@ -340,6 +341,5 @@ impl Post {
             }
             pass.draw(0..3, 0..1);
         }
-        gpu.queue.submit([enc.finish()]);
     }
 }

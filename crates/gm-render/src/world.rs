@@ -3628,6 +3628,7 @@ impl WorldRenderer {
     pub fn draw(
         &self,
         gpu: &Gpu,
+        enc: &mut wgpu::CommandEncoder,
         camera: &Camera,
         color: &wgpu::TextureView,
         resolve: Option<&wgpu::TextureView>,
@@ -3642,17 +3643,28 @@ impl WorldRenderer {
         let t0 = std::time::Instant::now();
         let mut vps = [None; DEPTH_LAYERS];
         for (slot, (_, l)) in self.flashlights.iter().take(SHADOW_LAYERS).enumerate() {
-            vps[slot] =
-                Some(self.draw_flashlight_depth(gpu, l, &self.shadow_layers[slot], reflect_items));
+            vps[slot] = Some(self.draw_flashlight_depth(
+                gpu,
+                enc,
+                l,
+                &self.shadow_layers[slot],
+                reflect_items,
+            ));
         }
-        vps[SUN_LAYER] =
-            self.draw_sun_depth(gpu, camera, &self.shadow_layers[SUN_LAYER], reflect_items);
+        vps[SUN_LAYER] = self.draw_sun_depth(
+            gpu,
+            enc,
+            camera,
+            &self.shadow_layers[SUN_LAYER],
+            reflect_items,
+        );
         self.flashlight_vp.set(vps);
         let t1 = std::time::Instant::now();
-        self.draw_reflection(gpu, camera, aspect, reflect_items);
+        self.draw_reflection(gpu, enc, camera, aspect, reflect_items);
         let t2 = std::time::Instant::now();
         self.draw_inner(
             gpu,
+            enc,
             camera,
             color,
             resolve,
@@ -3720,7 +3732,14 @@ impl WorldRenderer {
     /// `_rt_WaterReflection`: the scene above the water plane seen from the eye mirrored in
     /// it, drawn by a real camera below the plane (pitch and roll negated, so the winding
     /// stays and the image is read upside down); everything below the plane is clipped.
-    fn draw_reflection(&self, gpu: &Gpu, camera: &Camera, aspect: f32, items: &[DrawItem<'_>]) {
+    fn draw_reflection(
+        &self,
+        gpu: &Gpu,
+        enc: &mut wgpu::CommandEncoder,
+        camera: &Camera,
+        aspect: f32,
+        items: &[DrawItem<'_>],
+    ) {
         if std::env::var_os("GM_RENDER_LOG").is_some() {
             eprintln!(
                 "reflection: eye {:?} plane {:?} mirrors {:?}",
@@ -3796,6 +3815,7 @@ impl WorldRenderer {
         };
         self.draw_inner(
             gpu,
+            enc,
             &mirrored,
             &color,
             resolve.as_ref(),
@@ -3833,6 +3853,7 @@ impl WorldRenderer {
     fn draw_inner(
         &self,
         gpu: &Gpu,
+        enc: &mut wgpu::CommandEncoder,
         camera: &Camera,
         color: &wgpu::TextureView,
         resolve: Option<&wgpu::TextureView>,
@@ -3843,7 +3864,7 @@ impl WorldRenderer {
     ) {
         let mut clear = true;
         if self.sky2d.is_some() {
-            self.sky_pass(gpu, camera, color, resolve, depth, aspect);
+            self.sky_pass(gpu, enc, camera, color, resolve, depth, aspect);
             clear = false;
         }
         let has_sky = self.sky_camera.is_some() && self.batches.iter().any(|b| b.sky);
@@ -3869,15 +3890,17 @@ impl WorldRenderer {
                 None => self.sky_fog,
             };
             self.pass(
-                gpu, &sky_cam, color, resolve, depth, aspect, true, clear, sky_fog, scene_src,
+                gpu, enc, &sky_cam, color, resolve, depth, aspect, true, clear, sky_fog, scene_src,
                 items,
             );
             self.pass(
-                gpu, camera, color, resolve, depth, aspect, false, false, None, scene_src, items,
+                gpu, enc, camera, color, resolve, depth, aspect, false, false, None, scene_src,
+                items,
             );
         } else {
             self.pass(
-                gpu, camera, color, resolve, depth, aspect, false, clear, None, scene_src, items,
+                gpu, enc, camera, color, resolve, depth, aspect, false, clear, None, scene_src,
+                items,
             );
         }
     }
@@ -4027,9 +4050,11 @@ impl WorldRenderer {
     }
 
     /// The 2D sky cube around an eye at the origin, clearing colour and depth.
+    #[allow(clippy::too_many_arguments)]
     fn sky_pass(
         &self,
         gpu: &Gpu,
+        enc: &mut wgpu::CommandEncoder,
         camera: &Camera,
         color: &wgpu::TextureView,
         resolve: Option<&wgpu::TextureView>,
@@ -4044,7 +4069,6 @@ impl WorldRenderer {
             ..*camera
         };
         let cam_off = self.push_camera(gpu, &self.camera_uniform(&cam, aspect, 1.0, None, None));
-        let mut enc = gpu.device.create_command_encoder(&Default::default());
         {
             let mut pass = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("sky2d"),
@@ -4088,13 +4112,13 @@ impl WorldRenderer {
                 pass.draw_indexed(first..first + 6, 0, 0..1);
             }
         }
-        gpu.queue.submit([enc.finish()]);
     }
 
     #[allow(clippy::too_many_arguments)]
     fn pass(
         &self,
         gpu: &Gpu,
+        enc: &mut wgpu::CommandEncoder,
         camera: &Camera,
         color: &wgpu::TextureView,
         resolve: Option<&wgpu::TextureView>,
@@ -4116,7 +4140,6 @@ impl WorldRenderer {
             self.clip_for(sky),
         );
         let cam_off = self.push_camera(gpu, &cam_uniform);
-        let mut enc = gpu.device.create_command_encoder(&Default::default());
         {
             let mut pass = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some(if sky { "skybox" } else { "world" }),
@@ -4171,10 +4194,10 @@ impl WorldRenderer {
             // surfaces (glass blends over them, the refraction copy has them); their draw
             // writes the camera uniform itself, so ours is restored after
             drop(pass);
-            gpu.queue.submit([enc.finish()]);
             if !sky && !items.is_empty() {
                 self.draw_models(
                     gpu,
+                    enc,
                     camera,
                     &ModelTarget {
                         color,
@@ -4187,7 +4210,6 @@ impl WorldRenderer {
                     items,
                 );
             }
-            enc = gpu.device.create_command_encoder(&Default::default());
             let mut pass = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("translucent"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -4330,7 +4352,6 @@ impl WorldRenderer {
                 pass.draw_indexed(b.first_index..b.first_index + b.index_count, 0, 0..1);
             }
         }
-        gpu.queue.submit([enc.finish()]);
     }
 }
 
@@ -4405,6 +4426,7 @@ impl WorldRenderer {
     fn draw_flashlight_depth(
         &self,
         gpu: &Gpu,
+        enc: &mut wgpu::CommandEncoder,
         light: &DLight,
         view: &wgpu::TextureView,
         items: &[DrawItem<'_>],
@@ -4428,11 +4450,7 @@ impl WorldRenderer {
         let cam_off = self.push_camera(gpu, &u);
         let model_buffers = self.model_buffers(gpu, items);
         let skin = self.skin_draws(gpu, items);
-        let mut encoder = gpu
-            .device
-            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("flashlight depth"),
-            });
+        let encoder = enc;
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("flashlight depth"),
@@ -4475,7 +4493,6 @@ impl WorldRenderer {
                 cam_off,
             );
         }
-        gpu.queue.submit(Some(encoder.finish()));
         vp
     }
 
@@ -4485,6 +4502,7 @@ impl WorldRenderer {
     fn draw_sun_depth(
         &self,
         gpu: &Gpu,
+        enc: &mut wgpu::CommandEncoder,
         camera: &Camera,
         view: &wgpu::TextureView,
         items: &[DrawItem<'_>],
@@ -4511,11 +4529,7 @@ impl WorldRenderer {
         let mut u: CameraUniform = bytemuck::Zeroable::zeroed();
         u.view_proj = vp.to_cols_array_2d();
         let cam_off = self.push_camera(gpu, &u);
-        let mut encoder = gpu
-            .device
-            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("sun shadow depth"),
-            });
+        let encoder = enc;
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("sun shadow depth"),
@@ -4549,7 +4563,6 @@ impl WorldRenderer {
                 cam_off,
             );
         }
-        gpu.queue.submit(Some(encoder.finish()));
         Some(vp)
     }
 
@@ -5404,11 +5417,12 @@ impl WorldRenderer {
     pub fn draw_additive(
         &self,
         gpu: &Gpu,
+        enc: &mut wgpu::CommandEncoder,
         camera: &Camera,
         target: &ModelTarget<'_>,
         items: &[(&wgpu::BindGroup, Vec<Vertex>, Vec<u32>)],
     ) {
-        self.draw_blended(gpu, camera, target, items, &self.additive_pipeline);
+        self.draw_blended(gpu, enc, camera, target, items, &self.additive_pipeline);
     }
 
     /// `Refract` sprites (the thruster flame's heat-wave): the scene so far is copied into
@@ -5418,6 +5432,7 @@ impl WorldRenderer {
     pub fn draw_refract(
         &self,
         gpu: &Gpu,
+        enc: &mut wgpu::CommandEncoder,
         camera: &Camera,
         target: &ModelTarget<'_>,
         scene_src: &wgpu::Texture,
@@ -5455,7 +5470,6 @@ impl WorldRenderer {
             self.clip_for(false),
         );
         let cam_off = self.push_camera(gpu, &cam);
-        let mut enc = device.create_command_encoder(&Default::default());
         let mut state = self.reflect.lock().unwrap();
         let size = scene_src.size();
         if state
@@ -5532,7 +5546,6 @@ impl WorldRenderer {
             }
         }
         drop(state);
-        gpu.queue.submit([enc.finish()]);
     }
 
     /// Alpha-blended geometry over the current colour with the current depth (constraint
@@ -5540,16 +5553,18 @@ impl WorldRenderer {
     pub fn draw_alpha(
         &self,
         gpu: &Gpu,
+        enc: &mut wgpu::CommandEncoder,
         camera: &Camera,
         target: &ModelTarget<'_>,
         items: &[(&wgpu::BindGroup, Vec<Vertex>, Vec<u32>)],
     ) {
-        self.draw_blended(gpu, camera, target, items, &self.alpha_pipeline);
+        self.draw_blended(gpu, enc, camera, target, items, &self.alpha_pipeline);
     }
 
     fn draw_blended(
         &self,
         gpu: &Gpu,
+        enc: &mut wgpu::CommandEncoder,
         camera: &Camera,
         target: &ModelTarget<'_>,
         items: &[(&wgpu::BindGroup, Vec<Vertex>, Vec<u32>)],
@@ -5587,7 +5602,6 @@ impl WorldRenderer {
             self.clip_for(false),
         );
         let cam_off = self.push_camera(gpu, &cam);
-        let mut enc = device.create_command_encoder(&Default::default());
         {
             let mut pass = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("additive"),
@@ -5621,7 +5635,6 @@ impl WorldRenderer {
                 pass.draw_indexed(first..first + count, 0, 0..1);
             }
         }
-        gpu.queue.submit([enc.finish()]);
     }
 
     /// Draws modulated geometry (DecalModulate decals: colour * 2 * texel) over the current
@@ -5630,6 +5643,7 @@ impl WorldRenderer {
     pub fn draw_modulate(
         &self,
         gpu: &Gpu,
+        enc: &mut wgpu::CommandEncoder,
         camera: &Camera,
         target: &ModelTarget<'_>,
         items: &[(&wgpu::BindGroup, Vec<Vertex>, Vec<u32>)],
@@ -5666,7 +5680,6 @@ impl WorldRenderer {
             self.clip_for(false),
         );
         let cam_off = self.push_camera(gpu, &cam);
-        let mut enc = device.create_command_encoder(&Default::default());
         {
             let mut pass = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("additive"),
@@ -5700,7 +5713,6 @@ impl WorldRenderer {
                 pass.draw_indexed(first..first + count, 0, 0..1);
             }
         }
-        gpu.queue.submit([enc.finish()]);
     }
 
     pub fn solid_box(&self, gpu: &Gpu, rgba: [u8; 4], unlit: bool) -> DynModel {
@@ -5975,6 +5987,7 @@ impl WorldRenderer {
     pub fn draw_models(
         &self,
         gpu: &Gpu,
+        enc: &mut wgpu::CommandEncoder,
         camera: &Camera,
         target: &ModelTarget<'_>,
         items: &[DrawItem<'_>],
@@ -5992,7 +6005,6 @@ impl WorldRenderer {
         if cpu.is_none() && skin.is_empty() {
             return;
         }
-        let device = &gpu.device;
         let cam_off = self.push_camera(
             gpu,
             &self.camera_uniform(
@@ -6003,7 +6015,6 @@ impl WorldRenderer {
                 self.clip_for(false),
             ),
         );
-        let mut enc = device.create_command_encoder(&Default::default());
         {
             let mut pass = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("models"),
@@ -6059,7 +6070,6 @@ impl WorldRenderer {
                 cam_off,
             );
         }
-        gpu.queue.submit([enc.finish()]);
     }
 
     /// The GPU-skinned draws of the frame into an open pass (see [`skin_draws`](Self::skin_draws)).

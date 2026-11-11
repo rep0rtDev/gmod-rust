@@ -2700,7 +2700,10 @@ impl App {
                 transform: glam::Mat4::IDENTITY,
                 bones: None,
             };
-            g.world.draw_models(&g.gpu, &camera, &target, &[item]);
+            let mut enc = g.gpu.device.create_command_encoder(&Default::default());
+            g.world
+                .draw_models(&g.gpu, &mut enc, &camera, &target, &[item]);
+            g.gpu.queue.submit([enc.finish()]);
             g.ui.register_image_view(&g.gpu, &key, &color_view);
             g.icon_textures.push(color);
         }
@@ -7862,8 +7865,17 @@ impl App {
         lap(2);
         // the world draws the entity models itself, between its opaque and translucent
         // surfaces (and into the water reflection)
+        // one command encoder for the whole frame: world, models, viewmodel, post, UI go to
+        // the GPU in a single submit before present
+        let mut enc = g
+            .gpu
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("frame"),
+            });
         g.world.draw(
             &g.gpu,
+            &mut enc,
             &camera,
             &attach,
             resolve,
@@ -7875,15 +7887,18 @@ impl App {
         lap(3);
         self.world_pass_ms = g.world.pass_ms();
         if !modulate.is_empty() {
-            g.world.draw_modulate(&g.gpu, &camera, &target, &modulate);
+            g.world
+                .draw_modulate(&g.gpu, &mut enc, &camera, &target, &modulate);
         }
         if !additive.is_empty() {
-            g.world.draw_alpha(&g.gpu, &camera, &target, &alpha);
-            g.world.draw_additive(&g.gpu, &camera, &target, &additive);
+            g.world
+                .draw_alpha(&g.gpu, &mut enc, &camera, &target, &alpha);
+            g.world
+                .draw_additive(&g.gpu, &mut enc, &camera, &target, &additive);
         }
         if !refract.is_empty() {
             g.world
-                .draw_refract(&g.gpu, &camera, &target, scene_src, &refract);
+                .draw_refract(&g.gpu, &mut enc, &camera, &target, scene_src, &refract);
         }
         lap(4);
         for d in &ghost_draws {
@@ -7909,7 +7924,8 @@ impl App {
                     alpha: *alpha,
                     ..target
                 };
-                g.world.draw_models(&g.gpu, &camera, &target, &ghost);
+                g.world
+                    .draw_models(&g.gpu, &mut enc, &camera, &target, &ghost);
             }
         }
         // viewmodel: own projection (narrower fov, near plane at 1 u) over a cleared depth buffer
@@ -8010,7 +8026,8 @@ impl App {
                     clear_depth: true,
                     ..target
                 };
-                g.world.draw_models(&g.gpu, &vm_camera, &target, &vm_items);
+                g.world
+                    .draw_models(&g.gpu, &mut enc, &vm_camera, &target, &vm_items);
                 self.fx_vm_muzzle
                     .retain(|(_, _, _, _, born, life)| born.elapsed().as_secs_f32() < *life);
                 if vm_flash.is_some() || !self.fx_vm_muzzle.is_empty() {
@@ -8034,7 +8051,8 @@ impl App {
                             clear_depth: false,
                             ..target
                         };
-                        g.world.draw_additive(&g.gpu, &camera, &target, &quads);
+                        g.world
+                            .draw_additive(&g.gpu, &mut enc, &camera, &target, &quads);
                     }
                 }
             }
@@ -8047,6 +8065,7 @@ impl App {
                 let aspect = g.config.width as f32 / g.config.height as f32;
                 g.ui.draw_world(
                     &g.gpu,
+                    &mut enc,
                     &attach,
                     resolve,
                     &g.depth,
@@ -8175,11 +8194,17 @@ impl App {
         lap(6);
         let g = self.gfx.as_ref().unwrap();
         if bloom {
-            g.post.apply(&g.gpu, &view, g.world.bloom_amount);
+            g.post.apply(&g.gpu, &mut enc, &view, g.world.bloom_amount);
         }
         // the auto-exposure probe sees the scene only (Source measures the HDR scene
         // buffer before the HUD / menus are drawn on it)
         if g.world.hdr && self.frames.is_multiple_of(15) {
+            // the probe reads the frame back: what is encoded so far goes to the GPU first
+            let done = std::mem::replace(
+                &mut enc,
+                g.gpu.device.create_command_encoder(&Default::default()),
+            );
+            g.gpu.queue.submit([done.finish()]);
             let (bright, avg) =
                 frame_bright_pixels(&g.gpu, &frame.texture, g.config.width, g.config.height);
             let dt = self.exposure_at.elapsed().as_secs_f32().min(1.0);
@@ -8195,7 +8220,15 @@ impl App {
         }
         let g = self.gfx.as_ref().unwrap();
         lap(9);
-        g.ui.draw(&g.gpu, &view, g.config.width, g.config.height, &ui_items);
+        g.ui.draw(
+            &g.gpu,
+            &mut enc,
+            &view,
+            g.config.width,
+            g.config.height,
+            &ui_items,
+        );
+        g.gpu.queue.submit([enc.finish()]);
         lap(7);
         let g = self.gfx.as_ref().unwrap();
         if std::mem::take(&mut self.cam_photo_pending) {

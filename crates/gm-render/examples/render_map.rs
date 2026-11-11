@@ -180,8 +180,10 @@ fn main() -> Result<()> {
     }
     let color_view = color.create_view(&Default::default());
     let ms_view = ms_color.create_view(&Default::default());
+    let mut enc = gpu.device.create_command_encoder(&Default::default());
     world.draw(
         &gpu,
+        &mut enc,
         &camera,
         if msaa > 1 { &ms_view } else { &color_view },
         (msaa > 1).then_some(&color_view),
@@ -195,6 +197,7 @@ fn main() -> Result<()> {
         },
         &[],
     );
+    gpu.queue.submit([enc.finish()]);
     let rgba = gpu.read_texture(&color, width, height)?;
     eprintln!("frame in {:.0} ms", t1.elapsed().as_secs_f32() * 1000.0);
     gm_render::gpu::write_png(std::path::Path::new(out), width, height, &rgba)?;
