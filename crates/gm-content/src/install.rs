@@ -126,3 +126,66 @@ pub fn find_install() -> Option<Install> {
     }
     None
 }
+
+/// Source games Garry's Mod mounts (appid, Steam install dir, game folder): the content of
+/// the ones installed in any Steam library, as the game's "Games" menu offers them. When
+/// `garrysmod/cfg/mountdepots.txt` exists, only the folders it marks "1" are taken.
+pub const MOUNTABLE_GAMES: [(u32, &str, &str); 13] = [
+    (240, "Counter-Strike Source", "cstrike"),
+    (280, "Half-Life 2", "hl1"),
+    (300, "Day of Defeat Source", "dod"),
+    (320, "Half-Life 2 Deathmatch", "hl2mp"),
+    (340, "Half-Life 2", "lostcoast"),
+    (380, "Half-Life 2", "episodic"),
+    (400, "Portal", "portal"),
+    (420, "Half-Life 2", "ep2"),
+    (440, "Team Fortress 2", "tf"),
+    (500, "left 4 dead", "left4dead"),
+    (550, "Left 4 Dead 2", "left4dead2"),
+    (620, "Portal 2", "portal2"),
+    (730, "Counter-Strike Global Offensive", "csgo"),
+];
+
+/// Game content folders (`.../Team Fortress 2/tf`) of the mountable games found installed.
+pub fn mounted_game_dirs(install: &Install) -> Vec<PathBuf> {
+    let wanted: Option<Vec<String>> =
+        std::fs::read_to_string(install.game_dir.join("garrysmod/cfg/mountdepots.txt"))
+            .ok()
+            .and_then(|t| keyvalues::parse(&t).ok())
+            .and_then(|doc| {
+                doc.get("gamedepotsystem").map(|g| {
+                    g.children()
+                        .iter()
+                        .filter(|c| c.as_str() == Some("1"))
+                        .map(|c| c.key.to_lowercase())
+                        .collect()
+                })
+            });
+    let mut out = Vec::new();
+    for root in steam_roots() {
+        for (appid, default_dir, game) in MOUNTABLE_GAMES {
+            if wanted
+                .as_ref()
+                .is_some_and(|w| !w.iter().any(|x| x == game))
+            {
+                continue;
+            }
+            let manifest = root.join(format!("steamapps/appmanifest_{appid}.acf"));
+            let Ok(text) = std::fs::read_to_string(&manifest) else {
+                continue;
+            };
+            let installdir = keyvalues::parse(&text)
+                .ok()
+                .and_then(|d| {
+                    d.get("AppState")
+                        .and_then(|s| s.get_str("installdir").map(|x| x.to_string()))
+                })
+                .unwrap_or_else(|| default_dir.to_string());
+            let dir = root.join("steamapps/common").join(installdir).join(game);
+            if dir.is_dir() && !out.contains(&dir) {
+                out.push(dir);
+            }
+        }
+    }
+    out
+}

@@ -157,6 +157,23 @@ impl Mount {
         if g.join("platform").is_dir() {
             m.push_dir(g.join("platform"));
         }
+        // the other Source games the player has installed, as the game mounts them: their
+        // `*_dir.vpk` packs and loose files (TF2 / CS:S spawnlists stay empty without them)
+        for dir in install::mounted_game_dirs(install) {
+            if let Ok(rd) = std::fs::read_dir(&dir) {
+                let mut vpks: Vec<_> = rd
+                    .filter_map(|e| e.ok().map(|e| e.path()))
+                    .filter(|p| p.to_string_lossy().ends_with("_dir.vpk"))
+                    .collect();
+                vpks.sort();
+                for v in vpks {
+                    if let Err(e) = m.push_vpk(&v) {
+                        eprintln!("mount {}: {e}", v.display());
+                    }
+                }
+            }
+            m.push_dir(dir);
+        }
         Ok(m)
     }
 

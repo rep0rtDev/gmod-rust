@@ -42,6 +42,8 @@ pub struct Settings {
     pub fov_desired: f32,
     /// `fps_max`, 0 = unlimited.
     pub fps_max: f32,
+    /// `cl_showfps`: 1 draws the frame rate in the corner.
+    pub cl_showfps: u32,
     /// Advanced video (`OptionsSubVideoAdvancedDlg.res`): `mat_picmip` 2..-1 (texture detail
     /// Low..Very High), `r_rootlod` 2..0 (model detail), water / shadow / colour correction,
     /// `mat_antialias` 1/2/4/8, `mat_trilinear` + `mat_forceaniso`, `mat_vsync`,
@@ -98,6 +100,7 @@ impl Default for Settings {
             cl_spraydisable: false,
             fov_desired: 75.0,
             fps_max: 300.0,
+            cl_showfps: 0,
             mat_picmip: 0,
             r_rootlod: 0,
             r_waterforceexpensive: true,
@@ -107,7 +110,7 @@ impl Default for Settings {
             mat_antialias: 1,
             mat_trilinear: true,
             mat_forceaniso: 8,
-            mat_vsync: true,
+            mat_vsync: false,
             mat_hdr_level: 2,
             mat_motion_blur_enabled: false,
             mat_queue_mode: -1,
@@ -360,6 +363,7 @@ impl Settings {
         self.cl_spraydisable = b("cl_spraydisable", self.cl_spraydisable);
         self.fov_desired = f("fov_desired", self.fov_desired).clamp(75.0, 100.0);
         self.fps_max = f("fps_max", self.fps_max).max(0.0);
+        self.cl_showfps = f("cl_showfps", self.cl_showfps as f32).max(0.0) as u32;
         self.mat_picmip = (f("mat_picmip", self.mat_picmip as f32) as i32).clamp(-1, 2);
         self.r_rootlod = (f("r_rootlod", self.r_rootlod as f32) as i32).clamp(0, 2);
         self.r_waterforceexpensive = b("r_waterforceexpensive", self.r_waterforceexpensive);
@@ -441,6 +445,7 @@ impl Settings {
             ("cl_spraydisable", on(self.cl_spraydisable).to_string()),
             ("fov_desired", format!("{}", self.fov_desired)),
             ("fps_max", format!("{}", self.fps_max)),
+            ("cl_showfps", format!("{}", self.cl_showfps)),
             ("mat_picmip", format!("{}", self.mat_picmip)),
             ("r_rootlod", format!("{}", self.r_rootlod)),
             (

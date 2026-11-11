@@ -11878,6 +11878,19 @@ impl<'w> Server<'w> {
     /// (`CanPickupObject(35, 128)`), moveable (a frozen one is not: `IsMoveable`), nobody
     /// physguns it and `Request::PlayerPickup` allows.
     fn try_pickup(&mut self, player: u32, ent: u32, yaw: f32) {
+        // sent_ball.lua `Use`: eaten - the ball goes, the player gets 5 health
+        if self
+            .sandbox_sents
+            .get(&ent)
+            .is_some_and(|c| c == "sent_ball")
+        {
+            if self.remove_prop(ent) {
+                if let Some(p) = self.players.get_mut(&player) {
+                    p.health += 5;
+                }
+            }
+            return;
+        }
         let (mass, size) = (gm_physics::pickup::MAX_MASS, gm_physics::pickup::MAX_SIZE);
         self.pickup_with(player, ent, yaw, mass, size, true);
     }
@@ -23129,7 +23142,18 @@ impl<'w> Server<'w> {
         self.sandbox.undo(player, &mut events);
         self.events.extend(events);
         self.prune_npcs();
+        self.prune_sents();
         self.sync_physics();
+    }
+
+    /// Sandbox entity bookkeeping of props the sandbox dropped (undo, cleanup): an editor
+    /// left in `sandbox_sents` kept its fog / sky / sun on every client after its removal.
+    fn prune_sents(&mut self) {
+        let alive: std::collections::BTreeSet<u32> =
+            self.sandbox.props().iter().map(|p| p.id).collect();
+        self.sandbox_sents.retain(|id, _| alive.contains(id));
+        self.editor_vars.retain(|id, _| alive.contains(id));
+        self.hl2_items.retain(|id, _| alive.contains(id));
     }
 
     pub fn cleanup(&mut self, player: u32) {
@@ -23145,6 +23169,7 @@ impl<'w> Server<'w> {
         }
         self.events.extend(events);
         self.prune_npcs();
+        self.prune_sents();
         self.sync_physics();
     }
 

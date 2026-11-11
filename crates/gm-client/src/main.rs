@@ -1504,6 +1504,8 @@ struct App {
     gameui: BTreeMap<String, String>,
     /// Last presented frame, for `fps_max`.
     last_frame: Instant,
+    /// Smoothed frame rate for `cl_showfps` (CFPSPanel: 0.9 of the old, 0.1 of this frame).
+    fps_avg: f32,
     /// Last HDR auto-exposure probe.
     exposure_at: Instant,
     /// The game's main menu over the game (Escape): `menu.html` with the in-game NavBar.
@@ -1581,13 +1583,16 @@ fn pick_msaa(gpu: &gm_render::Gpu, format: wgpu::TextureFormat, want: u32) -> u3
 
 impl App {
     fn init_gfx(&mut self, el: &ActiveEventLoop) -> Result<()> {
-        let window = Arc::new(
-            el.create_window(
-                Window::default_attributes()
-                    .with_title("gmod-rust")
-                    .with_inner_size(winit::dpi::LogicalSize::new(1280, 720)),
-            )?,
-        );
+        // the saved video mode (config.cfg: mat_setvideomode / fullscreen) from the start,
+        // not 1280x720 windowed until the options dialog is applied again
+        let (w, h) = (self.settings.width.max(320), self.settings.height.max(240));
+        let mut attrs = Window::default_attributes()
+            .with_title("gmod-rust")
+            .with_inner_size(winit::dpi::PhysicalSize::new(w, h));
+        if self.settings.fullscreen {
+            attrs = attrs.with_fullscreen(Some(winit::window::Fullscreen::Borderless(None)));
+        }
+        let window = Arc::new(el.create_window(attrs)?);
         let instance =
             wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle_from_env());
         let surface = instance.create_surface(window.clone())?;
@@ -1609,7 +1614,11 @@ impl App {
             .get_default_config(&gpu.adapter, size.width.max(1), size.height.max(1))
             .ok_or_else(|| anyhow!("surface not supported by the adapter"))?;
         config.format = format;
-        config.present_mode = wgpu::PresentMode::AutoVsync;
+        config.present_mode = if self.settings.mat_vsync {
+            wgpu::PresentMode::AutoVsync
+        } else {
+            wgpu::PresentMode::AutoNoVsync
+        };
         // the HDR auto-exposure probe reads the frame back
         config.usage |= wgpu::TextureUsages::COPY_SRC;
         surface.configure(&gpu.device, &config);
@@ -9073,6 +9082,25 @@ impl App {
                         }
                     }
                 }
+                // cl_showfps 1 (engine CFPSPanel): "N fps on <map>" top left, green at 50+,
+                // yellow at 30+, red below
+                if self.settings.cl_showfps > 0 {
+                    let fps = self.fps_avg.round() as i32;
+                    let color = if fps >= 50 {
+                        [0.0, 1.0, 0.0, 1.0]
+                    } else if fps >= 30 {
+                        [1.0, 1.0, 0.0, 1.0]
+                    } else {
+                        [1.0, 0.0, 0.0, 1.0]
+                    };
+                    items.push(UiItem::Text {
+                        font: label_font.clone(),
+                        x: 2.0 * s,
+                        y: 2.0 * s,
+                        text: format!("{fps:3} fps on {}", self.map_name),
+                        color,
+                    });
+                }
                 if !hidden("CHudHealth") {
                     panel(
                         &mut items,
@@ -10326,6 +10354,12 @@ impl ApplicationHandler for App {
                 std::thread::sleep(min - since);
             }
         }
+        let dt = self.last_frame.elapsed().as_secs_f32().max(1e-4);
+        self.fps_avg = if self.fps_avg <= 0.0 {
+            1.0 / dt
+        } else {
+            self.fps_avg * 0.9 + 0.1 / dt
+        };
         self.last_frame = Instant::now();
         if let Some(g) = &self.gfx {
             g.window.request_redraw();
@@ -10762,6 +10796,7 @@ fn run() -> Result<()> {
         kb_rows,
         gameui,
         last_frame: Instant::now(),
+        fps_avg: 0.0,
         exposure_at: Instant::now(),
         last: Instant::now(),
         acc: 0.0,
