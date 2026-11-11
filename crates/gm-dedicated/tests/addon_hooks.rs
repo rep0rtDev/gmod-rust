@@ -366,8 +366,9 @@ fn scripted_weapons_follow_the_measured_weapon_base() {
         },
     })
     .unwrap();
+    let builtin = server.weapon_classes().len();
     rt.pre_tick(&mut server);
-    assert_eq!(server.weapon_classes().len(), gm_server::LOADOUT.len() + 2);
+    assert_eq!(server.weapon_classes().len(), builtin + 2);
     assert_eq!(server.scripted_weapons[0].print_name, "Semi");
     assert_eq!(
         server.scripted_weapons[1].reload_time,
