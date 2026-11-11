@@ -545,7 +545,7 @@ struct SkinIn {
     @location(1) normal: vec3<f32>,
     @location(2) uv: vec2<f32>,
     @location(3) iris_uv: vec2<f32>,
-    @location(4) bone: vec4<u32>,
+    @location(4) bone: vec4<f32>,
     @location(5) weight: vec3<f32>,
 };
 
@@ -553,18 +553,25 @@ struct SkinIn {
 fn vs_skin(in: SkinIn) -> VsOut {
     var p = in.position;
     var n = in.normal;
-    var weight = in.weight;
-    var bone = in.bone;
+    let weight = in.weight;
+    let bone = vec3<u32>(in.bone.xyz + 0.5);
     if weight.x + weight.y + weight.z > 0.0 {
         var sp = vec3<f32>(0.0);
         var sn = vec3<f32>(0.0);
-        for (var i = 0u; i < 3u; i++) {
-            let w = weight[i];
-            if w > 0.0 {
-                let m = bones[bone[i]];
-                sp += (m * vec4<f32>(in.position, 1.0)).xyz * w;
-                sn += (m * vec4<f32>(in.normal, 0.0)).xyz * w;
-            }
+        if weight.x > 0.0 {
+            let m = bones[bone.x];
+            sp += (m * vec4<f32>(in.position, 1.0)).xyz * weight.x;
+            sn += (m * vec4<f32>(in.normal, 0.0)).xyz * weight.x;
+        }
+        if weight.y > 0.0 {
+            let m = bones[bone.y];
+            sp += (m * vec4<f32>(in.position, 1.0)).xyz * weight.y;
+            sn += (m * vec4<f32>(in.normal, 0.0)).xyz * weight.y;
+        }
+        if weight.z > 0.0 {
+            let m = bones[bone.z];
+            sp += (m * vec4<f32>(in.position, 1.0)).xyz * weight.z;
+            sn += (m * vec4<f32>(in.normal, 0.0)).xyz * weight.z;
         }
         p = sp;
         n = sn;

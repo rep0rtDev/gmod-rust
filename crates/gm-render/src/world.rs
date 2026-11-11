@@ -3218,7 +3218,7 @@ impl WorldRenderer {
                     buffers: &[Some(wgpu::VertexBufferLayout {
                         array_stride: std::mem::size_of::<SkinVertex>() as u64,
                         step_mode: wgpu::VertexStepMode::Vertex,
-                        attributes: &wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3, 2 => Float32x2, 3 => Float32x2, 4 => Uint8x4, 5 => Float32x3],
+                        attributes: &wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3, 2 => Float32x2, 3 => Float32x2, 4 => Float32x4, 5 => Float32x3],
                     })],
                 },
                 primitive: wgpu::PrimitiveState {
@@ -6120,26 +6120,9 @@ impl WorldRenderer {
             // without a pose (static props without a rest pose) the bones are the identity
             let identity = [Mat4::IDENTITY; SKIN_MAX_BONES];
             let src: &[Mat4] = match item.bones.or(m.rest_skin.as_deref()) {
-                Some(b) if !b.is_empty() && std::env::var_os("GM_SKIN_IDENTITY").is_none() => b,
+                Some(b) if !b.is_empty() => b,
                 _ => &identity,
             };
-            if std::env::var_os("GM_SKIN_LOG").is_some() {
-                let max_bone = m
-                    .parts
-                    .iter()
-                    .flat_map(|p| p.1.iter())
-                    .flat_map(|v| v.bones[..(v.num_bones as usize).min(3)].iter())
-                    .max()
-                    .copied();
-                eprintln!(
-                    "skin: item {item_index} parts {} bones {:?} rest {:?} max index {:?} unlit {}",
-                    m.parts.len(),
-                    item.bones.map(<[Mat4]>::len),
-                    m.rest_skin.as_ref().map(Vec::len),
-                    max_bone,
-                    m.unlit
-                );
-            }
             for (i, m) in src.iter().take(SKIN_MAX_BONES).enumerate() {
                 let at = start + i * 64;
                 bones[at..at + 64].copy_from_slice(bytemuck::cast_slice(&m.to_cols_array()));
@@ -6296,11 +6279,11 @@ struct ModelBuffers {
     draws: Vec<ModelDraw>,
 }
 
-/// `GM_GPU_SKIN=1`: entity models skinned in the vertex shader (`vs_skin`) instead of on the
-/// CPU. Off by default while the path is being verified (an npc_citizen renders wrong).
+/// Entity models are skinned in the vertex shader (`vs_skin`); `GM_CPU_SKIN=1` falls back to
+/// the CPU path for comparison.
 fn gpu_skin_enabled() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| std::env::var_os("GM_GPU_SKIN").is_some())
+    *ON.get_or_init(|| std::env::var_os("GM_CPU_SKIN").is_none())
 }
 
 /// Per-draw uniform of `vs_skin` (see the shader's `SkinParams`).
@@ -6332,7 +6315,7 @@ struct SkinVertex {
     normal: [f32; 3],
     uv: [f32; 2],
     iris_uv: [f32; 2],
-    bones: [u8; 4],
+    bones: [f32; 4],
     weights: [f32; 3],
 }
 
@@ -6359,7 +6342,12 @@ impl SkinMesh {
                     normal: v.normal,
                     uv: v.uv,
                     iris_uv: v.iris_uv,
-                    bones: [v.bones[0], v.bones[1], v.bones[2], 0],
+                    bones: [
+                        f32::from(v.bones[0]),
+                        f32::from(v.bones[1]),
+                        f32::from(v.bones[2]),
+                        0.0,
+                    ],
                     weights,
                 });
             }
