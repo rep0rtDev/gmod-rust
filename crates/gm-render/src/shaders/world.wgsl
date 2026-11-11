@@ -445,7 +445,11 @@ fn fs_water(in: VsOut, @builtin(front_facing) front: bool) -> @location(0) vec4<
     let flags = u32(camera.clip.y + 0.5);
     let has_refl = f32((flags & 1u) != 0u);
     let has_refr = f32((flags & 2u) != 0u);
-    let suv = in.clip.xy / dims + n.xy * material.envmap.x;
+    // the Water shader adds the normal offset in homogeneous texture space and divides by w
+    // (Water_ps2x: (vReflectXY_vRefractYX + vN * g_ReflectRefractScale) * ooW), so the ripple
+    // shrinks with distance; the fragment position's w is already 1 / clip w
+    let oow = in.clip.w;
+    let suv = in.clip.xy / dims + n.xy * material.envmap.x * oow;
     // a vertical mirror's camera gives the reflection mirrored left-right instead
     let flip_x = (flags & 4u) != 0u;
     let refl_uv = select(vec2<f32>(suv.x, 1.0 - suv.y), vec2<f32>(1.0 - suv.x, suv.y), flip_x);
@@ -456,7 +460,7 @@ fn fs_water(in: VsOut, @builtin(front_facing) front: bool) -> @location(0) vec4<
     }
     // _rt_WaterRefraction: the scene behind the surface offset by $refractamount, under the
     // water fog; without the copy the already-drawn bottom shows through the fog alpha
-    let ruv = in.clip.xy / dims + n.xy * material.envmap.y;
+    let ruv = in.clip.xy / dims + n.xy * material.envmap.y * oow;
     let refr = textureSample(refraction, reflection_sampler, ruv).rgb;
     // seen from under the surface ($bottommaterial): the scene above through the refraction,
     // no reflection, the eye's water fog up to the surface
