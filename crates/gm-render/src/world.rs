@@ -800,6 +800,9 @@ pub struct WorldRenderer {
     light_cache: std::cell::RefCell<HashMap<[i32; 3], crate::light::LocalLight>>,
     /// Frame counter for [`model_cache`](Self::model_cache), stepped by [`draw`](Self::draw).
     frame: std::cell::Cell<u64>,
+    /// CPU time of the last [`draw`](Self::draw) in ms, smoothed: shadow maps, water
+    /// reflection, the scene itself.
+    pass_ms: std::cell::Cell<[f32; 3]>,
     /// The frame's skinned entity meshes on the GPU: the shadow, reflection and main passes
     /// all draw the same items, so they are skinned and uploaded once per frame, keyed by
     /// the frame and the items slice (pointer, length).
@@ -3475,6 +3478,7 @@ impl WorldRenderer {
             light,
             light_cache: Default::default(),
             frame: Default::default(),
+            pass_ms: Default::default(),
             model_cache: Default::default(),
         })
     }
@@ -3498,6 +3502,7 @@ impl WorldRenderer {
         reflect_items: &[DrawItem<'_>],
     ) {
         self.frame.set(self.frame.get() + 1);
+        let t0 = std::time::Instant::now();
         let mut vps = [None; DEPTH_LAYERS];
         for (slot, (_, l)) in self.flashlights.iter().take(SHADOW_LAYERS).enumerate() {
             vps[slot] =
@@ -3506,7 +3511,9 @@ impl WorldRenderer {
         vps[SUN_LAYER] =
             self.draw_sun_depth(gpu, camera, &self.shadow_layers[SUN_LAYER], reflect_items);
         self.flashlight_vp.set(vps);
+        let t1 = std::time::Instant::now();
         self.draw_reflection(gpu, camera, aspect, reflect_items);
+        let t2 = std::time::Instant::now();
         self.draw_inner(
             gpu,
             camera,
@@ -3517,11 +3524,34 @@ impl WorldRenderer {
             scene_src,
             reflect_items,
         );
+        let t3 = std::time::Instant::now();
+        let ms = |a: std::time::Instant, b: std::time::Instant| (b - a).as_secs_f32() * 1000.0;
+        let now = [ms(t0, t1), ms(t1, t2), ms(t2, t3)];
+        let old = self.pass_ms.get();
+        self.pass_ms.set(std::array::from_fn(|k| {
+            if old[k] <= 0.0 {
+                now[k]
+            } else {
+                old[k] * 0.9 + now[k] * 0.1
+            }
+        }));
     }
 
     /// The plane the reflection pass mirrors in: the water surface under the eye, else the
     /// nearest `func_reflective_glass` facing the eye within 3000 u (one reflection a frame).
+    /// CPU ms of the last [`draw`](Self::draw), smoothed: shadow maps, water reflection,
+    /// scene (`cl_showfps 2`).
+    pub fn pass_ms(&self) -> [f32; 3] {
+        self.pass_ms.get()
+    }
+
     fn reflected_plane(&self, eye: Vec3) -> Option<(Vec3, f32)> {
+        self.reflected_surface(eye).map(|(n, d, _, _)| (n, d))
+    }
+
+    /// The reflecting surface for an eye: its plane (normal, distance) and the bounds of the
+    /// water volume or mirror it belongs to.
+    fn reflected_surface(&self, eye: Vec3) -> Option<(Vec3, f32, Vec3, Vec3)> {
         // the nearer of the two wins: gm_construct's basement mirror sits far below the
         // pool's surface, which must not claim the pass from the other end of the map
         let dist = |m: &Mirror| eye.clamp(m.min, m.max).distance_squared(eye);
@@ -3535,12 +3565,12 @@ impl WorldRenderer {
             .water_volumes
             .iter()
             .filter(|w| w.surface_z < eye.z)
-            .map(|w| (eye.clamp(w.min, w.max).distance_squared(eye), w.surface_z))
+            .map(|w| (eye.clamp(w.min, w.max).distance_squared(eye), w))
             .min_by(|a, b| a.0.total_cmp(&b.0));
         match (mirror, water) {
-            (Some(m), Some((wd, _))) if dist(m) < wd => Some((m.normal, m.d)),
-            (_, Some((_, z))) => Some((Vec3::Z, z)),
-            (Some(m), None) => Some((m.normal, m.d)),
+            (Some(m), Some((wd, _))) if dist(m) < wd => Some((m.normal, m.d, m.min, m.max)),
+            (_, Some((_, w))) => Some((Vec3::Z, w.surface_z, w.min, w.max)),
+            (Some(m), None) => Some((m.normal, m.d, m.min, m.max)),
             (None, None) => None,
         }
     }
@@ -3559,11 +3589,15 @@ impl WorldRenderer {
                     .collect::<Vec<_>>()
             );
         }
-        // GM_NO_REFLECT: draw the water without the reflection (to compare)
+        // GM_NO_REFLECT: draw the water without the reflection (to compare); a surface
+        // wholly outside the view is not reflected either (the game only renders
+        // _rt_WaterReflection while a water surface is in the visible leaves)
+        let vp = camera.view_proj(aspect);
         let plane = self
-            .reflected_plane(camera.position)
-            .filter(|_| std::env::var_os("GM_NO_REFLECT").is_none());
-        let Some((n, zs)) = plane else {
+            .reflected_surface(camera.position)
+            .filter(|_| std::env::var_os("GM_NO_REFLECT").is_none())
+            .filter(|&(_, _, min, max)| aabb_in_frustum(vp, min, max));
+        let Some((n, zs, _, _)) = plane else {
             self.reflect.lock().unwrap().valid = false;
             return;
         };
@@ -5873,6 +5907,32 @@ type ModelCacheEntry = (u64, usize, usize, std::rc::Rc<ModelBuffers>);
 
 /// A part draw: its material bind group, first index, index count.
 type PartDraw<'a> = (&'a wgpu::BindGroup, u32, u32);
+
+/// Whether the box can be in view: false only when all its corners lie beyond one clip
+/// plane (conservative; wgpu clip z runs 0..w).
+fn aabb_in_frustum(vp: Mat4, min: Vec3, max: Vec3) -> bool {
+    let mut outside = [0u8; 6];
+    for i in 0..8 {
+        let c = Vec3::new(
+            if i & 1 == 0 { min.x } else { max.x },
+            if i & 2 == 0 { min.y } else { max.y },
+            if i & 4 == 0 { min.z } else { max.z },
+        );
+        let p = vp * c.extend(1.0);
+        let tests = [
+            p.x < -p.w,
+            p.x > p.w,
+            p.y < -p.w,
+            p.y > p.w,
+            p.z < 0.0,
+            p.z > p.w,
+        ];
+        for (o, t) in outside.iter_mut().zip(tests) {
+            *o += t as u8;
+        }
+    }
+    outside.iter().all(|&o| o < 8)
+}
 
 /// Bounding box of the 3D skybox faces, used to sort props into the skybox pass.
 fn skybox_faces_bounds(bsp: &Bsp<'_>, faces: &HashSet<usize>) -> Option<([f32; 3], [f32; 3])> {

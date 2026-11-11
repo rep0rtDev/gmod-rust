@@ -1511,6 +1511,8 @@ struct App {
     /// blended passes (decals / sprites / beams), viewmodel + 3D2D, UI build, post + UI draw,
     /// present.
     prof: [f32; 10],
+    /// The world draw's own split (shadow maps, water reflection, main scene), ms.
+    world_pass_ms: [f32; 3],
     /// Last HDR auto-exposure probe.
     exposure_at: Instant,
     /// The game's main menu over the game (Escape): `menu.html` with the in-game NavBar.
@@ -7839,19 +7841,20 @@ impl App {
             Some(scene_src),
             &items,
         );
+        lap(3);
+        self.world_pass_ms = g.world.pass_ms();
         if !modulate.is_empty() {
-            lap(3);
             g.world.draw_modulate(&g.gpu, &camera, &target, &modulate);
         }
         if !additive.is_empty() {
             g.world.draw_alpha(&g.gpu, &camera, &target, &alpha);
             g.world.draw_additive(&g.gpu, &camera, &target, &additive);
-            lap(4);
         }
         if !refract.is_empty() {
             g.world
                 .draw_refract(&g.gpu, &camera, &target, scene_src, &refract);
         }
+        lap(4);
         for d in &ghost_draws {
             let gm_script::DrawCmd::Model {
                 model,
@@ -8213,10 +8216,12 @@ impl App {
             ));
             if std::env::var_os("GM_PROF").is_some() {
                 let p = self.prof;
+                let w = self.world_pass_ms;
                 eprintln!(
                     "prof ms: step {:.2} prep {:.2} acquire {:.2} scene {:.2} world {:.2} \
-                     blend {:.2} vm {:.2} uibuild {:.2} uidraw {:.2} present {:.2}",
-                    p[0], p[1], p[2], p[3], p[4], p[5], p[6], p[7], p[8], p[9]
+                     (shadow {:.2} reflect {:.2} scene {:.2}) blend {:.2} vm {:.2} uibuild {:.2} \
+                     uidraw {:.2} present {:.2}",
+                    p[0], p[1], p[2], p[3], p[4], w[0], w[1], w[2], p[5], p[6], p[7], p[8], p[9]
                 );
             }
             self.frames = 0;
@@ -9144,6 +9149,7 @@ impl App {
                     });
                     if self.settings.cl_showfps >= 2 {
                         let p = self.prof;
+                        let w = self.world_pass_ms;
                         items.push(UiItem::Text {
                             font: label_font.clone(),
                             x: 2.0 * s,
@@ -9152,6 +9158,16 @@ impl App {
                                 "ms: step {:.2} prep {:.2} acquire {:.2} scene {:.2} world {:.2} \
                                  blend {:.2} vm {:.2} uibuild {:.2} uidraw {:.2} present {:.2}",
                                 p[0], p[1], p[2], p[3], p[4], p[5], p[6], p[7], p[8], p[9]
+                            ),
+                            color,
+                        });
+                        items.push(UiItem::Text {
+                            font: label_font.clone(),
+                            x: 2.0 * s,
+                            y: 42.0 * s,
+                            text: format!(
+                                "world: shadow {:.2} reflect {:.2} scene {:.2}",
+                                w[0], w[1], w[2]
                             ),
                             color,
                         });
@@ -10896,6 +10912,7 @@ fn run() -> Result<()> {
         last_frame: Instant::now(),
         fps_avg: 0.0,
         prof: [0.0; 10],
+        world_pass_ms: [0.0; 3],
         exposure_at: Instant::now(),
         last: Instant::now(),
         acc: 0.0,
