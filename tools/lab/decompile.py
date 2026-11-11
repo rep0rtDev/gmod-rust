@@ -38,17 +38,17 @@ def _value_comment(hexaddr):
             f = struct.unpack("<f", struct.pack("<I", _mem.getInt(addr) & 0xFFFFFFFF))[0]
             if _sane(f, 1e-5, 1e7):
                 parts.append("%gf" % f)
-        except Exception:
+        except:  # noqa: E722 - Jython: Java MemoryAccessException is not a Python Exception
             pass
         try:
             d = struct.unpack("<d", struct.pack("<Q", _mem.getLong(addr) & 0xFFFFFFFFFFFFFFFF))[0]
             if _sane(d, 1e-5, 1e7):
                 parts.append("%g" % d)
-        except Exception:
+        except:  # noqa: E722 - Jython: Java MemoryAccessException is not a Python Exception
             pass
         if parts:
             note = " /* =" + " | ".join(parts) + " */"
-    except Exception:
+    except:  # noqa: E722
         pass
     _cache[hexaddr] = note
     return note
