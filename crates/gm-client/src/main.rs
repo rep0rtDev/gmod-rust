@@ -6628,7 +6628,11 @@ impl App {
                 true,
             ));
         }
-        for (start, fwd, end, holding) in beams {
+        let draw_beams = self
+            .utility_values
+            .get("physgun_drawbeams")
+            .is_none_or(|v| v != "0");
+        for (start, fwd, end, holding) in beams.into_iter().filter(|_| draw_beams) {
             let wc = weapon_color.clamp(Vec3::ZERO, Vec3::ONE);
             let color = wc.to_array();
             {

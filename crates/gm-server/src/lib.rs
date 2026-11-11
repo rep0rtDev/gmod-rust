@@ -8931,6 +8931,8 @@ pub struct Server<'w> {
     pub physics_time_scale: f32,
     /// `host_timescale`: scales the movement tick and the physics step together.
     pub host_timescale: f32,
+    /// `gmod_maxammo`: cap on every ammo type picked up (0 = the type's own max).
+    pub max_ammo: i32,
     pub prop_hits: Vec<PropHit>,
 
     pub spawn_points: Vec<SpawnPoint>,
@@ -9056,7 +9058,10 @@ pub const PHYS_CVARS: [(&str, &str); 3] = [
 ];
 
 /// Movement / game cvars the Utilities panel and the console set (defaults = `MoveConfig`).
-pub const SV_CVARS: [(&str, &str); 11] = [
+pub const SV_CVARS: [(&str, &str); 14] = [
+    ("gmod_suit", "0"),
+    ("sv_playerpickupallowed", "1"),
+    ("gmod_maxammo", "9999"),
     ("host_timescale", "1"),
     ("sv_friction", "8"),
     ("sv_stopspeed", "10"),
@@ -9167,6 +9172,7 @@ impl<'w> Server<'w> {
             physics_paused: false,
             physics_time_scale: 1.0,
             host_timescale: 1.0,
+            max_ammo: 9999,
             prop_hits: Vec::new(),
 
             spawn_points: Vec::new(),
@@ -9495,6 +9501,12 @@ impl<'w> Server<'w> {
             "sv_noclipspeed" => self.mover.cfg.noclip_speed = num,
             "sv_noclipaccelerate" => self.mover.cfg.noclip_accelerate = num,
             "mp_falldamage" => self.fall_damage_progressive = num != 0.0,
+            "gmod_maxammo" => self.max_ammo = num as i32,
+            "gmod_suit" => {
+                for p in self.players.values_mut() {
+                    p.suit = num != 0.0;
+                }
+            }
             "host_timescale" => {
                 let ts = if num.is_finite() && num > 0.0 {
                     num
@@ -9577,6 +9589,7 @@ impl<'w> Server<'w> {
         };
         self.game_events
             .push(GameEvent::PlayerSpawned { player: id });
+        let suit = self.cvar("gmod_suit").is_some_and(|v| v != "0");
         let Some(p) = self.players.get_mut(&id) else {
             return;
         };
@@ -9592,7 +9605,7 @@ impl<'w> Server<'w> {
         p.alive = true;
         p.health = p.max_health;
         p.armor = 0;
-        p.suit = false;
+        p.suit = suit;
         p.death_force = Vec3::ZERO;
         p.eye_override = None;
         p.ragdoll = None;
@@ -11970,6 +11983,9 @@ impl<'w> Server<'w> {
         max_size: f32,
         align: bool,
     ) -> bool {
+        if self.cvar("sv_playerpickupallowed") == Some("0") {
+            return false;
+        }
         let Some(model) = self
             .sandbox
             .props()
@@ -25482,7 +25498,10 @@ impl<'w> Server<'w> {
                         pl.armor = (pl.armor + n).min(max);
                     }
                     Pickup::Ammo(kind, n) => {
-                        let max = weapons::ammo_max(kind);
+                        let max = match self.max_ammo {
+                            0 => weapons::ammo_max(kind),
+                            m => weapons::ammo_max(kind).min(m),
+                        };
                         let e = pl.inventory.ammo.entry(kind.to_string()).or_insert(0);
                         *e = (*e + n).min(max);
                     }
