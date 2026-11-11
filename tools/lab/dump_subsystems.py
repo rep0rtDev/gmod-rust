@@ -24,12 +24,14 @@ BINARIES = {
     "vphysics": ("vphysics", "vphysics_srv.so", "decompile.py", "DECOMPILE_NEEDLES"),
     "luashared": ("luashared", "lua_shared_srv.so", "decompile.py", "DECOMPILE_NEEDLES"),
 }
-# which binaries each subsystem key is cut from, with the key of subsystems.json to use
+# which binaries each subsystem key of subsystems.json is cut from: "server" -> server_srv.so,
+# "client" -> client.dll + engine.dll, "vphysics" / "luashared" -> their own needle lists
 PLAN = {
     "server": ["server"],
     "client": ["client", "engine"],
+    "vphysics": ["vphysics"],
+    "luashared": ["luashared"],
 }
-EXTRA = {"vphysics": [("vphysics", "server")], "luabind": [("luashared", "server")]}
 
 
 ONLY = [l for l in os.environ.get("DUMP_ONLY_LABELS", "").split(",") if l]
@@ -75,10 +77,6 @@ def main():
                 d = run(label, name, sel[key], sel.get("server"))
                 if d:
                     dirs.append(d)
-        for label, key in EXTRA.get(name, []):
-            d = run(label, name, sel[key])
-            if d:
-                dirs.append(d)
         # index: one line per function file with its selecting strings / name
         idx = os.path.join(DUMP, name, "INDEX.txt")
         with open(idx, "w") as fh:

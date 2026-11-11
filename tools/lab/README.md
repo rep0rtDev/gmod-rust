@@ -10,3 +10,6 @@ python3 tools/lab/symbols.py                                                    
 ```
 
 `symbols.py` prints only counts and the list of modules; the symbol tables themselves stay in `.local/`.
+
+
+Per-subsystem binaries: a subsystem entry's keys name the binaries it is cut from (`server`, `client` = client.dll + engine.dll, `vphysics`, `luashared`), each with its own needles. Float/double constants that the pseudo-C shows as `DAT_xxx` carry their value as a trailing comment (`DAT_1234 /* =0.5f */`) when the bytes read as a sane float or double.

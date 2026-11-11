@@ -7,6 +7,7 @@
 import io
 import os
 import re
+import struct
 from ghidra.app.decompiler import DecompInterface
 from ghidra.util.task import ConsoleTaskMonitor
 
@@ -94,6 +95,51 @@ for entry, (f, whys) in base:
                 if c is not None and c.getEntryPoint() not in selected:
                     selected.setdefault(c.getEntryPoint(), (c, set()))[1].add("caller of " + f.getName())
 
+
+# float / double constants: the pseudo-C shows them as data refs (DAT_xxx); every ref whose
+# bytes read as a sane float or double gets the value appended as a comment (/* =0.5f */)
+_mem = mem
+_space = currentProgram.getAddressFactory().getDefaultAddressSpace()
+_dat = re.compile(r"(?<![A-Za-z0-9])_?DAT_([0-9a-fA-F]+)\b")
+_cache = {}
+
+
+def _sane(v, lo, hi):
+    return v == v and abs(v) != float("inf") and (v == 0.0 or lo <= abs(v) <= hi)
+
+
+def _value_comment(hexaddr):
+    if hexaddr in _cache:
+        return _cache[hexaddr]
+    note = ""
+    try:
+        addr = _space.getAddress(hexaddr)
+        parts = []
+        # Memory reads honour the program's byte order, so the integers are re-packed as
+        # little-endian IEEE bit patterns
+        try:
+            f = struct.unpack("<f", struct.pack("<I", _mem.getInt(addr) & 0xFFFFFFFF))[0]
+            if _sane(f, 1e-5, 1e7):
+                parts.append("%gf" % f)
+        except Exception:
+            pass
+        try:
+            d = struct.unpack("<d", struct.pack("<Q", _mem.getLong(addr) & 0xFFFFFFFFFFFFFFFF))[0]
+            if _sane(d, 1e-5, 1e7):
+                parts.append("%g" % d)
+        except Exception:
+            pass
+        if parts:
+            note = " /* =" + " | ".join(parts) + " */"
+    except Exception:
+        pass
+    _cache[hexaddr] = note
+    return note
+
+
+def annotate(c):
+    return _dat.sub(lambda m: m.group(0) + _value_comment(m.group(1)), c)
+
 iface = DecompInterface()
 iface.openProgram(currentProgram)
 monitor = ConsoleTaskMonitor()
@@ -108,6 +154,6 @@ for entry, (f, whys) in sorted(selected.items(), key=lambda kv: str(kv[0])):
         continue
     with io.open(os.path.join(out, "%s_%s.c" % (f.getName(), entry)), "w", encoding="utf-8", errors="replace") as fh:
         fh.write(u"// selected by: " + u" | ".join(sorted(whys)[:12]) + u"\n")
-        fh.write(unicode(res.getDecompiledFunction().getC()))
+        fh.write(unicode(annotate(res.getDecompiledFunction().getC())))
     count += 1
 print("decompiled %d functions (%d selected, %d vtable classes)" % (count, len(selected), vt_classes))
