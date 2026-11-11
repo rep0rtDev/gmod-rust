@@ -397,6 +397,29 @@ impl Settings {
         for (k, v) in &self.binds {
             out.push_str(&format!("bind \"{k}\" \"{v}\"\n"));
         }
+        for (k, v) in self.cvars() {
+            out.push_str(&format!("{k} \"{v}\"\n"));
+        }
+        out
+    }
+
+    /// The value of client cvar `key` as the console prints it, None for an unknown one.
+    pub fn cvar_value(&self, key: &str) -> Option<String> {
+        self.cvars()
+            .into_iter()
+            .find(|(k, _)| *k == key)
+            .map(|(_, v)| v)
+    }
+
+    /// `key value` typed into the console: the one cvar re-read on top of the current ones.
+    pub fn set_cvar(&mut self, key: &str, value: &str) {
+        let mut cvars = BTreeMap::new();
+        cvars.insert(key.to_string(), value.to_string());
+        self.apply_cvars(&cvars);
+    }
+
+    /// Every client cvar and its value, in `config.cfg` order.
+    pub fn cvars(&self) -> Vec<(&'static str, String)> {
         let on = |b: bool| if b { "1" } else { "0" };
         let lines: Vec<(&str, String)> = vec![
             ("sensitivity", format!("{}", self.sensitivity)),
@@ -484,10 +507,7 @@ impl Settings {
             ("voice_scale", format!("{}", self.voice_scale)),
             ("voice_loopback", on(self.voice_loopback).to_string()),
         ];
-        for (k, v) in lines {
-            out.push_str(&format!("{k} \"{v}\"\n"));
-        }
-        out
+        lines
     }
 
     pub fn save(&self) -> std::io::Result<()> {

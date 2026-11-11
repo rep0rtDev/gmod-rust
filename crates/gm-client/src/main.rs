@@ -3452,6 +3452,12 @@ impl App {
     fn apply_options(&mut self) {
         let Some(st) = &self.options else { return };
         let pending = st.pending.clone();
+        self.apply_settings(pending);
+    }
+
+    /// `pending` becomes the live settings: saved, and the volume / present mode / window
+    /// mode follow (the options dialog's Apply and a cvar typed into the console).
+    fn apply_settings(&mut self, pending: settings::Settings) {
         let resize = pending.width != self.settings.width
             || pending.height != self.settings.height
             || pending.fullscreen != self.settings.fullscreen;
@@ -9751,9 +9757,30 @@ impl App {
                     line: line.to_string(),
                 });
             }
-            _ => self.sim.client.command(Command::Console {
-                line: line.to_string(),
-            }),
+            _ => {
+                // a client cvar (`mat_vsync 0`, `fps_max 144`, ...): set it, or print it
+                // when typed alone, the way the engine's console does
+                let mut it = line.splitn(2, char::is_whitespace);
+                let key = it.next().unwrap_or("").to_lowercase();
+                let value = it.next().map(|v| v.trim().trim_matches('"').to_string());
+                if let Some(cur) = self.settings.cvar_value(&key) {
+                    match value {
+                        Some(v) => {
+                            let mut pending = self.settings.clone();
+                            pending.set_cvar(&key, &v);
+                            self.apply_settings(pending);
+                            if let Some(now) = self.settings.cvar_value(&key) {
+                                self.console.log(format!("\"{key}\" = \"{now}\""));
+                            }
+                        }
+                        None => self.console.log(format!("\"{key}\" = \"{cur}\"")),
+                    }
+                    return;
+                }
+                self.sim.client.command(Command::Console {
+                    line: line.to_string(),
+                })
+            }
         }
     }
 }
