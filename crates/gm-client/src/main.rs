@@ -1510,7 +1510,7 @@ struct App {
     /// swapchain acquire, scene build (entities / animation / items), world + models draw,
     /// blended passes (decals / sprites / beams), viewmodel + 3D2D, UI build, post + UI draw,
     /// present.
-    prof: [f32; 10],
+    prof: [f32; 11],
     /// The world draw's own split (shadow maps, water reflection, main scene), ms.
     world_pass_ms: [f32; 3],
     /// Last HDR auto-exposure probe.
@@ -5514,7 +5514,7 @@ impl App {
     fn render(&mut self) {
         let prof_start = Instant::now();
         let mut prof_last = prof_start;
-        let mut laps = [0f32; 9];
+        let mut laps = [0f32; 10];
         let mut lap = |i: usize| {
             let now = Instant::now();
             laps[i] = (now - prof_last).as_secs_f32() * 1000.0;
@@ -8162,6 +8162,7 @@ impl App {
             }
         }
         let g = self.gfx.as_ref().unwrap();
+        lap(9);
         g.ui.draw(&g.gpu, &view, g.config.width, g.config.height, &ui_items);
         lap(7);
         let g = self.gfx.as_ref().unwrap();
@@ -8220,8 +8221,21 @@ impl App {
                 eprintln!(
                     "prof ms: step {:.2} prep {:.2} acquire {:.2} scene {:.2} world {:.2} \
                      (shadow {:.2} reflect {:.2} scene {:.2}) blend {:.2} vm {:.2} uibuild {:.2} \
-                     uidraw {:.2} present {:.2}",
-                    p[0], p[1], p[2], p[3], p[4], w[0], w[1], w[2], p[5], p[6], p[7], p[8], p[9]
+                     post {:.2} uidraw {:.2} present {:.2}",
+                    p[0],
+                    p[1],
+                    p[2],
+                    p[3],
+                    p[4],
+                    w[0],
+                    w[1],
+                    w[2],
+                    p[5],
+                    p[6],
+                    p[7],
+                    p[10],
+                    p[8],
+                    p[9]
                 );
             }
             self.frames = 0;
@@ -9156,8 +9170,9 @@ impl App {
                             y: 22.0 * s,
                             text: format!(
                                 "ms: step {:.2} prep {:.2} acquire {:.2} scene {:.2} world {:.2} \
-                                 blend {:.2} vm {:.2} uibuild {:.2} uidraw {:.2} present {:.2}",
-                                p[0], p[1], p[2], p[3], p[4], p[5], p[6], p[7], p[8], p[9]
+                                 blend {:.2} vm {:.2} uibuild {:.2} post {:.2} uidraw {:.2} \
+                                 present {:.2}",
+                                p[0], p[1], p[2], p[3], p[4], p[5], p[6], p[7], p[10], p[8], p[9]
                             ),
                             color,
                         });
@@ -9823,6 +9838,63 @@ impl App {
                 self.noclip = !self.noclip;
                 self.sim.client.command(Command::Noclip { on: self.noclip });
             }
+            // the engine's own console commands
+            "echo" => self.console.log(rest.join(" ")),
+            "toggleconsole" => self.toggle_console(),
+            "screenshot" | "jpeg" => self.cam_photo_pending = true,
+            "r_cleardecals" => {
+                self.fx_decals.clear();
+                self.fx_prop_decals.clear();
+            }
+            "disconnect" => std::process::exit(0),
+            "exec" if !rest.is_empty() => {
+                // `exec autoexec`: the lines of cfg/<name>.cfg, each run as typed; nested
+                // exec lines are skipped so a file cannot loop on itself
+                let name = rest[0].trim_end_matches(".cfg");
+                let path = settings::home_dir().join("cfg").join(format!("{name}.cfg"));
+                match std::fs::read_to_string(&path) {
+                    Ok(text) => {
+                        for l in text.lines() {
+                            let l = l.trim();
+                            if l.is_empty()
+                                || l.starts_with("//")
+                                || l.to_lowercase().starts_with("exec")
+                            {
+                                continue;
+                            }
+                            self.run_console(el, l);
+                        }
+                    }
+                    Err(_) => self.console.log(format!("exec: couldn't exec {name}.cfg")),
+                }
+            }
+            "bind" if !rest.is_empty() => {
+                let key = rest[0].trim_matches('"').to_string();
+                if rest.len() == 1 {
+                    match self.settings.binds.get(&key) {
+                        Some(c) => self.console.log(format!("\"{key}\" = \"{c}\"")),
+                        None => self.console.log(format!("\"{key}\" is not bound")),
+                    }
+                } else {
+                    let cmd = rest[1..].join(" ").trim_matches('"').to_string();
+                    let mut pending = self.settings.clone();
+                    pending.binds.insert(key, cmd);
+                    self.apply_settings(pending);
+                }
+            }
+            "unbind" if !rest.is_empty() => {
+                let mut pending = self.settings.clone();
+                pending.binds.remove(rest[0].trim_matches('"'));
+                self.apply_settings(pending);
+            }
+            "unbindall" => {
+                let mut pending = self.settings.clone();
+                pending.binds.clear();
+                self.apply_settings(pending);
+            }
+            // the bindable actions typed by hand
+            "slot1" | "slot2" | "slot3" | "slot4" | "slot5" | "slot6" | "invnext" | "invprev"
+            | "gmod_undo" | "gmod_cleanup" => self.run_bind(verb, true),
             "help" => {
                 self.console
                     .log("client: spawn [model] | tool [name] | bot | say <text> | noclip | kill | playermodel <name> | playerskin <n> | playerbodygroups <digits> | undo | cleanup | clear | quit; server:");
@@ -10911,7 +10983,7 @@ fn run() -> Result<()> {
         gameui,
         last_frame: Instant::now(),
         fps_avg: 0.0,
-        prof: [0.0; 10],
+        prof: [0.0; 11],
         world_pass_ms: [0.0; 3],
         exposure_at: Instant::now(),
         last: Instant::now(),

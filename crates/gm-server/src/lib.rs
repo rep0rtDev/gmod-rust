@@ -5946,6 +5946,9 @@ pub struct Player {
     pub cmd_tick: u64,
     /// `Player:Flashlight` state (a script toggle; no client impulse yet).
     pub flashlight: bool,
+    /// `god`: takes no damage; `buddha`: never drops below 1 health (console cheats).
+    pub god: bool,
+    pub buddha: bool,
     /// `m_vecTotalBulletForce`: the damage forces of the bullets that hit since the spawn, the
     /// death ragdoll's extra velocity (player.md F4/F35: a shotgun kill flings the body).
     pub death_force: Vec3,
@@ -7715,6 +7718,8 @@ impl Player {
             cmd_impulse: 0,
             cmd_tick: 0,
             flashlight: false,
+            god: false,
+            buddha: false,
             fov: None,
             carry: None,
             use_down: false,
@@ -9286,7 +9291,7 @@ impl<'w> Server<'w> {
         let Some(p) = self.players.get_mut(&id) else {
             return 0.0;
         };
-        if !p.alive || amount <= 0.0 {
+        if !p.alive || amount <= 0.0 || p.god {
             return 0.0;
         }
         let mut to_health = amount;
@@ -9319,6 +9324,9 @@ impl<'w> Server<'w> {
             whole
         };
         p.health -= whole as i32;
+        if p.buddha && p.health < 1 {
+            p.health = 1;
+        }
         if p.health <= 0 {
             p.alive = false;
             p.deaths += 1;
@@ -11811,6 +11819,20 @@ impl<'w> Server<'w> {
             }
             _ => found,
         }
+    }
+
+    /// The entity under the player's crosshair within use reach (`ent_remove` and friends).
+    pub fn aimed_entity(&mut self, player: u32) -> Option<u32> {
+        let (eye, _) = self.eye(player)?;
+        let view = self.players.get(&player)?.view_angles;
+        self.find_use_entity(player, eye, view)
+    }
+
+    /// Whether the player is in noclip.
+    pub fn is_noclip(&self, player: u32) -> bool {
+        self.players
+            .get(&player)
+            .is_some_and(|p| p.state.move_type == gm_move::MoveType::Noclip)
     }
 
     fn find_use_entity(&self, player: u32, eye: Vec3, view: Vec3) -> Option<u32> {

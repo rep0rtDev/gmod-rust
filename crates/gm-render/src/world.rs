@@ -3569,7 +3569,13 @@ impl WorldRenderer {
             .min_by(|a, b| a.0.total_cmp(&b.0));
         match (mirror, water) {
             (Some(m), Some((wd, _))) if dist(m) < wd => Some((m.normal, m.d, m.min, m.max)),
-            (_, Some((_, w))) => Some((Vec3::Z, w.surface_z, w.min, w.max)),
+            // the surface rectangle alone decides the visibility test, not the depth below
+            (_, Some((_, w))) => Some((
+                Vec3::Z,
+                w.surface_z,
+                w.min.with_z(w.surface_z),
+                w.max.with_z(w.surface_z),
+            )),
             (Some(m), None) => Some((m.normal, m.d, m.min, m.max)),
             (None, None) => None,
         }

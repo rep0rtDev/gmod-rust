@@ -559,8 +559,9 @@ impl ServerNet {
         match verb {
             "help" => vec![
                 "status | kick <player> [reason] | ban <player> | unban <key> | cvar <name> [value] \
-                 | reload <addon> | say <text> | admins | save <name> | load <name> \
-                 | dupe_save <name> | dupe_arm <name>"
+                 | <cvar> [value] | reload <addon> | say <text> | admins | save <name> | load <name> \
+                 | dupe_save <name> | dupe_arm <name> | god | buddha | noclip | kill | hurtme [n] \
+                 | give <class> | ent_create <class> | npc_create <class> | ent_remove"
                     .to_string(),
             ],
             // the Dupes tab: `dupe_save` writes the issuer's duplicator clipboard to
@@ -880,6 +881,66 @@ impl ServerNet {
                 self.ip_bans_rev += 1;
                 vec!["Writing cfg/banned_ip.cfg.".to_string()]
             }
+            // the engine's cheats and spawn commands, for the issuing player
+            "god" | "buddha" => {
+                let Some(p) = server.players.get_mut(&admin) else {
+                    return vec![format!("{verb}: no player")];
+                };
+                let on = if verb == "god" {
+                    p.god = !p.god;
+                    p.god
+                } else {
+                    p.buddha = !p.buddha;
+                    p.buddha
+                };
+                vec![format!("{verb}mode {}", if on { "ON" } else { "OFF" })]
+            }
+            "kill" => {
+                server.player_kill_command(admin);
+                Vec::new()
+            }
+            "noclip" => {
+                let on = !server.is_noclip(admin);
+                if server.set_noclip(admin, on) {
+                    vec![format!("noclip {}", if on { "ON" } else { "OFF" })]
+                } else {
+                    vec!["noclip: denied (sbox_noclip 0)".to_string()]
+                }
+            }
+            "hurtme" => {
+                let amount = rest.first().and_then(|a| a.parse::<f32>().ok()).unwrap_or(10.0);
+                server.damage_player(admin, amount, 0);
+                Vec::new()
+            }
+            "give" | "gm_giveswep" => match rest.first() {
+                Some(class) => {
+                    if server.give_weapon_cmd(admin, class) {
+                        Vec::new()
+                    } else {
+                        vec![format!("{verb}: unknown weapon {class}")]
+                    }
+                }
+                None => vec![format!("{verb}: weapon class expected")],
+            },
+            "ent_create" => match rest.first() {
+                Some(class) => match server.spawn_sent(admin, class) {
+                    Some(id) => vec![format!("Created {class} ({id})")],
+                    None => vec![format!("ent_create: couldn't create {class}")],
+                },
+                None => vec!["ent_create: class expected".to_string()],
+            },
+            "npc_create" => match rest.first() {
+                Some(class) => match server.spawn_npc(admin, class, rest.get(1).unwrap_or(&"")) {
+                    Some(id) => vec![format!("Created {class} ({id})")],
+                    None => vec![format!("npc_create: couldn't create {class}")],
+                },
+                None => vec!["npc_create: class expected".to_string()],
+            },
+            "ent_remove" => match server.aimed_entity(admin) {
+                Some(ent) if server.remove_prop(ent) => vec![format!("Removed entity {ent}")],
+                Some(ent) => vec![format!("ent_remove: {ent} can't be removed")],
+                None => vec!["ent_remove: nothing under the crosshair".to_string()],
+            },
             "cvar" => match (rest.first(), rest.get(1)) {
                 (Some(n), None) => vec![match server.cvar(n) {
                     Some(v) => format!("{n} = {v}"),
