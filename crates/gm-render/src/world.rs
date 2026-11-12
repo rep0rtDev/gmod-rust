@@ -6446,9 +6446,10 @@ struct SkinDraw {
 /// `World::skin_frame`: (frame, items pointer, items length, draws).
 type SkinFrame = (u64, usize, usize, std::rc::Rc<Vec<SkinDraw>>, usize);
 
-/// The camera ring: 256 B slots (the largest `min_uniform_buffer_offset_alignment`), enough
-/// for every pass of a frame (sky, world, translucent, water, shadows, reflection, models).
-const CAMERA_STRIDE: u64 = 256;
+/// The camera ring: one `CameraUniform` per slot, rounded up to 256 B (the largest
+/// `min_uniform_buffer_offset_alignment`); 64 slots cover every pass of a frame (sky, world,
+/// translucent, water, shadows, reflection, models, sprites, viewmodel).
+const CAMERA_STRIDE: u64 = (std::mem::size_of::<CameraUniform>() as u64).div_ceil(256) * 256;
 const CAMERA_SLOTS: u64 = 64;
 
 /// `World::model_cache`: (frame, items pointer, items length, buffers).

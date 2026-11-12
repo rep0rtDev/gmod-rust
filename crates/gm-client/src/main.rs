@@ -8210,21 +8210,20 @@ impl App {
             }
         }
         lap(5);
-        let ui_items = self.ui_items(o, camera.view_proj(aspect));
-        lap(6);
-        let g = self.gfx.as_ref().unwrap();
-        if bloom {
-            g.post.apply(&g.gpu, &mut enc, &view, g.world.bloom_amount);
-        }
-        // the auto-exposure probe sees the scene only (Source measures the HDR scene
-        // buffer before the HUD / menus are drawn on it)
-        if g.world.hdr && self.frames.is_multiple_of(15) {
-            // the probe reads the frame back: what is encoded so far goes to the GPU first
+        // the scene (world, models, viewmodel) goes to the GPU now so it renders while the CPU
+        // builds the post and UI passes; one more submit follows before present
+        {
+            let g = self.gfx.as_ref().unwrap();
             let done = std::mem::replace(
                 &mut enc,
                 g.gpu.device.create_command_encoder(&Default::default()),
             );
             g.gpu.queue.submit([done.finish()]);
+        }
+        let g = self.gfx.as_ref().unwrap();
+        // the auto-exposure probe sees the scene only (Source measures the HDR scene
+        // buffer before the HUD / menus are drawn on it)
+        if g.world.hdr && self.frames.is_multiple_of(15) {
             let (bright, avg) =
                 frame_bright_pixels(&g.gpu, &frame.texture, g.config.width, g.config.height);
             let dt = self.exposure_at.elapsed().as_secs_f32().min(1.0);
@@ -8237,6 +8236,12 @@ impl App {
                     g.world.exposure
                 );
             }
+        }
+        let ui_items = self.ui_items(o, camera.view_proj(aspect));
+        lap(6);
+        let g = self.gfx.as_ref().unwrap();
+        if bloom {
+            g.post.apply(&g.gpu, &mut enc, &view, g.world.bloom_amount);
         }
         let g = self.gfx.as_ref().unwrap();
         lap(9);
