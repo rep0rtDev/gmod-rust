@@ -5943,7 +5943,17 @@ impl WorldRenderer {
         if items.is_empty() {
             return None;
         }
-        let key = (self.frame.get(), items.as_ptr() as usize, items.len());
+        // the slice address alone collides when one stack slot is reused within a frame (the
+        // spawnmenu renders its icons one `&[item]` at a time), so the first model's address
+        // goes into the key too
+        let key = (
+            self.frame.get(),
+            items.as_ptr() as usize
+                ^ items
+                    .first()
+                    .map_or(0, |i| (i.model as *const DynModel as usize).rotate_left(17)),
+            items.len(),
+        );
         let cached = self
             .model_cache
             .borrow()
@@ -6117,7 +6127,17 @@ impl WorldRenderer {
         if !gpu_skin_enabled() {
             return Default::default();
         }
-        let key = (self.frame.get(), items.as_ptr() as usize, items.len());
+        // the slice address alone collides when one stack slot is reused within a frame (the
+        // spawnmenu renders its icons one `&[item]` at a time), so the first model's address
+        // goes into the key too
+        let key = (
+            self.frame.get(),
+            items.as_ptr() as usize
+                ^ items
+                    .first()
+                    .map_or(0, |i| (i.model as *const DynModel as usize).rotate_left(17)),
+            items.len(),
+        );
         if let Some((f, p, n, d, _)) = self.skin_frame.borrow().as_ref() {
             if (*f, *p, *n) == key {
                 return d.clone();
