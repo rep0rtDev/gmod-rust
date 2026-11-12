@@ -871,14 +871,30 @@ impl UiRenderer {
         if let Some(entry) = self.images.get(name) {
             return entry.is_some();
         }
-        let mat = material::load(mount, name).ok();
+        // a `.png` path (maps/thumb/<map>.png, spawnicons, addon images) is a plain file in the
+        // mounted content; everything else is a material / VTF under materials/
+        let is_png = name.to_ascii_lowercase().ends_with(".png");
+        let mat = if is_png {
+            None
+        } else {
+            material::load(mount, name).ok()
+        };
         let additive = mat.as_ref().is_some_and(|m| m.additive);
         let texture_name = mat
             .and_then(|m| m.base_texture)
             .unwrap_or_else(|| name.to_string());
-        let decoded = material::load_texture(mount, &texture_name, IMAGE_MAX_SIDE)
-            .inspect_err(|e| eprintln!("ui image {name}: {e}"))
-            .ok();
+        let decoded = if is_png {
+            mount
+                .read(name)
+                .map_err(anyhow::Error::from)
+                .and_then(|bytes| material::load_png(&bytes))
+                .inspect_err(|e| eprintln!("ui image {name}: {e}"))
+                .ok()
+        } else {
+            material::load_texture(mount, &texture_name, IMAGE_MAX_SIDE)
+                .inspect_err(|e| eprintln!("ui image {name}: {e}"))
+                .ok()
+        };
         if let Some(img) = &decoded {
             self.image_sizes
                 .insert(name.to_string(), (img.width, img.height));

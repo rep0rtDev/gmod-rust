@@ -5437,7 +5437,7 @@ impl App {
                                     axis: None,
                                 });
                             }
-                            // mist: 8 splash1 puffs, 2 s, speed 50·(8−i) along the normal
+                            // mist: 8 splash1 puffs, 0.75-1.25 s (FX_GunshotSplash), speed 50·(8−i) along the normal
                             // with ±0.2 spread, size 24·remap(i, 7..0 -> 1..0.5) doubling
                             for i in 0..8 {
                                 let d = (fx_vec_rand(r) * 0.2 + Vec3::Z * fx_range(r, 4.0, 6.0))
@@ -5451,7 +5451,7 @@ impl App {
                                     vel: d * 50.0 * (8 - i) as f32,
                                     grav: Vec3::ZERO,
                                     born: now,
-                                    life: 2.0,
+                                    life: fx_range(r, 0.75, 1.25),
                                     size: (start, start * 2.0),
                                     alpha: (1.0, 0.0),
                                     color: [c; 3],

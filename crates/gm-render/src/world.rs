@@ -3659,8 +3659,18 @@ impl WorldRenderer {
             reflect_items,
         );
         self.flashlight_vp.set(vps);
+        // each stage goes to the GPU as soon as it is encoded, so the GPU works on the shadows
+        // while the CPU encodes the reflection and the scene (one submit per frame left the GPU
+        // idle until the end of the frame: fps 500 -> 250 on the user's RTX)
+        let flush = |enc: &mut wgpu::CommandEncoder| {
+            let done =
+                std::mem::replace(enc, gpu.device.create_command_encoder(&Default::default()));
+            gpu.queue.submit([done.finish()]);
+        };
+        flush(enc);
         let t1 = std::time::Instant::now();
         self.draw_reflection(gpu, enc, camera, aspect, reflect_items);
+        flush(enc);
         let t2 = std::time::Instant::now();
         self.draw_inner(
             gpu,
@@ -3673,6 +3683,7 @@ impl WorldRenderer {
             scene_src,
             reflect_items,
         );
+        flush(enc);
         let t3 = std::time::Instant::now();
         let ms = |a: std::time::Instant, b: std::time::Instant| (b - a).as_secs_f32() * 1000.0;
         let now = [ms(t0, t1), ms(t1, t2), ms(t2, t3)];
