@@ -460,11 +460,14 @@ impl Sounds {
         v
     }
 
-    /// Move an entity's tracked sounds with it.
+    /// Move an entity's tracked sounds with it. Ones started unpositioned (the local player's
+    /// own weapon sounds on CHAN_WEAPON, played at the listener like the game's predicted
+    /// ones) stay there: moved to the server's player origin they were heard from the feet,
+    /// behind, and occluded by whatever stood there.
     pub fn follow(&mut self, ent: u32, position: Vec3) {
         for (&(e, _), &id) in &self.tracked {
             if e == ent {
-                self.mixer.move_voice(id, position);
+                self.mixer.follow_voice(id, position);
             }
         }
     }

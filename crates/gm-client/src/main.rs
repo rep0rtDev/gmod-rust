@@ -6675,7 +6675,11 @@ impl App {
                         let path = world_model_of(p.active)?;
                         let wm = g.models.get(path)?.as_ref()?;
                         let (bones, skin) = wm.bone_world_merged(idle_sequence(wm), 0.0, m, w)?;
-                        match wm.attachment("muzzle", &bones) {
+                        // w_physics has no muzzle: its beam leaves the `core` (physgun.md 10)
+                        match wm
+                            .attachment("muzzle", &bones)
+                            .or_else(|| wm.attachment("core", &bones))
+                        {
                             Some(at) => {
                                 let to_world = gm_render::world::model_transform(
                                     origin,
@@ -6930,8 +6934,8 @@ impl App {
             });
             beams.push((start, fwd, end, held_pos.is_some()));
         }
-        // every other player's beam (physgun.md 10: drawn for all players): from beside their
-        // eye to the networked grab point (no world-model physgun attachment yet)
+        // every other player's beam (physgun.md 10: drawn for all players): from the core of
+        // the world model in their hand (beside the eye without one) to the networked grab point
         for p in &self.sim.client.world.players {
             if Some(p.id) == me || p.held.is_none() || !p.alive {
                 continue;
@@ -6941,9 +6945,14 @@ impl App {
             let f = Vec3::new(cp * cy, cp * sy, -sp);
             let r = Vec3::new(sy, -cy, 0.0);
             let eye = p.origin + Vec3::Z * if p.ducked { 28.0 } else { 64.0 };
+            let start = self
+                .other_muzzles
+                .get(&p.id)
+                .copied()
+                .unwrap_or(eye + r * 8.0 - Vec3::Z * 8.0 + f * 16.0);
             beams.push((
-                eye + r * 8.0 - Vec3::Z * 8.0 + f * 16.0,
-                f,
+                start,
+                (p.held_pos - start).normalize_or_zero(),
                 p.held_pos,
                 true,
             ));

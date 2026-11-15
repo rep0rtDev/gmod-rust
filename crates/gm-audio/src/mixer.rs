@@ -82,6 +82,8 @@ pub enum Cmd {
     Stop(u32),
     StopChannel(u32, Option<u8>, f32),
     Move(u32, Vec3),
+    /// Like `Move`, but a voice started without a position (heard at the listener) stays so.
+    Follow(u32, Vec3),
     Volume(u32, f32),
     Pitch(u32, f32),
     Seek(u32, f64),
@@ -118,6 +120,7 @@ fn apply(engine: &mut Engine, cmd: Cmd) {
         Cmd::StopAll => engine.stop_all(),
         Cmd::StopChannel(ent, ch, fade) => engine.stop_channel(ent, ch, fade),
         Cmd::Move(id, p) => engine.set_position(id, p),
+        Cmd::Follow(id, p) => engine.follow(id, p),
         Cmd::Volume(id, v) => engine.set_volume(id, v),
         Cmd::Pitch(id, p) => engine.set_pitch(id, p),
         Cmd::Seek(id, t) => engine.seek(id, t),
@@ -437,6 +440,12 @@ impl Mixer {
 
     pub fn move_voice(&self, id: u32, position: Vec3) {
         let _ = self.tx.send(Cmd::Move(id, position));
+    }
+
+    /// Move a positioned voice with its entity; an unpositioned one (the local player's own
+    /// sounds) keeps playing at the listener.
+    pub fn follow_voice(&self, id: u32, position: Vec3) {
+        let _ = self.tx.send(Cmd::Follow(id, position));
     }
 
     /// Change a playing voice's gain (soundscape fades).

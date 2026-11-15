@@ -376,6 +376,16 @@ impl Engine {
         }
     }
 
+    pub fn follow(&mut self, id: u32, position: Vec3) {
+        if let Some(v) = self
+            .voices
+            .iter_mut()
+            .find(|v| v.id == id && v.position.is_some())
+        {
+            v.position = Some(position);
+        }
+    }
+
     /// Render one stereo frame (`FRAME` samples per channel, interleaved) into `out`.
     pub fn render(&mut self, out: &mut [f32]) {
         debug_assert_eq!(out.len(), FRAME * 2);
