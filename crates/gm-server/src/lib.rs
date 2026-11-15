@@ -19812,6 +19812,20 @@ impl<'w> Server<'w> {
         } else {
             spread_dir(aim, cone, 1.0, now ^ ((id as u64) << 20) ^ round)
         };
+        // the weapon's NPC fire sound (`Weapon_SMG1.NPC_Single` ...): the game plays it from
+        // the NPC's weapon entity; scripted SWEPs that fired themselves returned above
+        let prefix = match n_weapon.as_str() {
+            "weapon_smg1" => Some("Weapon_SMG1"),
+            "weapon_ar2" => Some("Weapon_AR2"),
+            "weapon_pistol" => Some("Weapon_Pistol"),
+            "weapon_357" => Some("Weapon_357"),
+            "weapon_shotgun" => Some("Weapon_Shotgun"),
+            "weapon_crossbow" => Some("Weapon_Crossbow"),
+            _ => None,
+        };
+        if let Some(prefix) = prefix {
+            self.emit_sound(id, format!("{prefix}.NPC_Single"), 1.0);
+        }
         for _ in 0..pellets {
             self.npc_fire_bullet(id, muzzle, dir, dmg);
         }

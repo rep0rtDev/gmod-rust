@@ -6198,7 +6198,10 @@ impl WorldRenderer {
                     .and_then(|b| b.first())
                     .map_or(Vec3::ZERO, |b| b.w_axis.truncate())
             } else {
-                xf.transform_point3(Vec3::ZERO)
+                // 8 u above the origin: an entity's origin sits ON the floor (a walking NPC's
+                // dips into displacement ground), and a light probe started inside solid saw
+                // no light at all - the zombie flickered dark / bright between steps
+                xf.transform_point3(Vec3::ZERO) + Vec3::Z * 8.0
             };
             let model_cube = self.cubes.nearest(origin);
             let local = if m.unlit {
@@ -6535,7 +6538,10 @@ impl WorldRenderer {
                     .and_then(|b| b.first())
                     .map_or(Vec3::ZERO, |b| b.w_axis.truncate())
             } else {
-                xf.transform_point3(Vec3::ZERO)
+                // 8 u above the origin: an entity's origin sits ON the floor (a walking NPC's
+                // dips into displacement ground), and a light probe started inside solid saw
+                // no light at all - the zombie flickered dark / bright between steps
+                xf.transform_point3(Vec3::ZERO) + Vec3::Z * 8.0
             };
             let model_cube = self.cubes.nearest(origin);
             let local = if m.unlit {
