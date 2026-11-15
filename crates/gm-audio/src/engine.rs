@@ -281,6 +281,10 @@ impl Engine {
         self.voices.retain(|v| v.id != id);
     }
 
+    pub fn stop_all(&mut self) {
+        self.voices.clear();
+    }
+
     /// Stop what plays on an entity's channel (every channel when `channel` is `None`),
     /// at once or fading out over `fade` seconds (the game's `ChangeVolume(0, t)`).
     pub fn stop_channel(&mut self, ent: u32, channel: Option<u8>, fade: f32) {

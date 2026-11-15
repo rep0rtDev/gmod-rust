@@ -94,6 +94,8 @@ pub enum Cmd {
     Scene(Arc<Shared>),
     Underwater(bool),
     Room(Option<Room>),
+    /// Every voice at once (`stopsound`).
+    StopAll,
 }
 
 /// The room's reverb as the game's `dsp_room` auto node picks it (sound.md 3.2): the client
@@ -113,6 +115,7 @@ fn apply(engine: &mut Engine, cmd: Cmd) {
             }
         }
         Cmd::Stop(id) => engine.stop(id),
+        Cmd::StopAll => engine.stop_all(),
         Cmd::StopChannel(ent, ch, fade) => engine.stop_channel(ent, ch, fade),
         Cmd::Move(id, p) => engine.set_position(id, p),
         Cmd::Volume(id, v) => engine.set_volume(id, v),
@@ -425,6 +428,11 @@ impl Mixer {
     /// Stop an entity's channel (all of them for `None`), fading out over `fade` seconds.
     pub fn stop_channel(&self, ent: u32, channel: Option<u8>, fade: f32) {
         let _ = self.tx.send(Cmd::StopChannel(ent, channel, fade));
+    }
+
+    /// Stop every voice at once (the game's `stopsound`).
+    pub fn stop_all(&self) {
+        let _ = self.tx.send(Cmd::StopAll);
     }
 
     pub fn move_voice(&self, id: u32, position: Vec3) {

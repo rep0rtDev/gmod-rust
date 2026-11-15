@@ -916,6 +916,11 @@ impl ServerNet {
                     vec!["noclip: denied (sbox_noclip 0)".to_string()]
                 }
             }
+            // the game's `dropweapon`: the active weapon lands in front of the player
+            "dropweapon" => {
+                server.drop_weapon(admin, None);
+                Vec::new()
+            }
             "hurtme" => {
                 let amount = rest.first().and_then(|a| a.parse::<f32>().ok()).unwrap_or(10.0);
                 server.damage_player(admin, amount, 0);

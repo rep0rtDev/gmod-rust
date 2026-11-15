@@ -445,6 +445,13 @@ impl Sounds {
         self.tracked_scripts.retain(|(e, _), _| *e != ent);
     }
 
+    /// The game's `stopsound`: every playing sound stops at once.
+    pub fn stop_all(&mut self) {
+        self.mixer.stop_all();
+        self.tracked.clear();
+        self.tracked_scripts.clear();
+    }
+
     /// Entities with tracked (looping or channelled) sounds, for [`Sounds::follow`].
     pub fn following(&self) -> Vec<u32> {
         let mut v: Vec<u32> = self.tracked.keys().map(|(e, _)| *e).collect();

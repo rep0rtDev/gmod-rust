@@ -10131,6 +10131,10 @@ impl App {
                     _ => self.console.log(format!("unknown weapon {class}")),
                 }
             }
+            "stopsound" => {
+                self.sounds.stop_all();
+                self.soundscapes.clear(&mut self.sounds);
+            }
             // `lastinv`: back to the previously held weapon (the `q` default bind)
             "lastinv" => {
                 if let Some(w) = self.last_weapon {
@@ -10300,6 +10304,7 @@ const CLIENT_COMMANDS: &[&str] = &[
     "gmod_toolmode",
     "lastinv",
     "net_graph",
+    "stopsound",
     "cl_drawhud",
     "cl_showpos",
     "cleanup",
