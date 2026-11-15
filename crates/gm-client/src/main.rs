@@ -1297,6 +1297,9 @@ struct App {
     show_pos: bool,
     /// `crosshair` cvar (default 1).
     draw_crosshair: bool,
+    /// The open context-menu menubar menu and the cvar lines its rows queued for the console.
+    menubar_open: Option<usize>,
+    menubar_cmds: Vec<String>,
     /// `alias <name> <commands>`: run when `<name>` is typed or bound.
     aliases: BTreeMap<String, String>,
     /// Mouse counts since the last command while rotating a held prop (physgun + E): the view
@@ -4160,6 +4163,15 @@ impl App {
                     self.pp_enabled.insert(key.clone());
                 }
                 self.console.log(format!("pp_{key} {}", u8::from(on)));
+            }
+            Some(derma::Action::Menu(id)) if id.starts_with("menubar:") => {
+                let n = id["menubar:".len()..].parse::<usize>().ok();
+                self.menubar_open = if self.menubar_open == n { None } else { n };
+            }
+            Some(derma::Action::Command(line)) if self.menubar_open.is_some() => {
+                self.menubar_open = None;
+                self.console.log(line.clone());
+                self.menubar_cmds.push(line);
             }
             Some(derma::Action::DesktopWindow(id)) => {
                 if id == "PlayerEditor" {
@@ -8622,6 +8634,16 @@ impl App {
                     &dctx,
                     &[("PlayerEditor", "icon64/playermodel.png", title)],
                 );
+                let settings_cvars = self.settings.cvars();
+                let is_on = |cvar: &str, on: &str| -> bool {
+                    settings_cvars
+                        .iter()
+                        .find(|(n, _)| *n == cvar)
+                        .map(|(_, v)| v.as_str())
+                        .or_else(|| self.utility_values.get(cvar).map(String::as_str))
+                        .is_some_and(|v| v == on)
+                };
+                derma::menu_bar(&mut layout, &dctx, self.menubar_open, &is_on);
                 if self.player_editor {
                     let models = Self::player_model_list();
                     derma::player_editor(
@@ -10622,6 +10644,9 @@ impl ApplicationHandler for App {
     }
 
     fn window_event(&mut self, el: &ActiveEventLoop, _: WindowId, event: WindowEvent) {
+        for line in std::mem::take(&mut self.menubar_cmds) {
+            self.run_console_one(el, &line);
+        }
         match event {
             WindowEvent::CloseRequested => el.exit(),
             WindowEvent::Resized(s) => {
@@ -11551,6 +11576,8 @@ fn run() -> Result<()> {
         draw_viewmodel: true,
         show_pos: false,
         draw_crosshair: true,
+        menubar_open: None,
+        menubar_cmds: Vec::new(),
         aliases: BTreeMap::new(),
         rotate_delta: (0.0, 0.0),
         wheel_delta: 0.0,

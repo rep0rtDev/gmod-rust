@@ -3673,6 +3673,355 @@ fn color_mixer(
     );
 }
 
+/// A menubar row: `(lang key, default label, cvar, on value, off value)`; `None` is a spacer.
+type MenuRow = Option<(
+    &'static str,
+    &'static str,
+    &'static str,
+    &'static str,
+    &'static str,
+)>;
+
+/// `lua/autorun/menubar.lua` `DisplayOptions_MenuBar`.
+const MENUBAR_DRAWING: &[MenuRow] = &[
+    Some((
+        "menubar.drawing.physgun_beam",
+        "Draw Physgun Beams",
+        "physgun_drawbeams",
+        "1",
+        "0",
+    )),
+    Some((
+        "menubar.drawing.physgun_halo",
+        "Draw Physgun Grab Halo",
+        "physgun_halo",
+        "1",
+        "0",
+    )),
+    Some((
+        "menubar.drawing.freeze",
+        "Draw Freeze Effects",
+        "effects_freeze",
+        "1",
+        "0",
+    )),
+    Some((
+        "menubar.drawing.unfreeze",
+        "Draw Unfreeze Effects",
+        "effects_unfreeze",
+        "1",
+        "0",
+    )),
+    None,
+    Some(("menubar.drawing.hud", "Draw HUD", "cl_drawhud", "1", "0")),
+    Some((
+        "menubar.drawing.toolhelp",
+        "Draw Tool Help",
+        "gmod_drawhelp",
+        "1",
+        "0",
+    )),
+    Some((
+        "menubar.drawing.toolui",
+        "Draw Tool Effects",
+        "gmod_drawtooleffects",
+        "1",
+        "0",
+    )),
+    Some((
+        "menubar.drawing.world_tooltips",
+        "Draw World Tooltips",
+        "cl_drawworldtooltips",
+        "1",
+        "0",
+    )),
+    Some((
+        "menubar.drawing.spawn_effect",
+        "Draw Spawn Effect",
+        "cl_drawspawneffect",
+        "1",
+        "0",
+    )),
+    Some((
+        "menubar.drawing.effect_rings",
+        "Draw Effect Rings",
+        "cl_draweffectrings",
+        "1",
+        "0",
+    )),
+    Some((
+        "menubar.drawing.cameras",
+        "Draw Cameras",
+        "cl_drawcameras",
+        "1",
+        "0",
+    )),
+    Some((
+        "menubar.drawing.thrusters",
+        "Draw Thruster Effects",
+        "cl_drawthrusterseffects",
+        "1",
+        "0",
+    )),
+    None,
+    Some((
+        "menubar.drawing.shadows",
+        "Draw Shadows",
+        "r_shadows",
+        "1",
+        "0",
+    )),
+    Some((
+        "menubar.drawing.detailprops",
+        "Draw Detail Props",
+        "r_drawdetailprops",
+        "1",
+        "0",
+    )),
+    None,
+    Some((
+        "menubar.drawing.showfps",
+        "Show FPS",
+        "cl_showfps",
+        "1",
+        "0",
+    )),
+    None,
+    Some((
+        "menubar.drawing.hints",
+        "Show Hints",
+        "cl_showhints",
+        "1",
+        "0",
+    )),
+];
+
+/// `NPCOptions_MenuBar` (the weapon-override submenu is not here yet).
+const MENUBAR_NPCS: &[MenuRow] = &[
+    Some((
+        "menubar.npcs.disableai",
+        "Disable Thinking",
+        "ai_disabled",
+        "1",
+        "0",
+    )),
+    Some((
+        "menubar.npcs.ignoreplayers",
+        "Ignore Players",
+        "ai_ignoreplayers",
+        "1",
+        "0",
+    )),
+    Some((
+        "menubar.npcs.keepcorpses",
+        "Keep Corpses",
+        "ai_serverragdolls",
+        "1",
+        "0",
+    )),
+    Some((
+        "menubar.npcs.autoplayersquad",
+        "Citizens join the player's squad",
+        "npc_citizen_auto_player_squad",
+        "1",
+        "0",
+    )),
+];
+
+/// `MenuBar_ServerOptions`.
+const MENUBAR_SERVER: &[MenuRow] = &[
+    Some((
+        "utilities.allowcslua",
+        "Allow clientside scripts",
+        "sv_allowcslua",
+        "1",
+        "0",
+    )),
+    Some((
+        "utilities.falldamage",
+        "Fall Damage",
+        "mp_falldamage",
+        "1",
+        "0",
+    )),
+    Some((
+        "utilities.gmod_suit",
+        "Enable HEV suit",
+        "gmod_suit",
+        "1",
+        "0",
+    )),
+    Some((
+        "physcannon_mega_enabled",
+        "Enable supercharged Gravity Gun",
+        "physcannon_mega_enabled",
+        "1",
+        "0",
+    )),
+    None,
+    Some((
+        "enable_weapons",
+        "Give weapons on spawn",
+        "sbox_weapons",
+        "1",
+        "0",
+    )),
+    Some(("allow_god_mode", "Allow God Mode", "sbox_godmode", "1", "0")),
+    None,
+    Some((
+        "players_damage_players",
+        "Players damage players",
+        "sbox_playershurtplayers",
+        "1",
+        "0",
+    )),
+    Some(("allow_noclip", "Allow noclip", "sbox_noclip", "1", "0")),
+    Some((
+        "bone_manipulate_npcs",
+        "Bone manipulate NPCs",
+        "sbox_bonemanip_npc",
+        "1",
+        "0",
+    )),
+    Some((
+        "bone_manipulate_players",
+        "Bone manipulate players",
+        "sbox_bonemanip_player",
+        "1",
+        "0",
+    )),
+];
+
+const MENUBAR_IDS: [&str; 3] = ["menubar:0", "menubar:1", "menubar:2"];
+const MENUBAR_H: f32 = 24.0;
+
+/// The context menu's `DMenuBar` (`menubar.Init`, docked top, 24 tall): Drawing / NPCs /
+/// Server, each a DMenu of `DMenuOptionCVar` rows (a tick when the cvar has its on value).
+/// A title hit is `Action::Menu("menubar:N")`, a row hit the `cvar value` that toggles it.
+pub fn menu_bar(
+    out: &mut Layout,
+    ctx: &Ctx,
+    open: Option<usize>,
+    is_on: &dyn Fn(&str, &str) -> bool,
+) {
+    let menus: [(&str, &str, &[MenuRow]); 3] = [
+        ("menubar.drawing", "Drawing", MENUBAR_DRAWING),
+        ("menubar.npcs", "NPCs", MENUBAR_NPCS),
+        ("menubar.server", "Server", MENUBAR_SERVER),
+    ];
+    crate::ugc::rect(
+        &mut out.items,
+        0.0,
+        0.0,
+        ctx.w,
+        MENUBAR_H,
+        rgba(50, 50, 50, 255),
+    );
+    let mut x = 0.0;
+    for (i, (key, default, rows)) in menus.iter().enumerate() {
+        let title = crate::ugc::say(ctx.lang, key, default);
+        let bw = ctx.font.text_width(&title) + 20.0;
+        let hovered = inside(ctx.cursor, x, 0.0, bw, MENUBAR_H);
+        if hovered || open == Some(i) {
+            crate::ugc::rect(&mut out.items, x, 0.0, bw, MENUBAR_H, rgba(80, 80, 80, 255));
+        }
+        text(
+            &mut out.items,
+            FONT,
+            ctx.font,
+            x + 10.0,
+            0.0,
+            MENUBAR_H,
+            &title,
+            if hovered {
+                BUTTON_TEXT_HOVER
+            } else {
+                BUTTON_TEXT
+            },
+        );
+        out.hits.push(Hit {
+            x,
+            y: 0.0,
+            w: bw,
+            h: MENUBAR_H,
+            action: Action::Menu(MENUBAR_IDS[i]),
+        });
+        if open == Some(i) {
+            let labels: Vec<String> = rows
+                .iter()
+                .map(|r| r.map_or(String::new(), |(k, d, ..)| crate::ugc::say(ctx.lang, k, d)))
+                .collect();
+            let w = dmenu_width(ctx.font, &labels);
+            let total: f32 = rows
+                .iter()
+                .map(|r| if r.is_some() { MENU_OPTION_H } else { 5.0 })
+                .sum();
+            let mut y = MENUBAR_H;
+            nine(&mut out.items, &MENU_BG, x, y, w, total, WHITE);
+            for (row, label) in rows.iter().zip(&labels) {
+                let Some((_, _, cvar, on, off)) = row else {
+                    crate::ugc::rect(
+                        &mut out.items,
+                        x + 4.0,
+                        y + 2.0,
+                        w - 8.0,
+                        1.0,
+                        rgba(0, 0, 0, 80),
+                    );
+                    y += 5.0;
+                    continue;
+                };
+                let hovered = inside(ctx.cursor, x, y, w, MENU_OPTION_H);
+                if hovered {
+                    nine(
+                        &mut out.items,
+                        &MENU_BG_HOVER,
+                        x,
+                        y,
+                        w,
+                        MENU_OPTION_H,
+                        WHITE,
+                    );
+                }
+                let checked = is_on(cvar, on);
+                if checked && (ctx.has_image)("icon16/tick.png") {
+                    image(
+                        &mut out.items,
+                        "icon16/tick.png",
+                        x + 4.0,
+                        y + 3.0,
+                        16.0,
+                        16.0,
+                    );
+                }
+                text(
+                    &mut out.items,
+                    FONT,
+                    ctx.font,
+                    x + 32.0,
+                    y,
+                    MENU_OPTION_H,
+                    label,
+                    if hovered {
+                        BUTTON_TEXT_HOVER
+                    } else {
+                        BUTTON_TEXT
+                    },
+                );
+                out.hits.push(Hit {
+                    x,
+                    y,
+                    w,
+                    h: MENU_OPTION_H,
+                    action: Action::Command(format!("{cvar} {}", if checked { off } else { on })),
+                });
+                y += MENU_OPTION_H;
+            }
+        }
+        x += bw;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
