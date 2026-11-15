@@ -25574,6 +25574,8 @@ impl<'w> Server<'w> {
             self.overlay_version = self.overlay_version.wrapping_add(1);
         }
         self.sandbox.remove_entity(id);
+        // a broken / exploded prop leaves the undo list too (Z must not "remove" a gone crate)
+        self.sandbox.purge_dead_undos();
         self.sync_physics();
         true
     }

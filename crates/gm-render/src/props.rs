@@ -38,8 +38,9 @@ pub fn sun_direction(bsp: &Bsp<'_>) -> Vec3 {
         .and_then(|p| p.parse::<f32>().ok())
         .unwrap_or(angles[0]);
     let (p, y) = (pitch.to_radians(), angles[1].to_radians());
-    // the light travels along forward(pitch, yaw); the sun is the other way
-    -Vec3::new(p.cos() * y.cos(), p.cos() * y.sin(), -p.sin())
+    // vrad SetupLightNormalFromProps: the light travels along (cos p cos y, cos p sin y,
+    // sin p) - a negative pitch points DOWN (not AngleVectors' -sin); the sun is the other way
+    -Vec3::new(p.cos() * y.cos(), p.cos() * y.sin(), p.sin())
 }
 
 /// `env_sun`: the glow overlay of the sun - the direction towards it, `size`, `overlaysize`
