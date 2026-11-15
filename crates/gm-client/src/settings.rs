@@ -56,6 +56,16 @@ pub struct Settings {
     pub r_dynamic: bool,
     pub r_shadows: bool,
     pub mat_fullbright: bool,
+    /// The context menu's Drawing menu cvars (menubar.lua), all on by default.
+    pub physgun_halo: bool,
+    pub effects_freeze: bool,
+    pub effects_unfreeze: bool,
+    pub gmod_drawtooleffects: bool,
+    pub cl_drawspawneffect: bool,
+    pub cl_draweffectrings: bool,
+    pub cl_drawcameras: bool,
+    pub cl_drawthrusterseffects: bool,
+    pub r_drawdetailprops: bool,
     pub r_waterforceexpensive: bool,
     pub r_waterforcereflectentities: bool,
     pub r_shadowrendertotexture: bool,
@@ -114,6 +124,15 @@ impl Default for Settings {
             r_dynamic: true,
             r_shadows: true,
             mat_fullbright: false,
+            physgun_halo: true,
+            effects_freeze: true,
+            effects_unfreeze: true,
+            gmod_drawtooleffects: true,
+            cl_drawspawneffect: true,
+            cl_draweffectrings: true,
+            cl_drawcameras: true,
+            cl_drawthrusterseffects: true,
+            r_drawdetailprops: true,
             r_waterforceexpensive: true,
             r_waterforcereflectentities: false,
             r_shadowrendertotexture: true,
@@ -382,6 +401,15 @@ impl Settings {
         self.r_dynamic = b("r_dynamic", self.r_dynamic);
         self.r_shadows = b("r_shadows", self.r_shadows);
         self.mat_fullbright = b("mat_fullbright", self.mat_fullbright);
+        self.physgun_halo = b("physgun_halo", self.physgun_halo);
+        self.effects_freeze = b("effects_freeze", self.effects_freeze);
+        self.effects_unfreeze = b("effects_unfreeze", self.effects_unfreeze);
+        self.gmod_drawtooleffects = b("gmod_drawtooleffects", self.gmod_drawtooleffects);
+        self.cl_drawspawneffect = b("cl_drawspawneffect", self.cl_drawspawneffect);
+        self.cl_draweffectrings = b("cl_draweffectrings", self.cl_draweffectrings);
+        self.cl_drawcameras = b("cl_drawcameras", self.cl_drawcameras);
+        self.cl_drawthrusterseffects = b("cl_drawthrusterseffects", self.cl_drawthrusterseffects);
+        self.r_drawdetailprops = b("r_drawdetailprops", self.r_drawdetailprops);
         self.r_waterforceexpensive = b("r_waterforceexpensive", self.r_waterforceexpensive);
         self.r_waterforcereflectentities = b(
             "r_waterforcereflectentities",
@@ -492,6 +520,27 @@ impl Settings {
             ("r_dynamic", on(self.r_dynamic).to_string()),
             ("r_shadows", on(self.r_shadows).to_string()),
             ("mat_fullbright", on(self.mat_fullbright).to_string()),
+            ("physgun_halo", on(self.physgun_halo).to_string()),
+            ("effects_freeze", on(self.effects_freeze).to_string()),
+            ("effects_unfreeze", on(self.effects_unfreeze).to_string()),
+            (
+                "gmod_drawtooleffects",
+                on(self.gmod_drawtooleffects).to_string(),
+            ),
+            (
+                "cl_drawspawneffect",
+                on(self.cl_drawspawneffect).to_string(),
+            ),
+            (
+                "cl_draweffectrings",
+                on(self.cl_draweffectrings).to_string(),
+            ),
+            ("cl_drawcameras", on(self.cl_drawcameras).to_string()),
+            (
+                "cl_drawthrusterseffects",
+                on(self.cl_drawthrusterseffects).to_string(),
+            ),
+            ("r_drawdetailprops", on(self.r_drawdetailprops).to_string()),
             (
                 "r_waterforceexpensive",
                 on(self.r_waterforceexpensive).to_string(),
