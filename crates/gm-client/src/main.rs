@@ -8207,6 +8207,9 @@ impl App {
         // builds the post and UI passes; one more submit follows before present
         {
             let g = self.gfx.as_ref().unwrap();
+            if let Some(t) = &g.world.gpu_time {
+                t.stamp(&mut enc, "models");
+            }
             let done = std::mem::replace(
                 &mut enc,
                 g.gpu.device.create_command_encoder(&Default::default()),
@@ -8237,6 +8240,9 @@ impl App {
             g.post.apply(&g.gpu, &mut enc, &view, g.world.bloom_amount);
         }
         let g = self.gfx.as_ref().unwrap();
+        if let Some(t) = &g.world.gpu_time {
+            t.stamp(&mut enc, "post");
+        }
         lap(9);
         g.ui.draw(
             &g.gpu,
@@ -8246,7 +8252,14 @@ impl App {
             g.config.height,
             &ui_items,
         );
+        if let Some(t) = &g.world.gpu_time {
+            t.stamp(&mut enc, "ui");
+            t.end_frame(&mut enc);
+        }
         g.gpu.queue.submit([enc.finish()]);
+        if let Some(t) = &g.world.gpu_time {
+            t.collect(&g.gpu);
+        }
         lap(7);
         let g = self.gfx.as_ref().unwrap();
         if std::mem::take(&mut self.cam_photo_pending) {
@@ -9274,6 +9287,18 @@ impl App {
                                 "world: shadow {:.2} reflect {:.2} scene {:.2}",
                                 w[0], w[1], w[2]
                             ),
+                            color,
+                        });
+                        let gpu_line = self
+                            .gfx
+                            .as_ref()
+                            .and_then(|g| g.world.gpu_time.as_ref())
+                            .map_or_else(|| "gpu: no timestamp queries".to_owned(), |t| t.line());
+                        items.push(UiItem::Text {
+                            font: label_font.clone(),
+                            x: 2.0 * s,
+                            y: 62.0 * s,
+                            text: gpu_line,
                             color,
                         });
                     }

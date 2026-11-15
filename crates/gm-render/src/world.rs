@@ -817,6 +817,8 @@ pub struct WorldRenderer {
     /// CPU time of the last [`draw`](Self::draw) in ms, smoothed: shadow maps, water
     /// reflection, the scene itself.
     pass_ms: std::cell::Cell<[f32; 3]>,
+    /// GPU time per stage (`cl_showfps 2`), None without timestamp queries.
+    pub gpu_time: Option<crate::gputime::GpuTimer>,
     /// The frame's skinned entity meshes on the GPU: the shadow, reflection and main passes
     /// all draw the same items, so they are skinned and uploaded once per frame, keyed by
     /// the frame and the items slice (pointer, length).
@@ -3614,6 +3616,7 @@ impl WorldRenderer {
             light_cache: Default::default(),
             frame: Default::default(),
             pass_ms: Default::default(),
+            gpu_time: crate::gputime::GpuTimer::new(gpu),
             model_cache: Default::default(),
         })
     }
@@ -3640,6 +3643,12 @@ impl WorldRenderer {
         self.frame.set(self.frame.get() + 1);
         self.camera_cursor.set(0);
         self.skin_cursor.set(0);
+        let stamp = |enc: &mut wgpu::CommandEncoder, label| {
+            if let Some(t) = &self.gpu_time {
+                t.stamp(enc, label);
+            }
+        };
+        stamp(enc, "start");
         let t0 = std::time::Instant::now();
         let mut vps = [None; DEPTH_LAYERS];
         for (slot, (_, l)) in self.flashlights.iter().take(SHADOW_LAYERS).enumerate() {
@@ -3667,9 +3676,11 @@ impl WorldRenderer {
                 std::mem::replace(enc, gpu.device.create_command_encoder(&Default::default()));
             gpu.queue.submit([done.finish()]);
         };
+        stamp(enc, "shadow");
         flush(enc);
         let t1 = std::time::Instant::now();
         self.draw_reflection(gpu, enc, camera, aspect, reflect_items);
+        stamp(enc, "reflect");
         flush(enc);
         let t2 = std::time::Instant::now();
         self.draw_inner(
@@ -3683,6 +3694,7 @@ impl WorldRenderer {
             scene_src,
             reflect_items,
         );
+        stamp(enc, "scene");
         flush(enc);
         let t3 = std::time::Instant::now();
         let ms = |a: std::time::Instant, b: std::time::Instant| (b - a).as_secs_f32() * 1000.0;

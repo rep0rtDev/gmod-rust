@@ -3,6 +3,7 @@
 //! screenshots of the original game.
 
 pub mod gpu;
+pub mod gputime;
 pub mod light;
 pub mod lightmap;
 pub mod material;
