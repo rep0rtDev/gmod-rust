@@ -144,6 +144,8 @@ pub enum ClientMsg {
         /// Ephemeral X25519 public key: the packet encryption key is derived from it and the
         /// server's one in `Challenge`.
         pubkey: [u8; 32],
+        /// The client's `password` cvar, checked against the server's `sv_password`.
+        password: String,
     },
     Cmds {
         cmds: Vec<NetCmd>,
@@ -673,7 +675,7 @@ fn sha(r: &mut Reader) -> Result<[u8; 32], Truncated> {
 /// The editor entities' vars by entity id: key / value pairs (`ServerMsg::EntityEdits`).
 pub type EditVars = Vec<(u32, Vec<(String, String)>)>;
 
-pub const PROTOCOL: u16 = 31;
+pub const PROTOCOL: u16 = 32;
 
 /// Usercmds are coded as deltas against the previous one in the batch (the first against the
 /// default): a change mask byte, then only the changed fields. Ticks are consecutive, so only the
@@ -879,11 +881,13 @@ impl ClientMsg {
                 name,
                 protocol,
                 pubkey,
+                password,
             } => {
                 w.u8(1);
                 w.str(name);
                 w.u16(*protocol);
                 w.buf.extend_from_slice(pubkey);
+                w.str(password);
             }
             ClientMsg::Cmds { cmds } => {
                 w.u8(2);
@@ -1049,6 +1053,7 @@ impl ClientMsg {
                 name: r.str()?,
                 protocol: r.u16()?,
                 pubkey: sha(r)?,
+                password: r.str()?,
             },
             2 => {
                 let n = r.u8()? as usize;

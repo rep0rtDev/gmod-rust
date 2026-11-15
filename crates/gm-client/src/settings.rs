@@ -35,6 +35,8 @@ pub struct Settings {
     /// `cl_playermodel` (empty: the server's default), `cl_playercolor` / `cl_weaponcolor`
     /// ("r g b" in 0..1).
     pub cl_playermodel: String,
+    /// `password`: sent in the Hello, checked against the server's `sv_password`.
+    pub password: String,
     pub cl_playercolor: String,
     pub cl_weaponcolor: String,
     pub cl_spraydisable: bool,
@@ -56,6 +58,12 @@ pub struct Settings {
     pub r_dynamic: bool,
     pub r_shadows: bool,
     pub mat_fullbright: bool,
+    /// `developer`, the net rate cvars and the interpolation window inputs (Source defaults).
+    pub developer: i32,
+    pub cl_cmdrate: i32,
+    pub cl_updaterate: i32,
+    pub cl_interp: f32,
+    pub cl_interp_ratio: f32,
     /// The context menu's Drawing menu cvars (menubar.lua), all on by default.
     pub physgun_halo: bool,
     pub effects_freeze: bool,
@@ -111,6 +119,7 @@ impl Default for Settings {
             cl_enable_loadingurl: true,
             cl_downloadfilter: "all".to_string(),
             cl_playermodel: String::new(),
+            password: String::new(),
             cl_playercolor: "0.24 0.34 0.41".to_string(),
             cl_weaponcolor: "0.30 1.80 2.10".to_string(),
             cl_spraydisable: false,
@@ -124,6 +133,11 @@ impl Default for Settings {
             r_dynamic: true,
             r_shadows: true,
             mat_fullbright: false,
+            developer: 0,
+            cl_cmdrate: 30,
+            cl_updaterate: 20,
+            cl_interp: 0.0,
+            cl_interp_ratio: 2.0,
             physgun_halo: true,
             effects_freeze: true,
             effects_unfreeze: true,
@@ -347,6 +361,16 @@ impl Settings {
         s
     }
 
+    /// The saved `password` cvar alone (for `--connect`, before the mount and settings exist).
+    pub fn saved_password() -> String {
+        let Ok(text) = std::fs::read_to_string(Self::cfg_path()) else {
+            return String::new();
+        };
+        let (mut binds, mut cvars) = (BTreeMap::new(), BTreeMap::new());
+        parse_cfg(&text, &mut binds, &mut cvars);
+        cvars.remove("password").unwrap_or_default()
+    }
+
     fn apply_cvars(&mut self, cvars: &BTreeMap<String, String>) {
         let f = |k: &str, d: f32| {
             cvars
@@ -383,6 +407,7 @@ impl Settings {
         }
         for (k, slot) in [
             ("cl_playermodel", &mut self.cl_playermodel),
+            ("password", &mut self.password),
             ("cl_playercolor", &mut self.cl_playercolor),
             ("cl_weaponcolor", &mut self.cl_weaponcolor),
         ] {
@@ -401,6 +426,11 @@ impl Settings {
         self.r_dynamic = b("r_dynamic", self.r_dynamic);
         self.r_shadows = b("r_shadows", self.r_shadows);
         self.mat_fullbright = b("mat_fullbright", self.mat_fullbright);
+        self.developer = (f("developer", self.developer as f32) as i32).clamp(0, 4);
+        self.cl_cmdrate = (f("cl_cmdrate", self.cl_cmdrate as f32) as i32).clamp(10, 100);
+        self.cl_updaterate = (f("cl_updaterate", self.cl_updaterate as f32) as i32).clamp(10, 100);
+        self.cl_interp = f("cl_interp", self.cl_interp).clamp(0.0, 0.5);
+        self.cl_interp_ratio = f("cl_interp_ratio", self.cl_interp_ratio).clamp(1.0, 5.0);
         self.physgun_halo = b("physgun_halo", self.physgun_halo);
         self.effects_freeze = b("effects_freeze", self.effects_freeze);
         self.effects_unfreeze = b("effects_unfreeze", self.effects_unfreeze);
@@ -463,6 +493,15 @@ impl Settings {
     }
 
     /// Every client cvar and its value, in `config.cfg` order.
+    /// `cl_interp_amount = max(cl_interp, cl_interp_ratio / cl_updaterate)` as a window of
+    /// 66 Hz ticks (the defaults give 0.1 s = 7 ticks).
+    pub fn interp_ticks(&self) -> f32 {
+        let amount = self
+            .cl_interp
+            .max(self.cl_interp_ratio / (self.cl_updaterate.max(1) as f32));
+        (amount / 0.015).ceil().max(1.0)
+    }
+
     pub fn cvars(&self) -> Vec<(&'static str, String)> {
         let on = |b: bool| if b { "1" } else { "0" };
         let lines: Vec<(&str, String)> = vec![
@@ -507,6 +546,7 @@ impl Settings {
             ),
             ("cl_downloadfilter", self.cl_downloadfilter.clone()),
             ("cl_playermodel", self.cl_playermodel.clone()),
+            ("password", self.password.clone()),
             ("cl_playercolor", self.cl_playercolor.clone()),
             ("cl_weaponcolor", self.cl_weaponcolor.clone()),
             ("cl_spraydisable", on(self.cl_spraydisable).to_string()),
@@ -520,6 +560,11 @@ impl Settings {
             ("r_dynamic", on(self.r_dynamic).to_string()),
             ("r_shadows", on(self.r_shadows).to_string()),
             ("mat_fullbright", on(self.mat_fullbright).to_string()),
+            ("developer", format!("{}", self.developer)),
+            ("cl_cmdrate", format!("{}", self.cl_cmdrate)),
+            ("cl_updaterate", format!("{}", self.cl_updaterate)),
+            ("cl_interp", format!("{}", self.cl_interp)),
+            ("cl_interp_ratio", format!("{}", self.cl_interp_ratio)),
             ("physgun_halo", on(self.physgun_halo).to_string()),
             ("effects_freeze", on(self.effects_freeze).to_string()),
             ("effects_unfreeze", on(self.effects_unfreeze).to_string()),

@@ -123,6 +123,11 @@ pub struct InterpPose {
 }
 
 impl Interpolator {
+    /// `cl_interp` / `cl_interp_ratio` / `cl_updaterate` changed: the window in ticks.
+    pub fn set_ticks(&mut self, interp_ticks: f32) {
+        self.interp_ticks = interp_ticks.max(1.0);
+    }
+
     pub fn new(interp_ticks: f32) -> Self {
         Interpolator {
             interp_ticks,
@@ -399,6 +404,11 @@ pub struct ClientNet {
 
 impl ClientNet {
     pub fn new(endpoint: usize, name: &str) -> Self {
+        Self::with_password(endpoint, name, "")
+    }
+
+    /// `new` with the `password` cvar sent in the Hello (the server's `sv_password`).
+    pub fn with_password(endpoint: usize, name: &str, password: &str) -> Self {
         let mut c = ClientNet {
             endpoint,
             channel: Channel::default(),
@@ -437,6 +447,7 @@ impl ClientNet {
             name: name.to_string(),
             protocol: PROTOCOL,
             pubkey: c.eph.public,
+            password: password.to_string(),
         }
         .write(&mut w);
         c.channel.send_reliable(w.buf);

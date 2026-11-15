@@ -3558,6 +3558,9 @@ impl App {
             || pending.height != self.settings.height
             || pending.fullscreen != self.settings.fullscreen;
         self.settings = pending;
+        let ticks = self.settings.interp_ticks();
+        self.sim.interp.set_ticks(ticks);
+        self.sim.player_interp.set_ticks(ticks);
         if let Err(e) = self.settings.save() {
             eprintln!("config.cfg: {e}");
         }
@@ -11337,7 +11340,8 @@ fn run() -> Result<()> {
     let (remote_client, remote_ep, map) = match connect {
         Some(addr) => {
             let mut udp = gm_net::Udp::client(addr.parse().context("--connect address")?)?;
-            let mut client = ClientNet::new(1, "player");
+            let password = settings::Settings::saved_password();
+            let mut client = ClientNet::with_password(1, "player", &password);
             let start = Instant::now();
             while client.map.is_empty() {
                 if start.elapsed() > std::time::Duration::from_secs(5) {

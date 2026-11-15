@@ -122,6 +122,8 @@ pub struct ServerNet {
     pub ip_bans_rev: u32,
     /// Connections beyond this are refused with `full`.
     pub max_players: usize,
+    /// `sv_password`: empty lets everyone in.
+    pub password: String,
     /// Ticks without a packet before a client is dropped (`timed out`).
     pub timeout_ticks: u32,
     /// World sounds of the last tick, sent with the next snapshots.
@@ -188,6 +190,7 @@ impl ServerNet {
             ip_bans: std::collections::BTreeMap::new(),
             ip_bans_rev: 0,
             max_players: 64,
+            password: String::new(),
             timeout_ticks: DEFAULT_TIMEOUT_TICKS,
             pending_sounds: Vec::new(),
             pending_effects: Vec::new(),
@@ -363,9 +366,19 @@ impl ServerNet {
                         name,
                         protocol,
                         pubkey,
+                        password,
                     } => {
                         if protocol == PROTOCOL {
                             slot.name = name;
+                            if !self.password.is_empty()
+                                && password != self.password
+                                && !slot.welcomed
+                            {
+                                refuse(slot, "bad password");
+                                self.log
+                                    .push(format!("{} refused: bad password", slot.name));
+                                continue;
+                            }
                             if open > self.max_players && !slot.welcomed {
                                 refuse(slot, "full");
                                 self.log.push(format!("{} refused: full", slot.name));
@@ -917,6 +930,12 @@ impl ServerNet {
                 }
             }
             // the game's `dropweapon`: the active weapon lands in front of the player
+            "sv_password" => {
+                if !rest.is_empty() {
+                    self.password = rest.join(" ");
+                }
+                vec![format!("\"sv_password\" = \"{}\"", self.password)]
+            }
             "dropweapon" => {
                 server.drop_weapon(admin, None);
                 Vec::new()

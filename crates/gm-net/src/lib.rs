@@ -33,6 +33,7 @@ mod tests {
                 name: "bot".into(),
                 protocol: PROTOCOL,
                 pubkey: [7; 32],
+                password: String::new(),
             },
             ClientMsg::Cmds {
                 cmds: vec![NetCmd {
