@@ -577,6 +577,29 @@ impl World {
         self.leafs[self.leaf_index(point)].cluster as i32
     }
 
+    /// The cluster an entity at `point` is transmitted from: the point itself, or - when that
+    /// sits in solid (a prop resting with its origin on the floor plane, one spawned clipping a
+    /// wall, an eye pushed into a brush) - the first probe a few units up / aside that is not.
+    /// The engine takes an entity's leaves from its bounding box, so a box poking out of the
+    /// floor is always somewhere; -1 only when every probe is in solid.
+    pub fn cluster_near(&self, point: Vec3) -> i32 {
+        const PROBES: [Vec3; 8] = [
+            Vec3::ZERO,
+            Vec3::new(0.0, 0.0, 4.0),
+            Vec3::new(0.0, 0.0, 16.0),
+            Vec3::new(0.0, 0.0, 48.0),
+            Vec3::new(16.0, 0.0, 8.0),
+            Vec3::new(-16.0, 0.0, 8.0),
+            Vec3::new(0.0, 16.0, 8.0),
+            Vec3::new(0.0, -16.0, 8.0),
+        ];
+        PROBES
+            .iter()
+            .map(|o| self.cluster_at(point + *o))
+            .find(|c| *c >= 0)
+            .unwrap_or(-1)
+    }
+
     /// Whether anything in cluster `to` can be seen from cluster `from` (PVS); true when the map
     /// has no visibility data, false when either point is in solid.
     pub fn visible(&self, from: i32, to: i32) -> bool {

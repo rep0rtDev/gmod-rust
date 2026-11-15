@@ -1619,7 +1619,7 @@ impl ServerNet {
         let mut clusters: BTreeMap<u32, i32> = BTreeMap::new();
         for (id, model, pos, angles) in server.projectile_entities() {
             if self.use_pvs {
-                clusters.insert(id, server.collision.cluster_at(pos));
+                clusters.insert(id, server.collision.cluster_near(pos));
             }
             let model_id = match self.model_ids.get(model) {
                 Some(&id) => id,
@@ -1648,7 +1648,7 @@ impl ServerNet {
         }
         for (id, model, pos, angles) in server.map_entity_states() {
             if self.use_pvs {
-                clusters.insert(id, server.collision.cluster_at(pos));
+                clusters.insert(id, server.collision.cluster_near(pos));
             }
             let model_id = match self.model_ids.get(model.as_str()) {
                 Some(&id) => id,
@@ -1677,7 +1677,7 @@ impl ServerNet {
         }
         for (id, model, pos, scale, color, mode) in server.map_sprite_states() {
             if self.use_pvs {
-                clusters.insert(id, server.collision.cluster_at(pos));
+                clusters.insert(id, server.collision.cluster_near(pos));
             }
             let model_id = match self.model_ids.get(model.as_str()) {
                 Some(&id) => id,
@@ -1709,7 +1709,7 @@ impl ServerNet {
                 continue;
             }
             if self.use_pvs {
-                clusters.insert(*id, server.collision.cluster_at(n.pos));
+                clusters.insert(*id, server.collision.cluster_near(n.pos));
             }
             let model_id = match self.model_ids.get(&n.model) {
                 Some(&id) => id,
@@ -1769,7 +1769,7 @@ impl ServerNet {
                 continue;
             }
             if self.use_pvs {
-                clusters.insert(p.id, server.collision.cluster_at(p.pos));
+                clusters.insert(p.id, server.collision.cluster_near(p.pos));
             }
             let st = server.prop_state(p.id);
             let model_id = match self.model_ids.get(&p.model) {
@@ -2092,15 +2092,18 @@ impl ServerNet {
                 };
                 let eye = server.players.get(&slot.player).map(|p| p.state.origin);
                 let eye_cluster =
-                    eye.map(|e| server.collision.cluster_at(e + Vec3::new(0.0, 0.0, 64.0)));
+                    eye.map(|e| server.collision.cluster_near(e + Vec3::new(0.0, 0.0, 64.0)));
                 let near = |pos: Vec3, cluster: Option<i32>| match eye {
                     Some(e) => {
                         e.distance(pos) <= self.interest_radius
                             && (!self.use_pvs
                                 || eye_cluster.is_none_or(|c| {
-                                    let to =
-                                        cluster.unwrap_or_else(|| server.collision.cluster_at(pos));
-                                    server.collision.visible(c, to)
+                                    // either side in solid (even after the probes): no PVS
+                                    // verdict, the radius alone decides - never drop an entity
+                                    // for touching the floor (gap-report Report 8)
+                                    let to = cluster
+                                        .unwrap_or_else(|| server.collision.cluster_near(pos));
+                                    c < 0 || to < 0 || server.collision.visible(c, to)
                                 }))
                     }
                     None => true,
