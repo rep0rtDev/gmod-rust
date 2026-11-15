@@ -51,6 +51,8 @@ pub struct Material {
     pub subrect: Option<(String, [f32; 2], [f32; 2])>,
     /// `$decalscale`: world units per texel of a decal.
     pub decal_scale: Option<f32>,
+    /// A decal's `$modelmaterial`: the material used instead when it lands on a studio model.
+    pub model_material: Option<String>,
     /// `$envmap env_cubemap`: the nearest baked cubemap reflected, scaled by `$envmaptint`
     /// and masked by the base alpha (`$basealphaenvmapmask`), the normal map alpha
     /// (`$normalmapalphaenvmapmask`) or nothing.
@@ -276,6 +278,7 @@ pub fn load_path(mount: &Mount, name: &str, vmt_path: &str) -> Result<Material> 
         }
         mat.water = shader == "water";
         mat.decal_scale = get("$decalscale").and_then(|v| v.trim().parse().ok());
+        mat.model_material = get("$modelmaterial");
         if shader == "subrect" {
             let pair = |k: &str| -> Option<[f32; 2]> {
                 let v = get(k)?;

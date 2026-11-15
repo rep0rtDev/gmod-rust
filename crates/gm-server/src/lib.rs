@@ -10683,6 +10683,7 @@ impl<'w> Server<'w> {
                         damage * n,
                         weapons::prop_bullet_dmg_type(shot.ammo),
                         h.pos,
+                        h.normal,
                         forward * (weapons::prop_bullet_force(shot.ammo) * n),
                         class,
                     );
@@ -10788,6 +10789,7 @@ impl<'w> Server<'w> {
         damage: f32,
         dmg_type: u32,
         pos: Vec3,
+        normal: Vec3,
         force: Vec3,
         inflictor: &'static str,
     ) {
@@ -10803,7 +10805,7 @@ impl<'w> Server<'w> {
                 self.effects.push(WorldEffect::PropImpact {
                     ent: prop,
                     lpos: inv * (pos - st.position),
-                    lnormal: inv * -force.normalize_or_zero(),
+                    lnormal: inv * normal.normalize_or_zero(),
                     surface,
                 });
             }
@@ -10904,6 +10906,7 @@ impl<'w> Server<'w> {
                     weapons::MELEE_DAMAGE,
                     weapons::DMG_CLUB,
                     h.pos,
+                    h.normal,
                     forward * weapons::MELEE_PROP_FORCE,
                     class,
                 );
@@ -11043,6 +11046,7 @@ impl<'w> Server<'w> {
                 damage,
                 weapons::DMG_BLAST,
                 src,
+                -dir,
                 dir * force,
                 class,
             );
@@ -11420,6 +11424,7 @@ impl<'w> Server<'w> {
                                     weapons::BOLT_DAMAGE,
                                     weapons::DMG_BULLET | weapons::DMG_NEVERGIB,
                                     h.pos,
+                                    h.normal,
                                     dir * weapons::BOLT_PROP_FORCE,
                                     "crossbow_bolt",
                                 );
@@ -11432,6 +11437,7 @@ impl<'w> Server<'w> {
                                     weapons::BALL_PROP_DAMAGE,
                                     weapons::BALL_DMG_TYPE,
                                     h.pos,
+                                    h.normal,
                                     dir * weapons::BALL_PROP_FORCE,
                                     "prop_combine_ball",
                                 );

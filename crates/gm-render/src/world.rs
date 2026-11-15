@@ -5103,6 +5103,13 @@ impl WorldRenderer {
     /// sub-rectangle as uvs and `$Size` as its texels, else the base texture whole; the world
     /// size is the texels times `$decalscale` (1 without); `DecalModulate` ones go through
     /// [`draw_modulate`](Self::draw_modulate) (kept linear), the rest alpha-blend.
+    /// The decal as it lands on a studio model: its `$modelmaterial` (`decals/wood/shot1`
+    /// for the `shot1_subrect` of the world atlas) when it has one.
+    pub fn model_decal(&self, gpu: &Gpu, mount: &Mount, name: &str) -> Option<Decal> {
+        let mat = crate::material::load(mount, name).ok()?;
+        self.decal(gpu, mount, mat.model_material.as_deref().unwrap_or(name))
+    }
+
     pub fn decal(&self, gpu: &Gpu, mount: &Mount, name: &str) -> Option<Decal> {
         let mat = crate::material::load(mount, name).ok()?;
         let (tex_mat, rect, texels) = match &mat.subrect {

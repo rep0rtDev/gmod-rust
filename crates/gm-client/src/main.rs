@@ -291,6 +291,8 @@ struct Gfx {
     /// The crossbow's charger sprite `sprites/blueflare1` (hl2weapons.md, gap-report #105).
     fx_blueflare: Option<wgpu::BindGroup>,
     fx_decal_mats: std::collections::HashMap<String, Option<gm_render::world::Decal>>,
+    /// The same names resolved through `$modelmaterial` for decals on props.
+    fx_prop_decal_mats: std::collections::HashMap<String, Option<gm_render::world::Decal>>,
     /// `sprites/redglow1`: the RPG's laser dot.
     fx_laserdot: Option<wgpu::BindGroup>,
     /// `effects/laser1_noz`: the RPG's 128 u laser beam out of the muzzle (gap-report #110).
@@ -1820,6 +1822,7 @@ impl App {
             ball_last: HashMap::new(),
             fx_blueflare,
             fx_decal_mats: Default::default(),
+            fx_prop_decal_mats: Default::default(),
             fx_laserdot,
             fx_laserbeam,
             fx_ball,
@@ -7757,9 +7760,9 @@ impl App {
             self.fx_prop_decals
                 .retain(|(_, _, _, _, born)| now.duration_since(*born).as_secs_f32() < DECAL_LIFE);
             for (_, _, _, name, _) in &self.fx_prop_decals {
-                if !name.is_empty() && !g.fx_decal_mats.contains_key(name) {
-                    let m = g.world.decal(&g.gpu, &self.mount, name);
-                    g.fx_decal_mats.insert(name.clone(), m);
+                if !name.is_empty() && !g.fx_prop_decal_mats.contains_key(name) {
+                    let m = g.world.model_decal(&g.gpu, &self.mount, name);
+                    g.fx_prop_decal_mats.insert(name.clone(), m);
                 }
             }
             for (pos, normal, name, _) in &self.fx_decals {
@@ -7774,7 +7777,8 @@ impl App {
             }
             // decals on props ride their entity
             for (ent, lpos, lnormal, name, _) in &self.fx_prop_decals {
-                let (Some(e), Some(Some(d))) = (ents.get(ent), g.fx_decal_mats.get(name)) else {
+                let (Some(e), Some(Some(d))) = (ents.get(ent), g.fx_prop_decal_mats.get(name))
+                else {
                     continue;
                 };
                 let rot = gm_render::props::angle_matrix(e.angles.to_array());
