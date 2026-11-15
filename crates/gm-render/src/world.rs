@@ -4965,6 +4965,7 @@ impl WorldRenderer {
         iris: Option<&material::Rgba>,
         selfillum_mask: Option<&material::Rgba>,
         phongexp: Option<&material::Rgba>,
+        envmask: Option<&material::Rgba>,
     ) -> (wgpu::BindGroup, wgpu::Texture) {
         let device = &gpu.device;
         let mut envmap2 = envmap2_params(mat);
@@ -5010,6 +5011,12 @@ impl WorldRenderer {
             upload_rgba_mips(gpu, m, wgpu::TextureFormat::Rgba8Unorm, key)
                 .create_view(&Default::default())
         });
+        // `$envmapmask` of a model material (w_smg2's specular mask): without it the white
+        // fallback made the SMG a chrome mirror of the sky
+        let envmask_view = envmask.map(|m| {
+            upload_rgba_mips(gpu, m, wgpu::TextureFormat::Rgba8Unorm, key)
+                .create_view(&Default::default())
+        });
         let bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some(key),
             layout: &self.material_layout,
@@ -5048,8 +5055,9 @@ impl WorldRenderer {
                 },
                 wgpu::BindGroupEntry {
                     binding: 7,
-
-                    resource: wgpu::BindingResource::TextureView(&self.white_fallback),
+                    resource: wgpu::BindingResource::TextureView(
+                        envmask_view.as_ref().unwrap_or(&self.white_fallback),
+                    ),
                 },
                 wgpu::BindGroupEntry {
                     binding: 8,
@@ -5144,7 +5152,7 @@ impl WorldRenderer {
         let mut part_textures = Vec::new();
         for (name, (verts, idx)) in by_mat {
             let (mat, rgba) = &sizes[&name];
-            let (bg, t) = self.material_part(gpu, &name, mat, rgba, None, None, None, None);
+            let (bg, t) = self.material_part(gpu, &name, mat, rgba, None, None, None, None, None);
             part_textures.push((name.clone(), t));
             parts.push((
                 bg,
@@ -5277,6 +5285,14 @@ impl WorldRenderer {
                     .as_ref()
                     .and_then(|p| p.exponent_texture.as_deref())
                     .and_then(|t| material::load_texture(mount, t, 1024).ok());
+                let envmask_rgba = mat
+                    .envmapmask
+                    .as_deref()
+                    .filter(|_| {
+                        mat.envmap
+                            .is_some_and(|e| e.mask == material::EnvMapMask::Texture)
+                    })
+                    .and_then(|t| material::load_texture(mount, t, 1024).ok());
                 let (bg, t) = self.material_part(
                     gpu,
                     key,
@@ -5286,6 +5302,7 @@ impl WorldRenderer {
                     iris_rgba.as_ref(),
                     selfillum_rgba.as_ref(),
                     phongexp_rgba.as_ref(),
+                    envmask_rgba.as_ref(),
                 );
                 part_textures.push((key.to_string(), t));
                 parts.push((
