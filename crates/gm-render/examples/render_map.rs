@@ -196,6 +196,8 @@ fn main() -> Result<()> {
             Some(&color)
         },
         &[],
+        &[],
+        &[],
     );
     gpu.queue.submit([enc.finish()]);
     let rgba = gpu.read_texture(&color, width, height)?;

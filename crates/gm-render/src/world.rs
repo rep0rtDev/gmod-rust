@@ -3825,6 +3825,7 @@ impl WorldRenderer {
         scene_src: Option<&wgpu::Texture>,
         reflect_items: &[DrawItem<'_>],
         reflect_only: &[DrawItem<'_>],
+        reflect_additive: &[(&wgpu::BindGroup, Vec<Vertex>, Vec<u32>)],
     ) {
         self.frame.set(self.frame.get() + 1);
         self.camera_cursor.set(0);
@@ -3867,11 +3868,11 @@ impl WorldRenderer {
         let t1 = std::time::Instant::now();
         // the first-person player's own model shows in mirrors / water only
         if reflect_only.is_empty() {
-            self.draw_reflection(gpu, enc, camera, aspect, reflect_items);
+            self.draw_reflection(gpu, enc, camera, aspect, reflect_items, reflect_additive);
         } else {
             let mut all: Vec<DrawItem<'_>> = reflect_items.to_vec();
             all.extend(reflect_only.iter().cloned());
-            self.draw_reflection(gpu, enc, camera, aspect, &all);
+            self.draw_reflection(gpu, enc, camera, aspect, &all, reflect_additive);
         }
         stamp(enc, "reflect");
         flush(enc);
@@ -4040,6 +4041,7 @@ impl WorldRenderer {
         camera: &Camera,
         aspect: f32,
         items: &[DrawItem<'_>],
+        additive: &[(&wgpu::BindGroup, Vec<Vertex>, Vec<u32>)],
     ) {
         if std::env::var_os("GM_RENDER_LOG").is_some() {
             eprintln!(
@@ -4128,6 +4130,25 @@ impl WorldRenderer {
             // `$reflectentities`: the entity models too, still under the clip plane
             if self.reflect_entities { items } else { &[] },
         );
+        // the additive sprites and beams (the physgun beam, its glows) show in the mirror
+        // with the entities
+        if self.reflect_entities && !additive.is_empty() {
+            self.draw_blended(
+                gpu,
+                enc,
+                &mirrored,
+                &ModelTarget {
+                    color: &color,
+                    resolve: resolve.as_ref(),
+                    depth: &depth,
+                    aspect,
+                    clear_depth: false,
+                    alpha: 1.0,
+                },
+                additive,
+                &self.additive_pipeline,
+            );
+        }
         let mut state = self.reflect.lock().unwrap();
         state.clip = None;
         state.valid = true;

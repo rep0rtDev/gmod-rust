@@ -1245,7 +1245,20 @@ impl ServerNet {
                     attacker,
                     inflictor,
                     ..
-                } => Some(format!("Death {player} {attacker} {inflictor}")),
+                } => Some(match server.npcs.get(attacker) {
+                    // an NPC killer is named like a victim (`npc:<key>`), its inflictor the
+                    // weapon it holds or its class
+                    Some(n) => format!(
+                        "Death {player} npc:{} {}",
+                        n.key.replace(' ', "_"),
+                        if n.weapon.is_empty() {
+                            n.class.as_str()
+                        } else {
+                            n.weapon.as_str()
+                        }
+                    ),
+                    None => format!("Death {player} {attacker} {inflictor}"),
+                }),
                 gm_server::GameEvent::NpcKilled { attacker, key, .. } => {
                     let weapon = server
                         .players

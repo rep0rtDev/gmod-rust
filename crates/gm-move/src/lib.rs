@@ -27,6 +27,10 @@ const ENTITY_GROUND_REACH: f32 = 0.4;
 /// How far outside a prop's PHY hull the player hull stops: the game stands 0.5 u above our
 /// raw hull top on the glass / plastic plates (move_friction_glass, move_friction_plastic).
 pub const PROP_SKIN: f32 = 0.5;
+/// Prop depenetration (`unstick_props`): convexes resolved per tick and the gap left past
+/// the face.
+const UNSTICK_PASSES: usize = 3;
+const UNSTICK_EPSILON: f32 = 0.03125;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct MoveConfig {
@@ -468,6 +472,60 @@ impl<'a> Mover<'a> {
         }
     }
 
+    /// `CGameMovement::CheckStuck` for the props: a hull that starts inside a prop's convex
+    /// (the physics shoved the prop into the player, or the player stood up into it) is moved
+    /// out along the convex's least-penetrated face, never into the world. Without it the
+    /// sweep starts all-solid and the move zeroes the velocity: the player freezes against the
+    /// prop until he happens to move a way that leaves it.
+    fn unstick_props(&self, st: &mut PlayerState) {
+        if self.props.is_empty() {
+            return;
+        }
+        let (mins, maxs) = self.hull(st.ducked);
+        let center = (mins + maxs) * 0.5;
+        let extents = (maxs - mins) * 0.5;
+        for _ in 0..UNSTICK_PASSES {
+            let c = st.origin + center;
+            // the shallowest way out of any convex the hull is inside
+            let mut push: Option<(Vec3, f32)> = None;
+            for cv in &self.props {
+                if (c - extents).cmpgt(cv.maxs).any() || (c + extents).cmplt(cv.mins).any() {
+                    continue;
+                }
+                let mut out: Option<(Vec3, f32)> = None;
+                let mut inside = true;
+                for &(n, d) in &cv.planes {
+                    let depth = (d + n.abs().dot(extents)) - n.dot(c);
+                    if depth < 0.0 {
+                        inside = false;
+                        break;
+                    }
+                    if out.is_none_or(|(_, b)| depth < b) {
+                        out = Some((n, depth));
+                    }
+                }
+                if inside {
+                    if let Some((n, depth)) = out {
+                        if push.is_none_or(|(_, b)| depth < b) {
+                            push = Some((n, depth));
+                        }
+                    }
+                }
+            }
+            let Some((n, depth)) = push else {
+                return;
+            };
+            let to = st.origin + n * (depth + UNSTICK_EPSILON);
+            let t = self
+                .world
+                .trace_box(st.origin, to, mins, maxs, MASK_PLAYERSOLID);
+            if t.start_solid || t.fraction < 1.0 {
+                return;
+            }
+            st.origin = to;
+        }
+    }
+
     /// Advance one tick.
     pub fn tick(&self, st: &mut PlayerState, cmd: &UserCmd) {
         self.last_touch.set(None);
@@ -525,6 +583,9 @@ impl<'a> Mover<'a> {
             self.categorize(st);
         }
         st.game_moved = false;
+        if st.move_type == MoveType::Walk {
+            self.unstick_props(st);
+        }
         let mut water = WaterCache::default();
         self.check_water(st, &mut water);
         // a water jump in progress (movement.md 6 `WaterJump`): the horizontal velocity is
@@ -1795,6 +1856,52 @@ mod tests {
             mins: center - half,
             maxs: center + half,
         }
+    }
+
+    #[test]
+    fn hull_inside_a_prop_is_pushed_out_and_walks_on() {
+        let world = World::from_boxes(&[(
+            Vec3::new(-512.0, -512.0, -64.0),
+            Vec3::new(512.0, 512.0, 0.0),
+        )]);
+        let mut m = Mover::new(MoveConfig::default(), &world);
+        let mut st = PlayerState {
+            origin: Vec3::new(0.0, 0.0, 1.0),
+            ..PlayerState::default()
+        };
+        for _ in 0..10 {
+            m.tick(&mut st, &UserCmd::default());
+        }
+        assert!(st.on_ground);
+        // a crate shoved 6 u into the front of the hull (y 10..50 against the hull's +16):
+        // the move used to start all-solid and freeze the player
+        m.set_props(vec![crate_convex(
+            Vec3::new(0.0, 30.0, 20.0),
+            Vec3::splat(20.0),
+        )]);
+        let cmd = UserCmd {
+            forward_move: 450.0,
+            view_angles: Vec3::new(0.0, 90.0, 0.0),
+            ..UserCmd::default()
+        };
+        m.tick(&mut st, &cmd);
+        // out along the crate's near face, then held at it like any blocking prop
+        assert!(st.origin.y < -5.9 && st.origin.y > -6.2, "{}", st.origin.y);
+        for _ in 0..20 {
+            m.tick(&mut st, &cmd);
+        }
+        assert!(st.origin.y < -5.9 && st.origin.y > -6.2, "{}", st.origin.y);
+        assert!(st.on_ground);
+        // and sideways is free
+        let side = UserCmd {
+            side_move: 450.0,
+            view_angles: Vec3::new(0.0, 90.0, 0.0),
+            ..UserCmd::default()
+        };
+        for _ in 0..20 {
+            m.tick(&mut st, &side);
+        }
+        assert!(st.origin.x.abs() > 30.0, "{}", st.origin.x);
     }
 
     #[test]

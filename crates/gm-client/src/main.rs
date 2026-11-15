@@ -8186,6 +8186,7 @@ impl App {
             Some(scene_src),
             &items,
             &reflect_only,
+            &additive,
         );
         lap(3);
         self.world_pass_ms = g.world.pass_ms();
@@ -11986,7 +11987,7 @@ impl DeathNotice {
             return None;
         }
         let victim = it.next()?;
-        let attacker: u32 = it.next()?.parse().ok()?;
+        let attacker_token = it.next()?;
         let inflictor = it.next()?.to_string();
         let name = |id: u32| {
             players
@@ -12004,8 +12005,15 @@ impl DeathNotice {
                 (id, name(id))
             }
         };
+        let left = match attacker_token.strip_prefix("npc:") {
+            Some(key) => Some(key.replace('_', " ")),
+            None => {
+                let attacker: u32 = attacker_token.parse().ok()?;
+                (attacker != 0 && attacker != victim_id).then(|| name(attacker))
+            }
+        };
         Some(Self {
-            left: (attacker != 0 && attacker != victim_id).then(|| name(attacker)),
+            left,
             right,
             inflictor,
             at: Instant::now(),

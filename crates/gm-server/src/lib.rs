@@ -2924,6 +2924,8 @@ pub const NPC_SPREAD_FOCUS_TICKS: u64 = 53;
 pub const NPC_AIM_IN_PLACE_DEG: f32 = 10.0;
 const NPC_FIRE_FACING_DEG: f32 = 15.0;
 const NPC_EYE_HEIGHT: f32 = 64.0;
+/// An NPC's sounds are emitted this far above its feet (own rule, see `emit_sound`).
+const NPC_SOUND_LIFT: f32 = 24.0;
 /// Eye height of an armed NPC firing from the crouch it takes in combat (game: origin + 40).
 const NPC_CROUCH_EYE_HEIGHT: f32 = 40.0;
 const NPC_CHEST_HEIGHT: f32 = 36.0;
@@ -9284,6 +9286,14 @@ impl<'w> Server<'w> {
 
     /// `Entity:TakeDamage` on a player: armour share, whole-point health with the fraction
     /// carried over, death at zero. Returns the health damage applied.
+    /// `damage_player` by an NPC: the kill feed names it (`last_damage`).
+    pub fn npc_hurt_player(&mut self, npc: u32, id: u32, amount: f32, dmg_type: u32) -> f32 {
+        if let Some(t) = self.players.get_mut(&id) {
+            t.last_damage = (npc, "npc");
+        }
+        self.damage_player(id, amount, dmg_type)
+    }
+
     pub fn damage_player(&mut self, id: u32, amount: f32, dmg_type: u32) -> f32 {
         self.hurt(id, amount, dmg_type, RESPAWN_TICKS)
     }
@@ -21752,7 +21762,7 @@ impl<'w> Server<'w> {
                 continue;
             }
             let hits_left = self.npcs.get(&id).map_or(0, |n| n.melee_hits_left);
-            if self.damage_player(player, m.damage, weapons::DMG_SLASH) > 0.0 {
+            if self.npc_hurt_player(id, player, m.damage, weapons::DMG_SLASH) > 0.0 {
                 if let Some(c) = claw {
                     self.emit_sound(id, format!("{}.{}Hit", c.0, c.1), 1.0);
                 }
@@ -21970,10 +21980,9 @@ impl<'w> Server<'w> {
                 }
             }
         }
-        let _ = shooter;
         if let Some((pid, t)) = best {
             if t < world && t < prop {
-                self.damage_player(pid, dmg, weapons::DMG_BULLET);
+                self.npc_hurt_player(shooter, pid, dmg, weapons::DMG_BULLET);
             }
         }
     }
@@ -26615,6 +26624,10 @@ impl<'w> Server<'w> {
     pub fn emit_sound(&mut self, ent: u32, name: String, volume: f32) -> bool {
         let pos = if let Some(p) = self.players.get(&ent) {
             p.state.origin
+        } else if let Some(n) = self.npcs.get(&ent) {
+            // from the body, not the feet: the client's volumetric occlusion source (15 u
+            // across) at floor level is half under the floor and muffled the zombie's claws
+            n.pos + Vec3::Z * NPC_SOUND_LIFT
         } else if let Some((pos, _)) = self.entity_pose(ent) {
             pos
         } else {
