@@ -1325,7 +1325,8 @@ struct App {
     /// `PlayerSnap::vm_serial` of the last server viewmodel event played.
     vm_serial_seen: u8,
     /// Tracers in flight: shooter, end, birth (a 128 u streak at 5000 u/s from the muzzle).
-    fx_tracers: Vec<(u32, Vec3, Instant, bool)>,
+    /// (shooter, hit, born, AR2 tracer, FX_PlayerTracer offset, FX_PlayerTracer length fraction)
+    fx_tracers: Vec<(u32, Vec3, Instant, bool, f32, f32)>,
     /// `AR2Impact` flashes: position and birth, 0.1 s.
     fx_ar2_impacts: Vec<(Vec3, Instant)>,
     /// When the crossbow's loaded bolt started charging (clip went to 1 with the crossbow out):
@@ -5180,7 +5181,9 @@ impl App {
                                 .and_then(|p| classes.get(p.active as usize))
                                 .is_some_and(|c| c == "weapon_ar2")
                         };
-                        self.fx_tracers.push((player, end, now, ar2));
+                        let off = 128.0 + fx_range(&mut self.fx_seed, -24.0, 64.0);
+                        let frac = fx_range(&mut self.fx_seed, 0.1, 0.6);
+                        self.fx_tracers.push((player, end, now, ar2, off, frac));
                         // `FX_MuzzleEffect` for every other shooter at their weapon's world
                         // model `muzzle` attachment (clientfx.md 2.1, gap-report #123); a
                         // point beside the eye when the model has none / was not drawn
@@ -7328,8 +7331,9 @@ impl App {
             }
             let players = &self.sim.client.world.players;
             let mut keep = Vec::new();
-            for &(player, end, born, ar2) in &self.fx_tracers {
-                let start = if Some(player) == me {
+            for &(player, end, born, ar2, off, frac) in &self.fx_tracers {
+                let own = Some(player) == me;
+                let start = if own {
                     own_muzzle
                 } else {
                     match players.iter().find(|p| p.id == player) {
@@ -7338,12 +7342,13 @@ impl App {
                     }
                 };
                 let total = (end - start).length();
-                let head = now.duration_since(born).as_secs_f32() * 5000.0;
+                let age = now.duration_since(born).as_secs_f32();
+                let head = age * 5000.0;
                 // FX_Tracer draws nothing under 256 u (clientfx.md 5.3, gap-report #129)
-                if total < 256.0 || head >= total {
+                if total < 256.0 || head >= total || (own && age > 0.01) {
                     continue;
                 }
-                keep.push((player, end, born, ar2));
+                keep.push((player, end, born, ar2, off, frac));
                 let mat = if ar2 {
                     g.fx_ar2_tracer.as_ref()
                 } else {
@@ -7351,6 +7356,27 @@ impl App {
                 };
                 if let Some(m) = mat {
                     let dir = (end - start) / total;
+                    if own {
+                        // FX_PlayerTracer (clientfx.md 5.4): the shooter's own tracer is a
+                        // static one-frame streak 128 + rand(-24,64) u out from the muzzle
+                        // covering 0.1..0.6 of the shot - not a 128 u head flying the whole way
+                        let a = off.min(total);
+                        let b = (off + total * frac).min(total);
+                        let (v, i) = g.world.beam_strip(
+                            &[start + dir * a, start + dir * b],
+                            if ar2 { 3.0 } else { 1.0 },
+                            if ar2 {
+                                [1.0, 1.0, 1.0]
+                            } else {
+                                [1.0, 0.9, 0.6]
+                            },
+                            camera.position,
+                            0.0,
+                            1.0 / 128.0,
+                        );
+                        additive.push((m, v, i));
+                        continue;
+                    }
                     let tail = (head - 128.0).max(0.0);
                     let (v, i) = g.world.beam_strip(
                         &[start + dir * tail, start + dir * head],
@@ -8054,9 +8080,16 @@ impl App {
                             continue;
                         };
                         let a = 1.0 - 0.5 * (born.elapsed().as_secs_f32() / life).min(1.0);
-                        let (v, i) =
-                            g.world
-                                .sprite_quad_var(pos, size, [a, a, a, 0.0], roll, None, &camera);
+                        // m_uchStartSize is a half-extent (RenderParticle_ColorSizeAngle draws
+                        // pos +- size), sprite_quad_var takes the full width
+                        let (v, i) = g.world.sprite_quad_var(
+                            pos,
+                            size * 2.0,
+                            [a, a, a, 0.0],
+                            roll,
+                            None,
+                            &camera,
+                        );
                         quads.push((m, v, i));
                     }
                     if !quads.is_empty() {
