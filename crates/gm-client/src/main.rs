@@ -6614,7 +6614,10 @@ impl App {
                     });
                     let world = m.bone_world_gesture_transition(&seq, t, &params, gesture, prev);
                     let pose = world.as_ref().map(|w| m.skin_matrices(w));
+                    // the local player's own pose follows the predicted origin and view yaw:
+                    // the snapshot lags the camera, so a mirror image from it shook
                     let (origin, yaw) = match self.sim.player_interp.sample(p.id, rt) {
+                        _ if Some(p.id) == me => (self.sim.origin, self.view.y),
                         Some(s) => (s.pos, s.angles.y),
                         None => (p.origin, p.view_angles.y),
                     };
@@ -9053,34 +9056,37 @@ impl App {
             }
         }
         // our debug line (entity count, weapon, position): `developer 1` only, the game has none
-        if !self.console.open && self.settings.developer > 0 {
-            let hud = format!(
-                "props {}  weapon {}{}  pos {:.0} {:.0} {:.0}",
-                self.sim.client.world.entities.len(),
-                self.vm_of(self.weapon).map_or("none", |v| v.name),
-                if self.weapon == 1 {
-                    format!(" ({})", self.tool)
-                } else {
-                    String::new()
-                },
-                o.x,
-                o.y,
-                o.z
-            );
-            items.push(UiItem::Rect {
-                x: 4.0,
-                y: 4.0,
-                w: g.ui.text_width(&hud) + 12.0,
-                h: lh + 6.0,
-                color: [0.0, 0.0, 0.0, 0.45],
-            });
-            items.push(UiItem::Text {
-                font: None,
-                x: 10.0,
-                y: 7.0,
-                text: hud,
-                color: white,
-            });
+        if !self.console.open {
+            // our debug line (entity count, weapon, position): `developer 1` only
+            if self.settings.developer > 0 {
+                let hud = format!(
+                    "props {}  weapon {}{}  pos {:.0} {:.0} {:.0}",
+                    self.sim.client.world.entities.len(),
+                    self.vm_of(self.weapon).map_or("none", |v| v.name),
+                    if self.weapon == 1 {
+                        format!(" ({})", self.tool)
+                    } else {
+                        String::new()
+                    },
+                    o.x,
+                    o.y,
+                    o.z
+                );
+                items.push(UiItem::Rect {
+                    x: 4.0,
+                    y: 4.0,
+                    w: g.ui.text_width(&hud) + 12.0,
+                    h: lh + 6.0,
+                    color: [0.0, 0.0, 0.0, 0.45],
+                });
+                items.push(UiItem::Text {
+                    font: None,
+                    x: 10.0,
+                    y: 7.0,
+                    text: hud,
+                    color: white,
+                });
+            }
             // client addons' `render.hud`
             // 3D2D blocks were drawn in the world before the HUD; the rest is screen space
             let mut in_plane = false;

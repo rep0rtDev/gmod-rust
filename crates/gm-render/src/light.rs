@@ -186,15 +186,23 @@ impl ModelLight {
             .get(leaf)
             .copied()
             .unwrap_or(([0.0; 3], [0.0; 3]));
-        let best = samples.iter().min_by(|a, b| {
-            let da = Vec3::from(a.position(mins, maxs)).distance_squared(pos);
-            let db = Vec3::from(b.position(mins, maxs)).distance_squared(pos);
-            da.total_cmp(&db)
-        });
-        match best {
-            Some(s) => s.cube.map(ambient_linear),
-            None => [Vec3::splat(0.3); 6],
+        // Mod_LeafAmbientColorAtPos: every sample of the leaf weighted by 1 / (d^2 + 1), not
+        // the nearest one (switching samples while walking blinked the model's lighting)
+        if samples.is_empty() {
+            return [Vec3::splat(0.3); 6];
         }
+        let mut sum = [Vec3::ZERO; 6];
+        let mut wsum = 0.0;
+        for s in samples {
+            let d2 = Vec3::from(s.position(mins, maxs)).distance_squared(pos);
+            let w = 1.0 / (d2 + 1.0);
+            let cube = s.cube.map(ambient_linear);
+            for (acc, c) in sum.iter_mut().zip(cube) {
+                *acc += c * w;
+            }
+            wsum += w;
+        }
+        sum.map(|v| v / wsum)
     }
 
     /// Whether a straight line from `pos` leaves the map through the sky (no solid in the way).
