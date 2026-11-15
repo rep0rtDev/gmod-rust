@@ -6192,6 +6192,9 @@ impl App {
             Vec3,
         );
         let mut player_poses: Vec<PlayerPose<'_>> = Vec::new();
+        // the local player's pose in first person: drawn only by the reflection pass
+        let mut local_pose: Option<usize> = None;
+        let mut reflect_only: Vec<DrawItem> = Vec::new();
         // prop_ragdoll: skinning from the networked physics objects (world space, so the draw
         // transform is the identity), bone manipulations on top
         let mut ent_bones: std::collections::HashMap<u32, particles::EntBones> =
@@ -6335,9 +6338,10 @@ impl App {
             })
             .collect();
         for p in &self.sim.client.world.players {
-            if (Some(p.id) == me && !self.thirdperson) || !p.alive {
+            if !p.alive {
                 continue;
             }
+            let local_fp = Some(p.id) == me && !self.thirdperson;
             let player_model = g.models.get(&player_model_key(p)).and_then(|m| m.as_ref());
             // the player model animated from the snapshot, the hull box when it is missing
             match player_model {
@@ -6451,8 +6455,12 @@ impl App {
                         Some((path, skin))
                     });
                     let tint = Vec3::from(p.player_color.map(|c| f32::from(c) / 255.0));
+                    if local_fp {
+                        local_pose = Some(player_poses.len());
+                    }
                     player_poses.push((origin, yaw, pose, held, m, tint));
                 }
+                None if local_fp => {}
                 None => {
                     let h = if p.ducked { 36.0 } else { 72.0 };
                     items.push(DrawItem {
@@ -6469,10 +6477,15 @@ impl App {
             }
         }
         {
-            for (origin, yaw, pose, held, m, tint) in &player_poses {
+            for (i, (origin, yaw, pose, held, m, tint)) in player_poses.iter().enumerate() {
                 let transform =
                     gm_render::world::model_transform(*origin, Vec3::new(0.0, *yaw, 0.0));
-                items.push(DrawItem {
+                let dst = if Some(i) == local_pose {
+                    &mut reflect_only
+                } else {
+                    &mut items
+                };
+                dst.push(DrawItem {
                     look: None,
                     dissolve: 0.0,
                     tint: *tint,
@@ -6482,7 +6495,7 @@ impl App {
                 });
                 if let Some((path, bones)) = held {
                     if let Some(wm) = g.models.get(*path).and_then(|w| w.as_ref()) {
-                        items.push(DrawItem {
+                        dst.push(DrawItem {
                             look: None,
                             dissolve: 0.0,
                             tint: Vec3::ONE,
@@ -7941,6 +7954,7 @@ impl App {
             aspect,
             Some(scene_src),
             &items,
+            &reflect_only,
         );
         lap(3);
         self.world_pass_ms = g.world.pass_ms();

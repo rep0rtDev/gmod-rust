@@ -1539,6 +1539,7 @@ pub struct Decal {
     pub modulate: bool,
 }
 
+#[derive(Clone)]
 pub struct DrawItem<'a> {
     pub model: &'a DynModel,
     pub transform: Mat4,
@@ -3823,6 +3824,7 @@ impl WorldRenderer {
         aspect: f32,
         scene_src: Option<&wgpu::Texture>,
         reflect_items: &[DrawItem<'_>],
+        reflect_only: &[DrawItem<'_>],
     ) {
         self.frame.set(self.frame.get() + 1);
         self.camera_cursor.set(0);
@@ -3863,7 +3865,14 @@ impl WorldRenderer {
         stamp(enc, "shadow");
         flush(enc);
         let t1 = std::time::Instant::now();
-        self.draw_reflection(gpu, enc, camera, aspect, reflect_items);
+        // the first-person player's own model shows in mirrors / water only
+        if reflect_only.is_empty() {
+            self.draw_reflection(gpu, enc, camera, aspect, reflect_items);
+        } else {
+            let mut all: Vec<DrawItem<'_>> = reflect_items.to_vec();
+            all.extend(reflect_only.iter().cloned());
+            self.draw_reflection(gpu, enc, camera, aspect, &all);
+        }
         stamp(enc, "reflect");
         flush(enc);
         let t2 = std::time::Instant::now();
