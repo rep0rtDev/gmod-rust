@@ -1314,6 +1314,9 @@ struct App {
     fx_shells_at: Instant,
     /// The viewmodel's bob and sway state (`CalcViewModelView`).
     vm_view: VmView,
+    /// Where the viewmodel was drawn last frame (bob/sway/lag applied): attachments
+    /// (muzzle, physgun beam start) are taken from this pose, not from the bare eye.
+    vm_pose: Option<(Vec3, Vec3)>,
     vm_prev: Option<(&'static str, f32, Instant)>,
     /// Per server entity: the sequence seen last frame with its time, and the one it left
     /// (name, time it stopped at, when) for the `CSequenceTransitioner` blend.
@@ -6549,7 +6552,8 @@ impl App {
                 }),
             )?;
             let a = m.attachment(name, &w)?;
-            let mt = gm_render::world::model_transform(camera.position, self.view);
+            let (vp, va) = self.vm_pose.unwrap_or((camera.position, self.view));
+            let mt = gm_render::world::model_transform(vp, va);
             let p = mt.transform_point3(a.w_axis.truncate());
             let f = mt.transform_vector3(a.x_axis.truncate());
             // the viewmodel is drawn with its own FOV: put the point where it appears on
@@ -8011,6 +8015,7 @@ impl App {
                     .map(|p| p.velocity.truncate().length())
                     .unwrap_or(0.0);
                 let (vm_pos, vm_ang) = self.vm_view.view(speed, camera.position, self.view);
+                self.vm_pose = Some((vm_pos, vm_ang));
                 let transform = gm_render::world::model_transform(vm_pos, vm_ang);
                 let mut vm_items = vec![DrawItem {
                     look: None,
@@ -11319,6 +11324,7 @@ fn run() -> Result<()> {
         fx_shells: Vec::new(),
         fx_shells_at: Instant::now(),
         vm_view: VmView::new(),
+        vm_pose: None,
         vm_prev: None,
         ent_anim_last: HashMap::new(),
         ent_anim_prev: HashMap::new(),
