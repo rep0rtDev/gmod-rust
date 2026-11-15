@@ -6553,6 +6553,20 @@ impl App {
                 continue;
             }
             let local_fp = Some(p.id) == me && !self.thirdperson;
+            // the local player's animation follows the predicted velocity (its origin is
+            // predicted too): the snapshot's velocity arrived later and the mirror image
+            // kept walking in place, then slid into idle
+            let predicted;
+            let p = if Some(p.id) == me {
+                predicted = gm_net::msg::PlayerSnap {
+                    velocity: (self.sim.origin - self.sim.prev_origin)
+                        / gm_core::tick::DEFAULT_TICK_INTERVAL,
+                    ..p.clone()
+                };
+                &predicted
+            } else {
+                p
+            };
             let player_model = g.models.get(&player_model_key(p)).and_then(|m| m.as_ref());
             // the player model animated from the snapshot, the hull box when it is missing
             match player_model {
