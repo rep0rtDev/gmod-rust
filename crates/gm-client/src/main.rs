@@ -6809,8 +6809,7 @@ impl App {
             .filter(|p| p.held.is_some())
             .map(|p| p.held_pos);
         let mut beams: Vec<(Vec3, Vec3, Vec3, bool)> = Vec::new();
-        let local_dead = self.local_snap().is_some_and(|s| !s.alive);
-        if self.weapon == 0 && self.mouse.contains(&0) && !local_dead {
+        if self.weapon == 0 && self.mouse.contains(&0) && !dead {
             let fwd = camera.forward();
             let right = fwd.cross(Vec3::Z).normalize_or_zero();
             let (start, _start_dir) = vm_attach_dir("muzzle").unwrap_or((
