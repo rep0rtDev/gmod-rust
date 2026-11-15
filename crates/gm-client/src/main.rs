@@ -1414,6 +1414,8 @@ struct App {
     fx_frozen: std::collections::HashMap<u32, bool>,
     /// (prop, start, frozen) halo flashes of `phys_freeze` / `phys_unfreeze` (0.3 s).
     fx_halos: Vec<(u32, Instant, bool)>,
+    /// (prop, spawn time) of the propspawn effects under way (0.5 s).
+    fx_spawns: Vec<(u32, Instant)>,
     /// Surface property -> game material letter (`scripts/surfaceproperties*.txt`).
     gamematerials: HashMap<String, char>,
     tool_screen: ToolScreen,
@@ -2833,6 +2835,7 @@ impl App {
             aspect: 1.0,
             clear_depth: true,
             alpha: 1.0,
+            clip: None,
         };
         let item = DrawItem {
             look: None,
@@ -6476,10 +6479,29 @@ impl App {
         let is_ball = |id: u32| classes.iter().any(|(i, c)| *i == id && c == "sent_ball");
         // NPCs within 600 u watch the local player's eyes (the game's head / eye tracking)
         let look_at = self.sim.origin + Vec3::Z * 64.0;
+        // a prop new to the snapshot (spawned now, not met on joining) starts the propspawn
+        // effect; a prop's `frozen` flip starts the freeze / unfreeze halo flash
+        {
+            let now = Instant::now();
+            let populated = !self.fx_frozen.is_empty();
+            for e in ents.values() {
+                match self.fx_frozen.insert(e.id, e.frozen) {
+                    Some(prev) if prev != e.frozen => self.fx_halos.push((e.id, now, e.frozen)),
+                    None if populated && e.owner != 0 && self.settings.cl_drawspawneffect => {
+                        self.fx_spawns.push((e.id, now))
+                    }
+                    _ => {}
+                }
+            }
+            self.fx_frozen.retain(|id, _| ents.contains_key(id));
+            self.fx_spawns
+                .retain(|(_, born)| born.elapsed().as_secs_f32() < 0.5);
+        }
+        let spawning = |id: u32| self.fx_spawns.iter().any(|(s, _)| *s == id);
         let mut items: Vec<_> = ents
             .values()
             .filter_map(|e| {
-                if is_ball(e.id) {
+                if is_ball(e.id) || spawning(e.id) {
                     return None;
                 }
                 let (pos, ang) = match self.sim.interp.sample(e.id, rt) {
@@ -8290,6 +8312,7 @@ impl App {
             aspect,
             clear_depth: false,
             alpha: 1.0,
+            clip: None,
         };
         // an edit_fog entity's SetupWorldFog hook: the newest one's fog replaces the map's
         g.world.fog_override =
@@ -8673,7 +8696,6 @@ impl App {
         // cl_init AddPhysgunHalos: blur rand(1, 2), colour + rand * 0.3), the freeze / unfreeze
         // flashes (effects phys_freeze / phys_unfreeze: green / red fading over 0.3 s by sqrt)
         {
-            let now = Instant::now();
             let mut reqs: Vec<(u32, [f32; 3], f32, f32)> = Vec::new();
             if self.settings.physgun_halo {
                 let held: Vec<(u32, Vec3)> = self
@@ -8702,15 +8724,7 @@ impl App {
                     reqs.push((h, col, 1.0, size));
                 }
             }
-            for e in self.sim.client.world.entities.values() {
-                if let Some(prev) = self.fx_frozen.insert(e.id, e.frozen) {
-                    if prev != e.frozen {
-                        self.fx_halos.push((e.id, now, e.frozen));
-                    }
-                }
-            }
             let ents = &self.sim.client.world.entities;
-            self.fx_frozen.retain(|id, _| ents.contains_key(id));
             self.fx_halos
                 .retain(|(_, born, _)| born.elapsed().as_secs_f32() < 0.3);
             if self.settings.effects_freeze {
@@ -8724,34 +8738,82 @@ impl App {
                     reqs.push((*id, col, idelta, 1.0));
                 }
             }
-            if !reqs.is_empty() {
+            if !reqs.is_empty() || !self.fx_spawns.is_empty() {
                 let g = self.gfx.as_ref().unwrap();
+                let ent_item = |e: &gm_net::msg::EntityState| -> Option<DrawItem<'_>> {
+                    if !e.bones.is_empty() {
+                        return None;
+                    }
+                    let (pos, ang) = match self.sim.interp.sample(e.id, rt) {
+                        Some(p) => (p.pos, p.angles),
+                        None => (e.pos, e.angles),
+                    };
+                    let model = if e.skin == 0 && e.body.is_empty() {
+                        g.models.get(&e.model)?.as_ref()?
+                    } else {
+                        g.models
+                            .get(&format!("{}#{}#{}", e.model, e.skin, e.body))?
+                            .as_ref()?
+                    };
+                    Some(DrawItem {
+                        look: None,
+                        dissolve: 0.0,
+                        tint: Vec3::ONE,
+                        model,
+                        transform: gm_render::world::model_transform(pos, ang)
+                            * glam::Mat4::from_scale(Vec3::splat(e.model_scale.max(0.01))),
+                        bones: None,
+                    })
+                };
+                // propspawn: the model shows top-down behind a plane sliding from the top of
+                // its bounds to the bottom over 0.5 s, a translucent ghost ahead of it at 1.2x
+                // (the game's refract overlay, $refractamount fraction * 0.1)
+                for (id, born) in &self.fx_spawns {
+                    let Some(e) = ents.get(id) else {
+                        continue;
+                    };
+                    let Some(item) = ent_item(e) else {
+                        continue;
+                    };
+                    let (mn, mx) = item.model.bounds();
+                    let pos = self.sim.interp.sample(e.id, rt).map_or(e.pos, |p| p.pos);
+                    let up = (mx - mn).normalize_or_zero();
+                    let fraction = 1.0 - born.elapsed().as_secs_f32() / 0.5;
+                    let plane = |f: f32| {
+                        let l = (pos + mn).lerp(pos + mx, f.clamp(0.0, 1.0));
+                        up.extend(up.dot(l))
+                    };
+                    let solid = ModelTarget {
+                        color: &attach,
+                        resolve,
+                        depth: &g.depth,
+                        aspect,
+                        clear_depth: false,
+                        alpha: 1.0,
+                        clip: Some(plane(fraction)),
+                    };
+                    g.world.draw_models(
+                        &g.gpu,
+                        &mut enc,
+                        &camera,
+                        &solid,
+                        std::slice::from_ref(&item),
+                    );
+                    let ghost = ModelTarget {
+                        alpha: 0.35,
+                        clip: Some(plane(fraction / 1.2)),
+                        ..solid
+                    };
+                    g.world.draw_models(
+                        &g.gpu,
+                        &mut enc,
+                        &camera,
+                        &ghost,
+                        std::slice::from_ref(&item),
+                    );
+                }
                 for (id, color, alpha, size) in &reqs {
-                    let item = ents.get(id).and_then(|e| {
-                        if !e.bones.is_empty() {
-                            return None;
-                        }
-                        let (pos, ang) = match self.sim.interp.sample(e.id, rt) {
-                            Some(p) => (p.pos, p.angles),
-                            None => (e.pos, e.angles),
-                        };
-                        let model = if e.skin == 0 && e.body.is_empty() {
-                            g.models.get(&e.model)?.as_ref()?
-                        } else {
-                            g.models
-                                .get(&format!("{}#{}#{}", e.model, e.skin, e.body))?
-                                .as_ref()?
-                        };
-                        Some(DrawItem {
-                            look: None,
-                            dissolve: 0.0,
-                            tint: Vec3::ONE,
-                            model,
-                            transform: gm_render::world::model_transform(pos, ang)
-                                * glam::Mat4::from_scale(Vec3::splat(e.model_scale.max(0.01))),
-                            bones: None,
-                        })
-                    });
+                    let item = ents.get(id).and_then(ent_item);
                     if let Some(item) = item {
                         g.halo.draw(
                             &g.gpu,
@@ -12009,6 +12071,7 @@ fn run() -> Result<()> {
         fx_muzzle_spawned: None,
         fx_frozen: std::collections::HashMap::new(),
         fx_halos: Vec::new(),
+        fx_spawns: Vec::new(),
         gamematerials,
         tool_screen: ToolScreen::default(),
         weapon_synced: false,

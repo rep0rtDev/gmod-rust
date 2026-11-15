@@ -327,6 +327,7 @@ impl Halo {
             aspect: self.width as f32 / self.height as f32,
             clear_depth: true,
             alpha: 1.0,
+            clip: None,
         };
         world.draw_models(gpu, enc, camera, &target, items);
         let passes: [(

@@ -1527,6 +1527,9 @@ pub struct ModelTarget<'a> {
     pub clear_depth: bool,
     /// 1 draws opaque; below 1 draws alpha-blended without depth writes (tool ghosts).
     pub alpha: f32,
+    /// A custom clip plane (normal, distance): fragments with `dot(p, n) < d` are dropped
+    /// (`render.PushCustomClipPlane`), e.g. the propspawn effect's rising cut.
+    pub clip: Option<glam::Vec4>,
 }
 
 /// Bone-name override for [`DynModel::bone_world`]: the transform another skeleton gives a bone.
@@ -4148,6 +4151,7 @@ impl WorldRenderer {
                     aspect,
                     clear_depth: false,
                     alpha: 1.0,
+                    clip: None,
                 },
                 additive,
                 &self.additive_pipeline,
@@ -4265,6 +4269,20 @@ impl WorldRenderer {
         fog: Option<Fog>,
         clip: Option<f32>,
     ) -> CameraUniform {
+        self.camera_uniform_clipped(cam, aspect, alpha, fog, clip, None)
+    }
+
+    /// `camera_uniform` with a custom clip plane (normal, distance) in place of the
+    /// reflection's.
+    fn camera_uniform_clipped(
+        &self,
+        cam: &Camera,
+        aspect: f32,
+        alpha: f32,
+        fog: Option<Fog>,
+        clip: Option<f32>,
+        plane: Option<glam::Vec4>,
+    ) -> CameraUniform {
         let valid = {
             let st = self.reflect.lock().unwrap();
             (st.valid as u32 | ((st.refr_valid as u32) << 1) | ((st.flip_x as u32) << 2)) as f32
@@ -4344,19 +4362,23 @@ impl WorldRenderer {
             }),
             clip: {
                 let t = self.t0.elapsed().as_secs_f32();
-                match clip {
-                    Some(z) => [z, valid, t, 1.0],
-                    None => [0.0, valid, t, 0.0],
+                match (plane, clip) {
+                    (Some(p), _) => [p.w, valid, t, 1.0],
+                    (None, Some(z)) => [z, valid, t, 1.0],
+                    (None, None) => [0.0, valid, t, 0.0],
                 }
             },
-            clip_plane: {
-                let st = self.reflect.lock().unwrap();
-                let n = if st.normal == Vec3::ZERO {
-                    Vec3::Z
-                } else {
-                    st.normal
-                };
-                [n.x, n.y, n.z, clip.unwrap_or(0.0)]
+            clip_plane: match plane {
+                Some(p) => p.to_array(),
+                None => {
+                    let st = self.reflect.lock().unwrap();
+                    let n = if st.normal == Vec3::ZERO {
+                        Vec3::Z
+                    } else {
+                        st.normal
+                    };
+                    [n.x, n.y, n.z, clip.unwrap_or(0.0)]
+                }
             },
         }
     }
@@ -4570,6 +4592,7 @@ impl WorldRenderer {
                         aspect,
                         clear_depth: false,
                         alpha: 1.0,
+                        clip: None,
                     },
                     items,
                 );
@@ -6471,6 +6494,7 @@ impl WorldRenderer {
             aspect,
             clear_depth,
             alpha,
+            clip,
             ..
         } = *target;
         let cpu = self.model_buffers(gpu, items);
@@ -6480,12 +6504,13 @@ impl WorldRenderer {
         }
         let cam_off = self.push_camera(
             gpu,
-            &self.camera_uniform(
+            &self.camera_uniform_clipped(
                 camera,
                 aspect,
                 alpha,
                 self.view_fog(camera),
                 self.clip_for(false),
+                clip,
             ),
         );
         {
