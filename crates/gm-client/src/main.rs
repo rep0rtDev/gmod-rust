@@ -6893,7 +6893,13 @@ impl App {
             .find(|p| Some(p.id) == me)
             .filter(|p| p.held.is_some())
             .map(|p| p.held_pos);
-        let mut beams: Vec<(Vec3, Vec3, Vec3, bool)> = Vec::new();
+        // (start, aim, end, holding, pass): pass 0 in the world and its reflection, 1 the
+        // first-person beam (the main view only), 2 the local player's third-person beam from
+        // the world model in the hand (the reflection only, where that model is drawn)
+        let mut beams: Vec<(Vec3, Vec3, Vec3, bool, u8)> = Vec::new();
+        let mut main_only: Vec<usize> = Vec::new();
+        let mut reflect_extra: Vec<(&wgpu::BindGroup, Vec<gm_render::world::Vertex>, Vec<u32>)> =
+            Vec::new();
         if self.weapon == 0 && self.mouse.contains(&0) && !dead {
             let fwd = camera.forward();
             let right = fwd.cross(Vec3::Z).normalize_or_zero();
@@ -6913,7 +6919,12 @@ impl App {
             };
             if let Some(gl) = muzzle_glow {
                 let (v, i) = g.world.sprite_quad(start, 6.0, color, &camera);
+                main_only.push(additive.len());
                 additive.push((gl, v, i));
+                if let Some(&core) = me.and_then(|id| self.other_muzzles.get(&id)) {
+                    let (v, i) = g.world.sprite_quad(core, 6.0, color, &camera);
+                    reflect_extra.push((gl, v, i));
+                }
             }
             // the beam only while something is held (binary study physgun.md §10): three
             // quadratic Beziers start -> control -> end with control = start + aim * |start - end|
@@ -6932,7 +6943,16 @@ impl App {
                     )
                     .end
             });
-            beams.push((start, fwd, end, held_pos.is_some()));
+            beams.push((start, fwd, end, held_pos.is_some(), 1));
+            if let Some(&core) = me.and_then(|id| self.other_muzzles.get(&id)) {
+                beams.push((
+                    core,
+                    (end - core).normalize_or_zero(),
+                    end,
+                    held_pos.is_some(),
+                    2,
+                ));
+            }
         }
         // every other player's beam (physgun.md 10: drawn for all players): from the core of
         // the world model in their hand (beside the eye without one) to the networked grab point
@@ -6955,15 +6975,17 @@ impl App {
                 (p.held_pos - start).normalize_or_zero(),
                 p.held_pos,
                 true,
+                0,
             ));
         }
         let draw_beams = self
             .utility_values
             .get("physgun_drawbeams")
             .is_none_or(|v| v != "0");
-        for (start, fwd, end, holding) in beams.into_iter().filter(|_| draw_beams) {
+        for (start, fwd, end, holding, pass) in beams.into_iter().filter(|_| draw_beams) {
             let wc = weapon_color.clamp(Vec3::ZERO, Vec3::ONE);
             let color = wc.to_array();
+            let first = additive.len();
             {
                 let len = (end - start).length();
                 if len > 1.0 {
@@ -7020,6 +7042,11 @@ impl App {
                         }
                     }
                 }
+            }
+            match pass {
+                1 => main_only.extend(first..additive.len()),
+                2 => reflect_extra.extend(additive.drain(first..)),
+                _ => {}
             }
         }
         // gmod_thruster effects (`ThrusterEffects`, gmod_thruster.lua): beams from GetOffset()
@@ -8235,6 +8262,20 @@ impl App {
         // surfaces (and into the water reflection)
         // one command encoder for the whole frame: world, models, viewmodel, post, UI go to
         // the GPU in a single submit before present
+        // the mirror: the world's additive geometry without the first-person physgun beam,
+        // plus the beam from the world model in the reflected player's hand
+        let reflect_additive: Vec<(&wgpu::BindGroup, Vec<gm_render::world::Vertex>, Vec<u32>)> =
+            if main_only.is_empty() && reflect_extra.is_empty() {
+                additive.clone()
+            } else {
+                additive
+                    .iter()
+                    .enumerate()
+                    .filter(|(i, _)| !main_only.contains(i))
+                    .map(|(_, a)| a.clone())
+                    .chain(reflect_extra)
+                    .collect()
+            };
         let mut enc = g
             .gpu
             .device
@@ -8252,7 +8293,7 @@ impl App {
             Some(scene_src),
             &items,
             &reflect_only,
-            &additive,
+            &reflect_additive,
         );
         lap(3);
         self.world_pass_ms = g.world.pass_ms();
