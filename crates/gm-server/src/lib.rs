@@ -2285,6 +2285,9 @@ pub const UNDO_PURGE_EVERY: u32 = 16;
 /// An NPC in the world: the engine's hull-moving character, not a physics prop.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Npc {
+    /// The hull as a kinematic body in the physics world (`sync_npc_hulls`): props and
+    /// ragdolls collide with a living NPC like with the game's vphysics shadow.
+    pub hull_body: Option<BodyHandle>,
     /// Spawnmenu list key (`NPCName`), e.g. `Rebel`; the entity class is `class`.
     pub key: String,
     pub class: String,
@@ -10878,10 +10881,11 @@ impl<'w> Server<'w> {
             .collision
             .trace_ray(eye, end, gm_collision::MASK_PLAYERSOLID);
         let mut best: Option<(u32, f32)> = None;
+        let mut best_npc: Option<(u32, f32)> = None;
         // the bludgeon `Swing`: a line first, then a +-16 u hull where the line found
         // nothing (hl2weapons.md, gap-report #112)
         for grow in [0.0, 16.0] {
-            if grow > 0.0 && (best.is_some() || world.fraction < 1.0) {
+            if grow > 0.0 && (best.is_some() || best_npc.is_some() || world.fraction < 1.0) {
                 break;
             }
             for (id, p) in &self.players {
@@ -10900,7 +10904,23 @@ impl<'w> Server<'w> {
                     }
                 }
             }
-            if grow > 0.0 && best.is_none() {
+            // NPC hulls the same way (the game's swing trace hits any combat character)
+            for (id, n) in &self.npcs {
+                if n.dead_at.is_some() || n.solid == 0 || n.held {
+                    continue;
+                }
+                if let Some(t) = ray_box_entry(
+                    eye,
+                    forward,
+                    n.pos + n.mins - Vec3::splat(grow),
+                    n.pos + n.maxs + Vec3::splat(grow),
+                ) {
+                    if t <= weapons::MELEE_RANGE && best_npc.is_none_or(|b| t < b.1) {
+                        best_npc = Some((*id, t));
+                    }
+                }
+            }
+            if grow > 0.0 && best.is_none() && best_npc.is_none() {
                 world = self.collision.trace_box(
                     eye,
                     end,
@@ -10909,6 +10929,30 @@ impl<'w> Server<'w> {
                     gm_collision::MASK_PLAYERSOLID,
                 );
             }
+        }
+        if let Some((npc, t)) = best_npc.filter(|b| {
+            best.is_none_or(|p| b.1 < p.1) && world.fraction * weapons::MELEE_RANGE >= b.1
+        }) {
+            // MELEE_HIT on a combat character, ImpactEffect at the hit (the blood is the
+            // damage's own effect)
+            let pos = eye + forward * t;
+            self.sounds.push(WorldSound {
+                name: format!("{prefix}.Melee_Hit"),
+                pos,
+                volume: 1.0,
+                ent: attacker,
+                ..Default::default()
+            });
+            let tick = self.tick_count;
+            self.npc_threatened(npc, attacker, tick, false);
+            self.damage_npc_typed(
+                npc,
+                attacker,
+                weapons::MELEE_DAMAGE,
+                weapons::HITGROUP_CHEST,
+                false,
+            );
+            return;
         }
         let prop = gm_sandbox::trace_line(self.collision, &self.prop_bodies(), eye, end)
             .filter(|h| h.ent.is_some());
@@ -10949,6 +10993,16 @@ impl<'w> Server<'w> {
         let Some((target, t)) = best else {
             if world.fraction < 1.0 {
                 self.melee_world_hit(attacker, &world, prefix);
+            } else {
+                // CBaseHLBludgeonWeapon::Swing: `.Single` is the miss sound; a hit plays only
+                // its Melee_Hit / Melee_HitWorld
+                self.sounds.push(WorldSound {
+                    name: format!("{prefix}.Single"),
+                    pos: eye,
+                    volume: 1.0,
+                    ent: attacker,
+                    ..Default::default()
+                });
             }
             return;
         };
@@ -11799,6 +11853,59 @@ impl<'w> Server<'w> {
     /// half a wish step into it) shoves it along the wish direction, held to the controller's
     /// push limits (`SetPushMassLimit` 350 kg: heavier props are walls, `SetPushSpeedLimit`
     /// 50 u/s); the prop under a player carries its weight (85 kg under 600 u/s^2).
+    /// Every living NPC's hull as a kinematic box in the physics world, moved to its feet each
+    /// tick: props, ragdolls and thrown things collide with the NPC instead of passing
+    /// through (the game's NPC is a vphysics shadow object). Dead, held or physics-class
+    /// NPCs (their own body) have none.
+    fn sync_npc_hulls(&mut self) {
+        let ids: Vec<u32> = self.npcs.keys().copied().collect();
+        for id in ids {
+            let Some(n) = self.npcs.get(&id) else {
+                continue;
+            };
+            let wants = n.dead_at.is_none()
+                && !n.held
+                && n.body.is_none()
+                && n.solid != 0
+                && n.remove_at.is_none()
+                && n.maxs.z > n.mins.z;
+            match (wants, n.hull_body) {
+                (false, Some(h)) => {
+                    self.physics.remove_body(h);
+                    if let Some(n) = self.npcs.get_mut(&id) {
+                        n.hull_body = None;
+                    }
+                }
+                (true, Some(h)) => {
+                    let pos = n.pos;
+                    self.physics.move_kinematic(h, pos, Quat::IDENTITY);
+                }
+                (true, None) => {
+                    let (mins, maxs, pos) = (n.mins, n.maxs, n.pos);
+                    let hull: Vec<Vec3> = (0..8)
+                        .map(|i| {
+                            Vec3::new(
+                                if i & 1 == 0 { mins.x } else { maxs.x },
+                                if i & 2 == 0 { mins.y } else { maxs.y },
+                                if i & 4 == 0 { mins.z } else { maxs.z },
+                            )
+                        })
+                        .collect();
+                    if let Ok(h) = self
+                        .physics
+                        .add_kinematic_hulls(&[hull], Surface::default())
+                    {
+                        self.physics.move_kinematic(h, pos, Quat::IDENTITY);
+                        if let Some(n) = self.npcs.get_mut(&id) {
+                            n.hull_body = Some(h);
+                        }
+                    }
+                }
+                (false, None) => {}
+            }
+        }
+    }
+
     fn player_shadow_pushes(&mut self, cmds: &BTreeMap<u32, PlayerCmd>) {
         const SHADOW_MASS: f32 = 85.0;
         const SHADOW_GRAVITY: f32 = 600.0;
@@ -15710,6 +15817,7 @@ impl<'w> Server<'w> {
             last_enemy_damage: 0,
             sight: NPC_SIGHT_RANGE,
             body: None,
+            hull_body: None,
             ignore: Vec::new(),
             burst_left: 0,
             burst_seed: 0,
@@ -16397,6 +16505,9 @@ impl<'w> Server<'w> {
             .map(|(id, _)| *id)
             .collect();
         for id in gone {
+            if let Some(h) = self.npcs.get(&id).and_then(|n| n.hull_body) {
+                self.physics.remove_body(h);
+            }
             if let Some(body) = self.npcs.remove(&id).and_then(|n| n.body) {
                 self.remove_prop(body);
             }
@@ -17577,6 +17688,9 @@ impl<'w> Server<'w> {
                     }
                 }
                 None => {
+                    if let Some(h) = self.npcs.get(&id).and_then(|n| n.hull_body) {
+                        self.physics.remove_body(h);
+                    }
                     self.npcs.remove(&id);
                     self.npc_removed = true;
                 }
@@ -22080,6 +22194,7 @@ impl<'w> Server<'w> {
                 last_enemy_damage: 0,
                 sight: NPC_SIGHT_RANGE,
                 body: None,
+                hull_body: None,
                 ignore: Vec::new(),
                 burst_left: 0,
                 burst_seed: 0,
@@ -24862,6 +24977,7 @@ impl<'w> Server<'w> {
         self.animate_ragdoll_friction();
         // the physics step after bullets, moves and projectiles: a prop hit by any of them takes
         self.player_shadow_pushes(cmds);
+        self.sync_npc_hulls();
         self.buoyancy();
         // the impulse before the floor acts on it in the same tick (`shoot_prop_crossbow_drum`)
         if !self.physics_paused {

@@ -1052,6 +1052,8 @@ fn weapon_sound(act: u8, active: u8) -> Option<String> {
         // the server plays the physcannon's Launch / DryFire / Pickup / Drop itself
         (_, "Weapon_PhysCannon") => return None,
         (_, "Toolgun") if act != 6 => return None,
+        // the bludgeons' `.Single` is their miss sound: the server plays it (or the hit)
+        (6, "Weapon_Crowbar" | "Weapon_StunStick") => return None,
         (6, _) => "Single",
         (1, "Weapon_Shotgun") => return None,
         (1, _) => "Reload",
