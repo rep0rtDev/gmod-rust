@@ -3332,7 +3332,11 @@ pub fn player_editor(
     let (px, py, pw, ph) = (x + 8.0, y + 32.0, (w * 0.5 - 12.0).round(), h - 40.0);
     crate::ugc::rect(&mut out.items, px, py, pw, ph, rgba(40, 40, 44, 255));
     if let Some((_, path)) = models.iter().find(|(n, _)| *n == current) {
-        let img = format!("icon:{path}");
+        // the DModelPanel render when it is ready, the 64 px spawn icon until then
+        let mut img = format!("preview:{path}");
+        if !(ctx.has_image)(&img) {
+            img = format!("icon:{path}");
+        }
         if (ctx.has_image)(&img) {
             let side = pw.min(ph);
             image(

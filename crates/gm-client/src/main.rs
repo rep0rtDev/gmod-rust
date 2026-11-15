@@ -2682,43 +2682,106 @@ impl App {
                 far: dist + radius * 2.0,
                 gamma: 2.2,
             };
-            // rendered at twice the 64 px SpawnIcon so the icon stays sharp when drawn
-            let (color, depth) = gm_render::world::icon_targets(&g.gpu, 128, g.config.format);
-            let color_view = color.create_view(&Default::default());
-            let msaa = g.world.quality.msaa;
-            // the pipelines are multisampled: draw into MSAA targets and resolve into the icon
-            let ms = (msaa > 1).then(|| {
-                gm_render::world::offscreen_targets(&g.gpu, 128, 128, g.config.format, msaa)
-            });
-            let ms_color = ms.as_ref().map(|(c, _)| c.create_view(&Default::default()));
-            let depth_view = ms
-                .as_ref()
-                .map(|(_, d)| d)
-                .unwrap_or(&depth)
-                .create_view(&Default::default());
-            let target = gm_render::world::ModelTarget {
-                color: ms_color.as_ref().unwrap_or(&color_view),
-                resolve: ms_color.as_ref().map(|_| &color_view),
-                depth: &depth_view,
-                aspect: 1.0,
-                clear_depth: true,
-                alpha: 1.0,
-            };
-            let item = DrawItem {
-                look: None,
-                dissolve: 0.0,
-                tint: Vec3::ONE,
-                model: m,
-                transform: glam::Mat4::IDENTITY,
-                bones: None,
-            };
-            let mut enc = g.gpu.device.create_command_encoder(&Default::default());
-            g.world
-                .draw_models(&g.gpu, &mut enc, &camera, &target, &[item]);
-            g.gpu.queue.submit([enc.finish()]);
-            g.ui.register_image_view(&g.gpu, &key, &color_view);
-            g.icon_textures.push(color);
+            Self::render_model_image(
+                &g.gpu,
+                &g.world,
+                &mut g.ui,
+                &mut g.icon_textures,
+                g.config.format,
+                &key,
+                m,
+                &camera,
+                128,
+            );
         }
+    }
+
+    /// Renders `m` once with `camera` into a `size` px square and registers it as the UI image
+    /// `key` (spawn icons at 128 for the 64 px SpawnIcon, the DModelPanel preview at 512).
+    #[allow(clippy::too_many_arguments)]
+    fn render_model_image(
+        gpu: &gm_render::Gpu,
+        world: &gm_render::world::WorldRenderer,
+        ui: &mut gm_render::ui::UiRenderer,
+        icon_textures: &mut Vec<wgpu::Texture>,
+        format: wgpu::TextureFormat,
+        key: &str,
+        m: &gm_render::world::DynModel,
+        camera: &Camera,
+        size: u32,
+    ) {
+        let (color, depth) = gm_render::world::icon_targets(gpu, size, format);
+        let color_view = color.create_view(&Default::default());
+        let msaa = world.quality.msaa;
+        // the pipelines are multisampled: draw into MSAA targets and resolve into the icon
+        let ms =
+            (msaa > 1).then(|| gm_render::world::offscreen_targets(gpu, size, size, format, msaa));
+        let ms_color = ms.as_ref().map(|(c, _)| c.create_view(&Default::default()));
+        let depth_view = ms
+            .as_ref()
+            .map(|(_, d)| d)
+            .unwrap_or(&depth)
+            .create_view(&Default::default());
+        let target = gm_render::world::ModelTarget {
+            color: ms_color.as_ref().unwrap_or(&color_view),
+            resolve: ms_color.as_ref().map(|_| &color_view),
+            depth: &depth_view,
+            aspect: 1.0,
+            clear_depth: true,
+            alpha: 1.0,
+        };
+        let item = DrawItem {
+            look: None,
+            dissolve: 0.0,
+            tint: Vec3::ONE,
+            model: m,
+            transform: glam::Mat4::IDENTITY,
+            bones: None,
+        };
+        let mut enc = gpu.device.create_command_encoder(&Default::default());
+        world.draw_models(gpu, &mut enc, camera, &target, &[item]);
+        gpu.queue.submit([enc.finish()]);
+        ui.register_image_view(gpu, key, &color_view);
+        icon_textures.push(color);
+    }
+
+    /// The player editor's DModelPanel: the chosen model from `CamPos (100, 0, 59)` looking at
+    /// `(0, 0, 37)` with FOV 70, rendered once at 512 px (`preview:<model>`).
+    fn render_model_preview(model: &str, mount: &gm_content::Mount, g: &mut Gfx) {
+        let key = format!("preview:{model}");
+        if model.is_empty() || g.ui.has_image(&key) {
+            return;
+        }
+        if !g.models.contains_key(model) {
+            let m = g.world.load_model(&g.gpu, mount, model);
+            g.models.insert(model.to_string(), m);
+        }
+        let Some(m) = g.models.get(model).and_then(|m| m.as_ref()) else {
+            g.ui.register_missing_image(&key);
+            return;
+        };
+        let position = glam::Vec3::new(100.0, 0.0, 59.0);
+        let to = glam::Vec3::new(0.0, 0.0, 37.0) - position;
+        let pitch = (-to.z).atan2(to.truncate().length()).to_degrees();
+        let camera = Camera {
+            position,
+            angles: glam::Vec3::new(pitch, 180.0, 0.0),
+            fov_x: 70.0,
+            near: 4.0,
+            far: 4096.0,
+            gamma: 2.2,
+        };
+        Self::render_model_image(
+            &g.gpu,
+            &g.world,
+            &mut g.ui,
+            &mut g.icon_textures,
+            g.config.format,
+            &key,
+            m,
+            &camera,
+            512,
+        );
     }
 
     fn send_player_skin(&mut self) {
@@ -5793,6 +5856,13 @@ impl App {
                 .map(|(_, p)| (*p).to_string())
                 .collect();
             Self::render_spawn_icons(&paths, &self.mount, g);
+            let current = self.settings.cl_playermodel.clone();
+            if let Some((_, path)) = Self::player_model_list()
+                .iter()
+                .find(|(n, _)| *n == current)
+            {
+                Self::render_model_preview(path, &self.mount, g);
+            }
         }
         lap(0);
         let frame = match g.surface.get_current_texture() {
