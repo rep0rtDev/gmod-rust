@@ -147,7 +147,9 @@ pub fn resolve_model_texture(
             continue;
         }
         let loaded = material::load_path(mount, &key, &path).ok().and_then(|m| {
-            let tex = m.base_texture.clone()?;
+            // `EyeRefract` / `Eyes` have no $basetexture: the iris is the eyeball's base
+            // (the vortigaunt's eyes were skipped as "missing")
+            let tex = m.base_texture.clone().or_else(|| m.iris.clone())?;
             let rgba = material::load_texture(mount, &tex, 512).ok()?;
             let normal_mask = matches!(
                 m.envmap.as_ref().map(|e| e.mask),
