@@ -21692,7 +21692,16 @@ impl<'w> Server<'w> {
                 continue;
             };
             let to = (p.state.origin - feet).truncate();
+            // CNPC_BaseZombie::ClawAttack: AttackMissSound / AttackHitSound of the class
+            let claw = self.npcs.get(&id).and_then(|n| match n.class.as_str() {
+                "npc_zombie" | "npc_zombie_torso" | "npc_zombine" => Some("Zombie"),
+                "npc_fastzombie" | "npc_fastzombie_torso" => Some("NPC_FastZombie"),
+                _ => None,
+            });
             if to.length() > m.reach + 16.0 {
+                if let Some(c) = claw {
+                    self.emit_sound(id, format!("{c}.AttackMiss"), 1.0);
+                }
                 continue;
             }
             let dir = if to.length_squared() > 1e-6 {
@@ -21706,6 +21715,9 @@ impl<'w> Server<'w> {
             }
             let hits_left = self.npcs.get(&id).map_or(0, |n| n.melee_hits_left);
             if self.damage_player(player, m.damage, weapons::DMG_SLASH) > 0.0 {
+                if let Some(c) = claw {
+                    self.emit_sound(id, format!("{c}.AttackHit"), 1.0);
+                }
                 if let Some(p) = self.players.get_mut(&player) {
                     p.state.velocity += dir.extend(0.0) * m.punch;
                     // the guard's shove knocks the bot off its ground: two full-speed ticks
@@ -28266,6 +28278,68 @@ pub fn npc_vocal(class: &str, kind: Vocal, salt: u64) -> Option<String> {
             Pain | Die => "NPC_Antlion.Pain",
             Attack => "NPC_Antlion.MeleeAttackSingle",
         },
+        // npc_sounds_*.txt of the remaining HL2 classes (the talkers speak response rules)
+        _ if class == "npc_zombine" => match kind {
+            Idle => "Zombine.Idle",
+            Alert => "Zombine.Alert",
+            Pain => "Zombine.Pain",
+            Die => "Zombine.Die",
+            Attack => "Zombie.Attack",
+        },
+        _ if matches!(class, "npc_cscanner" | "npc_clawscanner") => match kind {
+            Idle => "NPC_CScanner.Idle",
+            Alert => "NPC_CScanner.Alert",
+            Pain => "NPC_CScanner.Pain",
+            Die => "NPC_CScanner.Die",
+            Attack => "NPC_CScanner.Combat",
+        },
+        _ if class == "npc_strider" => match kind {
+            Idle => "NPC_Strider.Idle",
+            Alert => "NPC_Strider.Alert",
+            Pain => "NPC_Strider.Pain",
+            Die => "NPC_Strider.Death",
+            Attack => "NPC_Strider.Charge",
+        },
+        _ if class == "npc_antlionguard" => match kind {
+            Idle => "NPC_AntlionGuard.GrowlIdle",
+            Alert => "NPC_AntlionGuard.Anger",
+            Pain => "NPC_AntlionGuard.HitHard",
+            Die => "NPC_AntlionGuard.Die",
+            Attack => "NPC_AntlionGuard.Roar",
+        },
+        _ if class == "npc_manhack" => match kind {
+            Pain => "NPC_Manhack.Bat",
+            Die => "NPC_Manhack.Die",
+            Attack => "NPC_Manhack.ChargeAnnounce",
+            _ => return None,
+        },
+        _ if class == "npc_barnacle" => match kind {
+            Alert => "NPC_Barnacle.Alert",
+            Die => "NPC_Barnacle.Die",
+            Attack => "NPC_Barnacle.TongueOut",
+            _ => return None,
+        },
+        _ if class == "npc_rollermine" => match kind {
+            Idle => "NPC_RollerMine.Chirp",
+            Alert => "NPC_RollerMine.Warn",
+            Pain => "NPC_RollerMine.Hurt",
+            Attack => "NPC_RollerMine.Shock",
+            Die => return None,
+        },
+        _ if class == "npc_turret_floor" => match kind {
+            Idle => "NPC_FloorTurret.Ping",
+            Alert => "NPC_FloorTurret.Alert",
+            Die => "NPC_FloorTurret.Die",
+            _ => return None,
+        },
+        Attack if class == "npc_vortigaunt" => "NPC_Vortigaunt.Shoot",
+        Die if class == "npc_crow" => "NPC_Crow.Die",
+        Alert if class == "npc_crow" => "NPC_Crow.Alert",
+        Pain if class == "npc_crow" => "NPC_Crow.Pain",
+        Idle if class == "npc_crow" => "NPC_Crow.Idle",
+        Idle if class == "npc_pigeon" => "NPC_Pigeon.Idle",
+        Idle if class == "npc_seagull" => "NPC_Seagull.Idle",
+        Pain if class == "npc_seagull" => "NPC_Seagull.Pain",
         // the soldiers and the police speak sentences.txt groups (`!GROUP`: the client
         // plays the words of a random line of the group)
         _ if class == "npc_combine_s" => match kind {
