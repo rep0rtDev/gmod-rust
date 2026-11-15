@@ -6280,7 +6280,10 @@ impl App {
                 g.models.insert(key, m);
             }
         }
-        let rt = self.sim.interp.render_tick(self.sim.client.world.tick) + alpha.clamp(0.0, 1.0);
+        // the render clock already runs on frame time (`Interpolator::advance`): adding the
+        // local sub-tick fraction on top made it run at double speed inside a tick and fall
+        // back a tick at every sim step, so every interpolated entity walked in jerks
+        let rt = self.sim.interp.render_tick(self.sim.client.world.tick);
         self.sounds.pump(&self.mount);
         // looping entity sounds (thrusters) ride along with their interpolated entity
         for id in self.sounds.following() {
