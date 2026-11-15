@@ -37,6 +37,8 @@ pub struct Settings {
     pub cl_playermodel: String,
     /// `password`: sent in the Hello, checked against the server's `sv_password`.
     pub password: String,
+    /// `gmod_npcweapon`: the NPCs menu's weapon override (empty: the NPC's own, `none`: unarmed).
+    pub gmod_npcweapon: String,
     pub cl_playercolor: String,
     pub cl_weaponcolor: String,
     pub cl_spraydisable: bool,
@@ -120,6 +122,7 @@ impl Default for Settings {
             cl_downloadfilter: "all".to_string(),
             cl_playermodel: String::new(),
             password: String::new(),
+            gmod_npcweapon: String::new(),
             cl_playercolor: "0.24 0.34 0.41".to_string(),
             cl_weaponcolor: "0.30 1.80 2.10".to_string(),
             cl_spraydisable: false,
@@ -408,6 +411,7 @@ impl Settings {
         for (k, slot) in [
             ("cl_playermodel", &mut self.cl_playermodel),
             ("password", &mut self.password),
+            ("gmod_npcweapon", &mut self.gmod_npcweapon),
             ("cl_playercolor", &mut self.cl_playercolor),
             ("cl_weaponcolor", &mut self.cl_weaponcolor),
         ] {
@@ -492,7 +496,6 @@ impl Settings {
         self.apply_cvars(&cvars);
     }
 
-    /// Every client cvar and its value, in `config.cfg` order.
     /// `cl_interp_amount = max(cl_interp, cl_interp_ratio / cl_updaterate)` as a window of
     /// 66 Hz ticks (the defaults give 0.1 s = 7 ticks).
     pub fn interp_ticks(&self) -> f32 {
@@ -502,6 +505,7 @@ impl Settings {
         (amount / 0.015).ceil().max(1.0)
     }
 
+    /// Every client cvar and its value, in `config.cfg` order.
     pub fn cvars(&self) -> Vec<(&'static str, String)> {
         let on = |b: bool| if b { "1" } else { "0" };
         let lines: Vec<(&str, String)> = vec![
@@ -547,6 +551,7 @@ impl Settings {
             ("cl_downloadfilter", self.cl_downloadfilter.clone()),
             ("cl_playermodel", self.cl_playermodel.clone()),
             ("password", self.password.clone()),
+            ("gmod_npcweapon", self.gmod_npcweapon.clone()),
             ("cl_playercolor", self.cl_playercolor.clone()),
             ("cl_weaponcolor", self.cl_weaponcolor.clone()),
             ("cl_spraydisable", on(self.cl_spraydisable).to_string()),

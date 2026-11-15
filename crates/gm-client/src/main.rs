@@ -1300,6 +1300,7 @@ struct App {
     /// The open context-menu menubar menu and the cvar lines its rows queued for the console.
     menubar_open: Option<usize>,
     menubar_cmds: Vec<String>,
+    menubar_sub: bool,
     /// `alias <name> <commands>`: run when `<name>` is typed or bound.
     aliases: BTreeMap<String, String>,
     /// Mouse counts since the last command while rotating a held prop (physgun + E): the view
@@ -4167,12 +4168,15 @@ impl App {
                 }
                 self.console.log(format!("pp_{key} {}", u8::from(on)));
             }
+            Some(derma::Action::Menu("menubar:sub")) => self.menubar_sub = !self.menubar_sub,
             Some(derma::Action::Menu(id)) if id.starts_with("menubar:") => {
                 let n = id["menubar:".len()..].parse::<usize>().ok();
                 self.menubar_open = if self.menubar_open == n { None } else { n };
+                self.menubar_sub = false;
             }
             Some(derma::Action::Command(line)) if self.menubar_open.is_some() => {
                 self.menubar_open = None;
+                self.menubar_sub = false;
                 self.console.log(line.clone());
                 self.menubar_cmds.push(line);
             }
@@ -4191,7 +4195,7 @@ impl App {
                 self.console.log(format!("gmod_spawnnpc {key}"));
                 self.sim.client.command(Command::SpawnNpc {
                     key,
-                    weapon: String::new(),
+                    weapon: self.settings.gmod_npcweapon.clone(),
                 });
             }
             Some(derma::Action::ToolTab(i)) => {
@@ -8646,7 +8650,13 @@ impl App {
                         .or_else(|| self.utility_values.get(cvar).map(String::as_str))
                         .is_some_and(|v| v == on)
                 };
-                derma::menu_bar(&mut layout, &dctx, self.menubar_open, &is_on);
+                derma::menu_bar(
+                    &mut layout,
+                    &dctx,
+                    self.menubar_open,
+                    self.menubar_sub,
+                    &is_on,
+                );
                 if self.player_editor {
                     let models = Self::player_model_list();
                     derma::player_editor(
@@ -11582,6 +11592,7 @@ fn run() -> Result<()> {
         draw_crosshair: true,
         menubar_open: None,
         menubar_cmds: Vec::new(),
+        menubar_sub: false,
         aliases: BTreeMap::new(),
         rotate_delta: (0.0, 0.0),
         wheel_delta: 0.0,

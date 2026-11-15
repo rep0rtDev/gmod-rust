@@ -3902,6 +3902,7 @@ pub fn menu_bar(
     out: &mut Layout,
     ctx: &Ctx,
     open: Option<usize>,
+    sub_open: bool,
     is_on: &dyn Fn(&str, &str) -> bool,
 ) {
     let menus: [(&str, &str, &[MenuRow]); 3] = [
@@ -3952,10 +3953,13 @@ pub fn menu_bar(
                 .map(|r| r.map_or(String::new(), |(k, d, ..)| crate::ugc::say(ctx.lang, k, d)))
                 .collect();
             let w = dmenu_width(ctx.font, &labels);
-            let total: f32 = rows
+            let mut total: f32 = rows
                 .iter()
                 .map(|r| if r.is_some() { MENU_OPTION_H } else { 5.0 })
                 .sum();
+            if i == 1 {
+                total += 5.0 + MENU_OPTION_H;
+            }
             let mut y = MENUBAR_H;
             nine(&mut out.items, &MENU_BG, x, y, w, total, WHITE);
             for (row, label) in rows.iter().zip(&labels) {
@@ -4017,8 +4021,168 @@ pub fn menu_bar(
                 });
                 y += MENU_OPTION_H;
             }
+            if i == 1 {
+                npc_weapon_submenu(out, ctx, x, y, w, sub_open, is_on);
+            }
         }
         x += bw;
+    }
+}
+
+/// The NPCs menu's `#menubar.npcs.weapon` DMenu submenu: `gmod_npcweapon` = `""` (the NPC's
+/// default), `none`, then the `NPCUsableWeapons` list; the column opens to the right of its row.
+fn npc_weapon_submenu(
+    out: &mut Layout,
+    ctx: &Ctx,
+    x: f32,
+    y: f32,
+    w: f32,
+    sub_open: bool,
+    is_on: &dyn Fn(&str, &str) -> bool,
+) {
+    crate::ugc::rect(
+        &mut out.items,
+        x + 4.0,
+        y + 2.0,
+        w - 8.0,
+        1.0,
+        rgba(0, 0, 0, 80),
+    );
+    let y = y + 5.0;
+    let hovered = inside(ctx.cursor, x, y, w, MENU_OPTION_H);
+    if hovered || sub_open {
+        nine(
+            &mut out.items,
+            &MENU_BG_HOVER,
+            x,
+            y,
+            w,
+            MENU_OPTION_H,
+            WHITE,
+        );
+    }
+    let title = crate::ugc::say(ctx.lang, "menubar.npcs.weapon", "Weapon Override");
+    let color = if hovered {
+        BUTTON_TEXT_HOVER
+    } else {
+        BUTTON_TEXT
+    };
+    text(
+        &mut out.items,
+        FONT,
+        ctx.font,
+        x + 32.0,
+        y,
+        MENU_OPTION_H,
+        &title,
+        color,
+    );
+    text(
+        &mut out.items,
+        FONT,
+        ctx.font,
+        x + w - 16.0,
+        y,
+        MENU_OPTION_H,
+        ">",
+        color,
+    );
+    out.hits.push(Hit {
+        x,
+        y,
+        w,
+        h: MENU_OPTION_H,
+        action: Action::Menu("menubar:sub"),
+    });
+    if !sub_open {
+        return;
+    }
+    let mut rows: Vec<Option<(String, &str)>> = vec![
+        Some((
+            crate::ugc::say(ctx.lang, "menubar.npcs.defaultweapon", "Default Weapon"),
+            "",
+        )),
+        Some((
+            crate::ugc::say(ctx.lang, "menubar.npcs.noweapon", "No Weapon"),
+            "none",
+        )),
+        None,
+    ];
+    let mut weapons: Vec<(String, &str)> = gm_server::NPC_USABLE_WEAPONS
+        .iter()
+        .map(|c| (crate::ugc::say(ctx.lang, c, c), *c))
+        .collect();
+    weapons.sort_by(|a, b| a.0.cmp(&b.0));
+    rows.extend(weapons.into_iter().map(Some));
+    let labels: Vec<String> = rows
+        .iter()
+        .map(|r| r.as_ref().map_or(String::new(), |(l, _)| l.clone()))
+        .collect();
+    let sw = dmenu_width(ctx.font, &labels);
+    let total: f32 = rows
+        .iter()
+        .map(|r| if r.is_some() { MENU_OPTION_H } else { 5.0 })
+        .sum();
+    let sx = x + w;
+    let mut sy = y;
+    nine(&mut out.items, &MENU_BG, sx, sy, sw, total, WHITE);
+    for row in &rows {
+        let Some((label, value)) = row else {
+            crate::ugc::rect(
+                &mut out.items,
+                sx + 4.0,
+                sy + 2.0,
+                sw - 8.0,
+                1.0,
+                rgba(0, 0, 0, 80),
+            );
+            sy += 5.0;
+            continue;
+        };
+        let hovered = inside(ctx.cursor, sx, sy, sw, MENU_OPTION_H);
+        if hovered {
+            nine(
+                &mut out.items,
+                &MENU_BG_HOVER,
+                sx,
+                sy,
+                sw,
+                MENU_OPTION_H,
+                WHITE,
+            );
+        }
+        if is_on("gmod_npcweapon", value) && (ctx.has_image)("icon16/tick.png") {
+            image(
+                &mut out.items,
+                "icon16/tick.png",
+                sx + 4.0,
+                sy + 3.0,
+                16.0,
+                16.0,
+            );
+        }
+        text(
+            &mut out.items,
+            FONT,
+            ctx.font,
+            sx + 32.0,
+            sy,
+            MENU_OPTION_H,
+            label,
+            if hovered {
+                BUTTON_TEXT_HOVER
+            } else {
+                BUTTON_TEXT
+            },
+        );
+        out.hits.push(Hit {
+            x: sx,
+            y: sy,
+            w: sw,
+            h: MENU_OPTION_H,
+            action: Action::Command(format!("gmod_npcweapon \"{value}\"")),
+        });
+        sy += MENU_OPTION_H;
     }
 }
 
