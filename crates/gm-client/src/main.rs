@@ -5389,7 +5389,7 @@ impl App {
                                 .unwrap_or(start + fwd * 16.0 + right * 6.0 - Vec3::Z * 4.0);
                             let fwd = (end - muzzle).normalize_or_zero();
                             for (pos, size, roll, variant) in
-                                muzzle_sprites(&mut self.fx_seed, muzzle, fwd, 1.0)
+                                muzzle_sprites(&mut self.fx_seed, muzzle, fwd, 1.0, 8.0, false)
                             {
                                 self.fx_sprites.push(FxSprite {
                                     kind: FxKind::Muzzle,
@@ -5397,7 +5397,7 @@ impl App {
                                     pos,
                                     vel: Vec3::ZERO,
                                     born: now,
-                                    life: 0.1,
+                                    life: 0.025,
                                     size0: size,
                                     size1: size,
                                     color: [1.0, 1.0, 1.0],
@@ -7274,7 +7274,9 @@ impl App {
             // attachment is the model's rear; flareScale 1 -> rand(0.5,1.5))
             let fwd = gm_render::props::angle_matrix(e.angles.to_array()) * Vec3::X;
             let scale = fx_range(r, 0.5, 1.5);
-            for (pos, size, roll, variant) in muzzle_sprites(r, e.pos - fwd * 6.0, -fwd, scale) {
+            for (pos, size, roll, variant) in
+                muzzle_sprites(r, e.pos - fwd * 6.0, -fwd, scale, 2.0, false)
+            {
                 puffs.push(FxSprite {
                     kind: FxKind::Muzzle,
                     variant,
@@ -7810,11 +7812,46 @@ impl App {
                         _ => (1.0, 1.0, 0.1),
                     };
                     let scale = fx_range(&mut self.fx_seed, lo, hi);
-                    for (pos, size, roll, variant) in
-                        muzzle_sprites(&mut self.fx_seed, own_muzzle, fwd, scale)
-                    {
+                    let class = viewmodel(self.weapon).map(|v| v.class);
+                    let step = if class == Some("weapon_pistol") {
+                        4.0
+                    } else {
+                        8.0
+                    };
+                    for (pos, size, roll, variant) in muzzle_sprites(
+                        &mut self.fx_seed,
+                        own_muzzle,
+                        fwd,
+                        scale,
+                        step,
+                        class == Some("weapon_ar2"),
+                    ) {
                         self.fx_vm_muzzle
                             .push((pos, size, roll, variant, now, life));
+                    }
+                    // the pistol's / 357's smoke puff 8 u out of the barrel (g_Mat_DustPuff,
+                    // size randint(2, 4) growing x4 / x8, alpha randint(64, 128) -> 0)
+                    if let Some(grow) = match class {
+                        Some("weapon_pistol") => Some(4.0),
+                        Some("weapon_357") => Some(8.0),
+                        _ => None,
+                    } {
+                        let size0 = 2.0 + (fx_rand(&mut self.fx_seed) * 3.0).floor();
+                        let c = fx_range(&mut self.fx_seed, 200.0, 255.0) / 255.0;
+                        self.fx_sprites.push(FxSprite {
+                            kind: FxKind::Dust,
+                            variant: 0,
+                            pos: own_muzzle + fwd * 8.0,
+                            vel: Vec3::ZERO,
+                            born: now,
+                            life: fx_range(&mut self.fx_seed, 0.25, 0.5) * grow / 4.0,
+                            size0,
+                            size1: size0 * grow,
+                            color: [c; 3],
+                            roll: fx_range(&mut self.fx_seed, 0.0, std::f32::consts::TAU),
+                            roll_d: 0.0,
+                            alpha: fx_range(&mut self.fx_seed, 64.0, 128.0) / 255.0,
+                        });
                     }
                     let radius = 32.0 + (fx_rand(&mut self.fx_seed) * 33.0).floor();
                     self.fx_muzzle_light = Some((radius, now));
@@ -13572,12 +13609,22 @@ fn muzzle_sprites(
     origin: Vec3,
     forward: Vec3,
     scale: f32,
+    step: f32,
+    ar2: bool,
 ) -> Vec<(Vec3, f32, f32, usize)> {
-    (1..=8)
+    // c_te_legacytempents MuzzleFlash_*_Player / _NPC: 5 sprites `i * step * scale` along the
+    // barrel (step 8, the pistol's 4), half-size rand(6, 8) * (8 - i) / 6 (the AR2's
+    // (12 - i) / 12) * scale
+    (1..=5)
         .map(|i| {
-            let size = particles::range(seed, 6.0, 9.0) * (12.0 - i as f32) / 9.0 * scale;
+            let shape = if ar2 {
+                (12.0 - i as f32) / 12.0
+            } else {
+                (8.0 - i as f32) / 6.0
+            };
+            let size = particles::range(seed, 6.0, 8.0) * shape * scale;
             (
-                origin + forward * (2.0 * i as f32 * scale),
+                origin + forward * (step * i as f32 * scale),
                 size,
                 particles::range(seed, 0.0, std::f32::consts::TAU),
                 (particles::rng(seed) * 4.0) as usize,
