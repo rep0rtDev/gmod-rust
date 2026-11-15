@@ -2374,6 +2374,78 @@ impl App {
 
     /// A left click in the context menu on the desktop icons or inside the Player Model
     /// window: true when it was taken.
+    /// A left click on the context menu's menubar (title, row or the NPC weapon submenu);
+    /// `true` when it hit something.
+    fn menubar_click(&mut self) -> bool {
+        let Some(g) = self.gfx.as_ref() else {
+            return false;
+        };
+        let action = {
+            let (w, h) = (g.config.width as f32, g.config.height as f32);
+            let font = g.ui.font_metrics(Some(derma::FONT));
+            let bold = g.ui.font_metrics(Some(derma::FONT_BOLD));
+            let header = g.ui.font_metrics(Some(derma::HEADER_FONT));
+            let has_image = |name: &str| g.ui.has_image(name);
+            let pp_on = |_: &str| false;
+            let ctx = derma::Ctx {
+                w,
+                h,
+                cursor: self.cursor,
+                font: &font,
+                bold: &bold,
+                header: &header,
+                lists: &self.spawnlists,
+                content: [&[], &[], &[], &[], &[]],
+                results: &self.search_results,
+                tool: &self.tool,
+                has_image: &has_image,
+                pp_on: &pp_on,
+                lang: &self.lang,
+                ugc: None,
+            };
+            let settings_cvars = self.settings.cvars();
+            let is_on = |cvar: &str, on: &str| -> bool {
+                settings_cvars
+                    .iter()
+                    .find(|(n, _)| *n == cvar)
+                    .map(|(_, v)| v.as_str())
+                    .or_else(|| self.utility_values.get(cvar).map(String::as_str))
+                    .is_some_and(|v| v == on)
+            };
+            let mut layout = derma::Layout::default();
+            derma::menu_bar(
+                &mut layout,
+                &ctx,
+                self.menubar_open,
+                self.menubar_sub,
+                &is_on,
+            );
+            layout.hit(self.cursor).cloned()
+        };
+        match action {
+            Some(derma::Action::Menu("menubar:sub")) => self.menubar_sub = !self.menubar_sub,
+            Some(derma::Action::Menu(id)) if id.starts_with("menubar:") => {
+                let n = id["menubar:".len()..].parse::<usize>().ok();
+                self.menubar_open = if self.menubar_open == n { None } else { n };
+                self.menubar_sub = false;
+            }
+            Some(derma::Action::Command(line)) => {
+                self.menubar_open = None;
+                self.menubar_sub = false;
+                self.console.log(line.clone());
+                self.menubar_cmds.push(line);
+            }
+            _ => {
+                // a click elsewhere closes an open menu, as a DMenu does
+                let was_open = self.menubar_open.is_some();
+                self.menubar_open = None;
+                self.menubar_sub = false;
+                return was_open;
+            }
+        }
+        true
+    }
+
     fn player_editor_click(&mut self) -> bool {
         let (ix, iy, iw, ih) = derma::desktop_icon_rect(0);
         let (cx, cy) = self.cursor;
@@ -11070,7 +11142,7 @@ impl ApplicationHandler for App {
                                 self.sim.client.command(Command::PropertyList);
                             }
                             MouseButton::Left => {
-                                if self.player_editor_click() {
+                                if self.menubar_click() || self.player_editor_click() {
                                     return;
                                 }
                                 if self.panel_click() {
