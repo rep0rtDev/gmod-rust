@@ -4933,6 +4933,7 @@ impl WorldRenderer {
     }
 
     /// One drawn material of a dynamic model: its params buffer, textures and bind group.
+    #[allow(clippy::too_many_arguments)]
     fn material_part(
         &self,
         gpu: &Gpu,
@@ -4941,8 +4942,17 @@ impl WorldRenderer {
         rgba: &material::Rgba,
         bump: Option<&material::Rgba>,
         iris: Option<&material::Rgba>,
+        selfillum_mask: Option<&material::Rgba>,
+        phongexp: Option<&material::Rgba>,
     ) -> (wgpu::BindGroup, wgpu::Texture) {
         let device = &gpu.device;
+        let mut envmap2 = envmap2_params(mat);
+        // w: the `$selfillummask` is bound (binding 5) in place of the base alpha
+        envmap2[3] = if selfillum_mask.is_some() { 1.0 } else { 0.0 };
+        let mut phong = phong_params(mat);
+        if phong[0] > 1.5 && phongexp.is_none() {
+            phong[0] = 1.0;
+        }
         let params = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("model material params"),
             contents: bytemuck::bytes_of(&MaterialParams {
@@ -4957,10 +4967,10 @@ impl WorldRenderer {
                 uv2_t: [0.0; 4],
                 water_color: [0.0; 4],
                 envmap: envmap_params(mat),
-                envmap2: envmap2_params(mat),
+                envmap2,
                 envmap3: envmap3_params(mat),
                 selfillum_tint: selfillum_tint(mat, self.weapon_color),
-                phong: phong_params(mat),
+                phong,
                 phong_fresnel: phong_fresnel_params(mat),
             }),
             usage: wgpu::BufferUsages::UNIFORM,
@@ -4971,6 +4981,14 @@ impl WorldRenderer {
         let iris_t =
             iris.map(|b| upload_rgba_mips(gpu, b, wgpu::TextureFormat::Rgba8UnormSrgb, key));
         let iris_view = iris_t.as_ref().map(|t| t.create_view(&Default::default()));
+        let mask_view = selfillum_mask.map(|m| {
+            upload_rgba_mips(gpu, m, wgpu::TextureFormat::Rgba8Unorm, key)
+                .create_view(&Default::default())
+        });
+        let phongexp_view = phongexp.map(|m| {
+            upload_rgba_mips(gpu, m, wgpu::TextureFormat::Rgba8Unorm, key)
+                .create_view(&Default::default())
+        });
         let bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some(key),
             layout: &self.material_layout,
@@ -4997,7 +5015,9 @@ impl WorldRenderer {
                 },
                 wgpu::BindGroupEntry {
                     binding: 5,
-                    resource: wgpu::BindingResource::TextureView(&self.detail_fallback),
+                    resource: wgpu::BindingResource::TextureView(
+                        mask_view.as_ref().unwrap_or(&self.detail_fallback),
+                    ),
                 },
                 wgpu::BindGroupEntry {
                     binding: 6,
@@ -5012,8 +5032,9 @@ impl WorldRenderer {
                 },
                 wgpu::BindGroupEntry {
                     binding: 8,
-
-                    resource: wgpu::BindingResource::TextureView(&self.white_fallback),
+                    resource: wgpu::BindingResource::TextureView(
+                        phongexp_view.as_ref().unwrap_or(&self.white_fallback),
+                    ),
                 },
                 wgpu::BindGroupEntry {
                     binding: 2,
@@ -5102,7 +5123,7 @@ impl WorldRenderer {
         let mut part_textures = Vec::new();
         for (name, (verts, idx)) in by_mat {
             let (mat, rgba) = &sizes[&name];
-            let (bg, t) = self.material_part(gpu, &name, mat, rgba, None, None);
+            let (bg, t) = self.material_part(gpu, &name, mat, rgba, None, None, None, None);
             part_textures.push((name.clone(), t));
             parts.push((
                 bg,
@@ -5225,8 +5246,26 @@ impl WorldRenderer {
                     }
                     idx.push(li);
                 }
-                let (bg, t) =
-                    self.material_part(gpu, key, mat, rgba, bump.as_ref(), iris_rgba.as_ref());
+                let selfillum_rgba = mat
+                    .selfillum_mask
+                    .as_deref()
+                    .filter(|_| mat.selfillum)
+                    .and_then(|t| material::load_texture(mount, t, 1024).ok());
+                let phongexp_rgba = mat
+                    .phong
+                    .as_ref()
+                    .and_then(|p| p.exponent_texture.as_deref())
+                    .and_then(|t| material::load_texture(mount, t, 1024).ok());
+                let (bg, t) = self.material_part(
+                    gpu,
+                    key,
+                    mat,
+                    rgba,
+                    bump.as_ref(),
+                    iris_rgba.as_ref(),
+                    selfillum_rgba.as_ref(),
+                    phongexp_rgba.as_ref(),
+                );
                 part_textures.push((key.to_string(), t));
                 parts.push((
                     bg,

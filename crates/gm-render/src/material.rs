@@ -63,6 +63,9 @@ pub struct Material {
     pub envmapmask_scale: f32,
     /// `$selfillum`: the base alpha lerps the lit result towards the unlit base.
     pub selfillum: bool,
+    /// `$selfillummask`: the self-illumination mask texture (rgb), used instead of the base
+    /// alpha (combinesoldiersheet's base is the alpha-less `combinesoldier_noalpha`).
+    pub selfillum_mask: Option<String>,
     /// `$selfillumtint` (1 1 1 when absent).
     pub selfillum_tint: [f32; 3],
     /// `Proxies { PlayerWeaponColor { resultVar $selfillumtint } }`: the tint is the player's
@@ -363,6 +366,7 @@ pub fn load_path(mount: &Mount, name: &str, vmt_path: &str) -> Result<Material> 
         }
         mat.nocull = matches!(get("$nocull").as_deref(), Some("1"));
         mat.selfillum = matches!(get("$selfillum").as_deref(), Some("1"));
+        mat.selfillum_mask = get("$selfillummask");
         mat.weapon_color_tint = proxy_result(params, "playerweaponcolor", "$selfillumtint");
         mat.player_color_tint = proxy_result(params, "playercolor", "$color2");
         mat.blend_tint_by_base_alpha = matches!(get("$blendtintbybasealpha").as_deref(), Some("1"));

@@ -430,8 +430,15 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
         }
         shaded = shaded + local * (material.phong.z * phong_fres * bump_a) * tint * camera.exposure;
     }
-    // $selfillum: the base alpha lerps towards the unlit base colour
-    shaded = mix(shaded, albedo.rgb * material.selfillum_tint.rgb * camera.exposure, albedo.a * material.envmap2.z);
+    // $selfillum: the $selfillummask (rgb, bound in place of the blend modulate) or else the
+    // base alpha lerps towards the unlit base colour
+    if material.envmap2.z > 0.5 {
+        var si = vec3<f32>(albedo.a);
+        if material.envmap2.w > 0.5 {
+            si = textureSample(blend_modulate, base_sampler, in.uv).rgb;
+        }
+        shaded = mix(shaded, albedo.rgb * material.selfillum_tint.rgb * camera.exposure, si);
+    }
     // mat_monitorgamma: 2.2 is neutral, lower brightens
     let out = pow(max(shaded, vec3<f32>(0.0)), vec3<f32>(2.2 / camera.gamma));
     // env_fog_controller: linear in the view depth from fogstart to fogend, capped at

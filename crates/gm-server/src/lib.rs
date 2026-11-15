@@ -3131,6 +3131,13 @@ pub fn npc_weapon_activity(weapon: &str, act: &str) -> Option<&'static str> {
     };
     let pistol = |p: &'static str| matches!(weapon, "weapon_pistol" | "weapon_357").then_some(p);
     match act {
+        // the metrocop's baton (CNPC_MetroPolice::NPC_TranslateActivity with a stunstick):
+        // ACT_MELEE_ATTACK1 swings (`swing`), the angry idle / walk hold the baton
+        "ACT_MELEE_ATTACK1" if weapon == "weapon_stunstick" => Some("ACT_MELEE_ATTACK_SWING"),
+        "ACT_IDLE_ANGRY" | "ACT_WALK_AIM" if weapon == "weapon_stunstick" => Some(match act {
+            "ACT_IDLE_ANGRY" => "ACT_IDLE_ANGRY_MELEE",
+            _ => "ACT_WALK_ANGRY",
+        }),
         "ACT_IDLE" => rifle("ACT_IDLE_SMG1", "ACT_IDLE_SMG1", "ACT_IDLE_SMG1")
             .or_else(|| pistol("ACT_IDLE_PISTOL")),
         // a companion's relaxed idle (golden 261031 server_npc_spawn: barney Idle_Relaxed_SMG1_3,
@@ -3555,6 +3562,19 @@ pub fn npc_melee_moves(class: &str) -> Option<(&'static [NpcMelee], usize)> {
         contact_chase: true,
         ..MELEE_PLAIN
     }];
+    // the metrocop's stunstick: sk_npc_dmg_stunstick 40 within the stunstick's 75 u reach
+    // (STUNSTICK_RANGE); `swing` is 29 frames at 35 fps (53 ticks), the hit about frame 13
+    // (estimated, not measured against the game)
+    const METROCOP: [NpcMelee; 1] = [NpcMelee {
+        damage: 40.0,
+        reach: 75.0,
+        swing_ticks: 53,
+        hit_tick: 25,
+        punch: 100.0,
+        run: true,
+        start_range: 70.0,
+        ..MELEE_PLAIN
+    }];
     const ZOMBIE: [NpcMelee; 1] = [NpcMelee {
         damage: 25.0,
         reach: 55.0,
@@ -3690,6 +3710,8 @@ pub fn npc_melee_moves(class: &str) -> Option<(&'static [NpcMelee], usize)> {
         "npc_hunter" => Some((&HUNTER, 1)),
         "npc_antlionguard" => Some((&GUARD, 0)),
         "npc_strider" => Some((&STRIDER, 0)),
+        // the baton is used only while the metrocop holds one: a gun wins in npc_combat_think
+        "npc_metropolice" => Some((&METROCOP, 0)),
         _ => None,
     }
 }
@@ -20113,9 +20135,13 @@ impl<'w> Server<'w> {
                     repeat
                 };
             }
+            let baton = n.class == "npc_metropolice" && n.weapon == "weapon_stunstick";
             let to = origin.truncate() - feet.truncate();
             if to.length_squared() > 1e-6 {
                 n.angles.y = to.y.atan2(to.x).to_degrees();
+            }
+            if baton {
+                self.emit_sound(id, "Weapon_StunStick.Swing".to_string(), 1.0);
             }
         } else if n.chase != Some(player) && now >= n.face_until && !npc_stands_in_combat(&n.class)
         {
@@ -21701,14 +21727,18 @@ impl<'w> Server<'w> {
             };
             let to = (p.state.origin - feet).truncate();
             // CNPC_BaseZombie::ClawAttack: AttackMissSound / AttackHitSound of the class
+            // the stunstick's Melee_Hit / Melee_Miss (CWeaponStunStick NPC hit / miss)
             let claw = self.npcs.get(&id).and_then(|n| match n.class.as_str() {
-                "npc_zombie" | "npc_zombie_torso" | "npc_zombine" => Some("Zombie"),
-                "npc_fastzombie" | "npc_fastzombie_torso" => Some("NPC_FastZombie"),
+                "npc_zombie" | "npc_zombie_torso" | "npc_zombine" => Some(("Zombie", "Attack")),
+                "npc_fastzombie" | "npc_fastzombie_torso" => Some(("NPC_FastZombie", "Attack")),
+                "npc_metropolice" if n.weapon == "weapon_stunstick" => {
+                    Some(("Weapon_StunStick", "Melee_"))
+                }
                 _ => None,
             });
             if to.length() > m.reach + 16.0 {
                 if let Some(c) = claw {
-                    self.emit_sound(id, format!("{c}.AttackMiss"), 1.0);
+                    self.emit_sound(id, format!("{}.{}Miss", c.0, c.1), 1.0);
                 }
                 continue;
             }
@@ -21724,7 +21754,7 @@ impl<'w> Server<'w> {
             let hits_left = self.npcs.get(&id).map_or(0, |n| n.melee_hits_left);
             if self.damage_player(player, m.damage, weapons::DMG_SLASH) > 0.0 {
                 if let Some(c) = claw {
-                    self.emit_sound(id, format!("{c}.AttackHit"), 1.0);
+                    self.emit_sound(id, format!("{}.{}Hit", c.0, c.1), 1.0);
                 }
                 if let Some(p) = self.players.get_mut(&player) {
                     p.state.velocity += dir.extend(0.0) * m.punch;
@@ -21760,7 +21790,7 @@ impl<'w> Server<'w> {
                 }
             } else if let Some(c) = claw {
                 // ClawAttack: nothing hurt (god, damage filter) is a miss
-                self.emit_sound(id, format!("{c}.AttackMiss"), 1.0);
+                self.emit_sound(id, format!("{}.{}Miss", c.0, c.1), 1.0);
             }
         }
         // the roar's slide starts `roar_at` ticks into the swing, a delayed lunge at
