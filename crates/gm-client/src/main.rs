@@ -222,6 +222,7 @@ struct Gfx {
     msaa_color: Option<wgpu::TextureView>,
     /// Bloom post-process (scene target + passes) when the map renders in HDR.
     post: gm_render::post::Post,
+    halo: gm_render::halo::Halo,
     models: std::collections::HashMap<String, Option<gm_render::world::DynModel>>,
     player_box: gm_render::world::DynModel,
     /// Physgun beam materials: `sprites/physbeam` along the beam, `physg_glow1` at its end,
@@ -1409,6 +1410,10 @@ struct App {
     /// drawn pose (clientfx.md 2.1, gap-report #123).
     other_muzzles: HashMap<u32, Vec3>,
     fx_muzzle_spawned: Option<Instant>,
+    /// Each prop's last `frozen` flag, for the freeze / unfreeze halo flashes.
+    fx_frozen: std::collections::HashMap<u32, bool>,
+    /// (prop, start, frozen) halo flashes of `phys_freeze` / `phys_unfreeze` (0.3 s).
+    fx_halos: Vec<(u32, Instant, bool)>,
     /// Surface property -> game material letter (`scripts/surfaceproperties*.txt`).
     gamematerials: HashMap<String, char>,
     tool_screen: ToolScreen,
@@ -1717,6 +1722,8 @@ impl App {
         let depth = depth_view(&gpu, config.width, config.height, format, quality.msaa);
         let msaa_color = msaa_view(&gpu, config.width, config.height, format, quality.msaa);
         let post = gm_render::post::Post::new(&gpu, format, config.width, config.height);
+        let halo =
+            gm_render::halo::Halo::new(&gpu, format, config.width, config.height, quality.msaa);
         let player_box = world.solid_box(&gpu, [200, 120, 60, 255], false);
         let beam_mat = world.sprite_material(&gpu, &self.mount, "sprites/physbeam");
         let beam_active_mat = world.sprite_material(&gpu, &self.mount, "sprites/physbeama");
@@ -1808,6 +1815,7 @@ impl App {
             depth,
             msaa_color,
             post,
+            halo,
             models: Default::default(),
             player_box,
             beam_mat,
@@ -8661,6 +8669,106 @@ impl App {
                 }
             }
         }
+        // halo.Add outlines: the physgun's held object in the holder's weapon colour (sandbox
+        // cl_init AddPhysgunHalos: blur rand(1, 2), colour + rand * 0.3), the freeze / unfreeze
+        // flashes (effects phys_freeze / phys_unfreeze: green / red fading over 0.3 s by sqrt)
+        {
+            let now = Instant::now();
+            let mut reqs: Vec<(u32, [f32; 3], f32, f32)> = Vec::new();
+            if self.settings.physgun_halo {
+                let held: Vec<(u32, Vec3)> = self
+                    .sim
+                    .client
+                    .world
+                    .players
+                    .iter()
+                    .filter(|p| p.alive)
+                    .filter_map(|p| {
+                        let c = if Some(p.id) == me {
+                            weapon_color
+                        } else {
+                            Vec3::from(p.weapon_color.map(|c| f32::from(c) / 255.0))
+                        };
+                        Some((p.held?, c))
+                    })
+                    .collect();
+                for (h, c) in held {
+                    let size = 1.0 + (fx_rand(&mut self.fx_seed) * 2.0).floor().min(1.0);
+                    let col = [
+                        c.x + fx_range(&mut self.fx_seed, -0.3, 0.3),
+                        c.y + fx_range(&mut self.fx_seed, -0.3, 0.3),
+                        c.z + fx_range(&mut self.fx_seed, -0.3, 0.3),
+                    ];
+                    reqs.push((h, col, 1.0, size));
+                }
+            }
+            for e in self.sim.client.world.entities.values() {
+                if let Some(prev) = self.fx_frozen.insert(e.id, e.frozen) {
+                    if prev != e.frozen {
+                        self.fx_halos.push((e.id, now, e.frozen));
+                    }
+                }
+            }
+            let ents = &self.sim.client.world.entities;
+            self.fx_frozen.retain(|id, _| ents.contains_key(id));
+            self.fx_halos
+                .retain(|(_, born, _)| born.elapsed().as_secs_f32() < 0.3);
+            if self.settings.effects_freeze {
+                for (id, born, frozen) in &self.fx_halos {
+                    let idelta = 1.0 - (born.elapsed().as_secs_f32() / 0.3).sqrt();
+                    let col = if *frozen {
+                        [0.0, 1.0, 0.0]
+                    } else {
+                        [1.0, 0.0, 0.0]
+                    };
+                    reqs.push((*id, col, idelta, 1.0));
+                }
+            }
+            if !reqs.is_empty() {
+                let g = self.gfx.as_ref().unwrap();
+                for (id, color, alpha, size) in &reqs {
+                    let item = ents.get(id).and_then(|e| {
+                        if !e.bones.is_empty() {
+                            return None;
+                        }
+                        let (pos, ang) = match self.sim.interp.sample(e.id, rt) {
+                            Some(p) => (p.pos, p.angles),
+                            None => (e.pos, e.angles),
+                        };
+                        let model = if e.skin == 0 && e.body.is_empty() {
+                            g.models.get(&e.model)?.as_ref()?
+                        } else {
+                            g.models
+                                .get(&format!("{}#{}#{}", e.model, e.skin, e.body))?
+                                .as_ref()?
+                        };
+                        Some(DrawItem {
+                            look: None,
+                            dissolve: 0.0,
+                            tint: Vec3::ONE,
+                            model,
+                            transform: gm_render::world::model_transform(pos, ang)
+                                * glam::Mat4::from_scale(Vec3::splat(e.model_scale.max(0.01))),
+                            bones: None,
+                        })
+                    });
+                    if let Some(item) = item {
+                        g.halo.draw(
+                            &g.gpu,
+                            &mut enc,
+                            &g.world,
+                            &camera,
+                            &[item],
+                            *color,
+                            *alpha,
+                            *size,
+                            &attach,
+                            resolve,
+                        );
+                    }
+                }
+            }
+        }
         lap(5);
         // the scene (world, models, viewmodel) goes to the GPU now so it renders while the CPU
         // builds the post and UI passes; one more submit follows before present
@@ -10937,6 +11045,7 @@ impl ApplicationHandler for App {
                     g.depth = depth_view(&g.gpu, w, h, f, n);
                     g.msaa_color = msaa_view(&g.gpu, w, h, f, n);
                     g.post.resize(&g.gpu, g.config.width, g.config.height);
+                    g.halo = gm_render::halo::Halo::new(&g.gpu, f, w, h, n);
                     if g.config.height != old_height {
                         register_ui_fonts(&self.mount, &mut g.ui, &g.gpu, g.config.height);
                         for (name, family, size) in &self.script_fonts {
@@ -11898,6 +12007,8 @@ fn run() -> Result<()> {
         fx_vm_muzzle: Vec::new(),
         fx_muzzle_light: None,
         fx_muzzle_spawned: None,
+        fx_frozen: std::collections::HashMap::new(),
+        fx_halos: Vec::new(),
         gamematerials,
         tool_screen: ToolScreen::default(),
         weapon_synced: false,
