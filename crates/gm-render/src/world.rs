@@ -738,6 +738,9 @@ pub struct WorldRenderer {
     /// The local player's `cl_weaponcolor`: `$selfillumtint` of materials with the
     /// PlayerWeaponColor proxy (set before the physgun's model loads).
     pub weapon_color: Vec3,
+    /// The params buffers of loaded PlayerWeaponColor materials, rewritten by
+    /// [`World::set_weapon_color`] (the game's proxy reads the colour every frame).
+    weapon_tinted: std::cell::RefCell<Vec<(wgpu::Buffer, MaterialParams)>>,
     /// This frame's dynamic lights (the first four count).
     dlights: Vec<DLight>,
     pipeline: wgpu::RenderPipeline,
@@ -3717,6 +3720,7 @@ impl WorldRenderer {
 
         Ok(WorldRenderer {
             weapon_color: DEFAULT_WEAPON_COLOR,
+            weapon_tinted: std::cell::RefCell::new(Vec::new()),
             dlights: Vec::new(),
             lm_scale,
 
@@ -4975,27 +4979,32 @@ impl WorldRenderer {
         if phong[0] > 1.5 && phongexp.is_none() {
             phong[0] = 1.0;
         }
+        let mp = MaterialParams {
+            water_range: [0.0, 0.0, 0.0, 1.0],
+            alpha_test: mat.alpha_test as u32,
+            unlit: is_unlit(&mat.shader) as u32,
+            translucent: mat.translucent as u32,
+            // 2: `eyes`, the iris (binding 4) projected by the vertices' iris uv
+            blend: if iris.is_some() { 2 } else { 0 },
+            detail: detail_params(mat),
+            uv2_m: [1.0, 0.0, 0.0, 1.0],
+            uv2_t: [0.0; 4],
+            water_color: [0.0; 4],
+            envmap: envmap_params(mat),
+            envmap2,
+            envmap3: envmap3_params(mat),
+            selfillum_tint: selfillum_tint(mat, self.weapon_color),
+            phong,
+            phong_fresnel: phong_fresnel_params(mat),
+        };
         let params = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("model material params"),
-            contents: bytemuck::bytes_of(&MaterialParams {
-                water_range: [0.0, 0.0, 0.0, 1.0],
-                alpha_test: mat.alpha_test as u32,
-                unlit: is_unlit(&mat.shader) as u32,
-                translucent: mat.translucent as u32,
-                // 2: `eyes`, the iris (binding 4) projected by the vertices' iris uv
-                blend: if iris.is_some() { 2 } else { 0 },
-                detail: detail_params(mat),
-                uv2_m: [1.0, 0.0, 0.0, 1.0],
-                uv2_t: [0.0; 4],
-                water_color: [0.0; 4],
-                envmap: envmap_params(mat),
-                envmap2,
-                envmap3: envmap3_params(mat),
-                selfillum_tint: selfillum_tint(mat, self.weapon_color),
-                phong,
-                phong_fresnel: phong_fresnel_params(mat),
-            }),
-            usage: wgpu::BufferUsages::UNIFORM,
+            contents: bytemuck::bytes_of(&mp),
+            usage: if mat.weapon_color_tint {
+                wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST
+            } else {
+                wgpu::BufferUsages::UNIFORM
+            },
         });
         let t = upload_rgba_mips(gpu, rgba, wgpu::TextureFormat::Rgba8UnormSrgb, key);
         let bump_t = bump.map(|b| upload_rgba_mips(gpu, b, wgpu::TextureFormat::Rgba8Unorm, key));
@@ -5071,7 +5080,24 @@ impl WorldRenderer {
                 },
             ],
         });
+        if mat.weapon_color_tint {
+            self.weapon_tinted.borrow_mut().push((params, mp));
+        }
         (bg, t)
+    }
+
+    /// `cl_weaponcolor` changed: the `$selfillumtint` of every loaded PlayerWeaponColor
+    /// material (the physgun's glow sheets, view and world model) follows at once.
+    pub fn set_weapon_color(&mut self, gpu: &Gpu, color: Vec3) {
+        if color == self.weapon_color {
+            return;
+        }
+        self.weapon_color = color;
+        for (buf, mp) in self.weapon_tinted.get_mut().iter() {
+            let mut m = *mp;
+            m.selfillum_tint = [color.x, color.y, color.z, mp.selfillum_tint[3]];
+            gpu.queue.write_buffer(buf, 0, bytemuck::bytes_of(&m));
+        }
     }
 
     /// A brush model (`*N`, a moving brush entity) as a dynamic model in its own space

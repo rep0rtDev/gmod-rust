@@ -8250,7 +8250,7 @@ impl App {
         g.world.fog_override =
             edit_fog_of(&self.sim.client.world.classes, &self.sim.client.world.edits);
         // an edit_sky entity (env_skypaint's vars): a painted sky instead of the skybox
-        g.world.weapon_color = weapon_color;
+        g.world.set_weapon_color(&g.gpu, weapon_color);
         g.world.sky_paint = edit_sky_of(
             &self.sim.client.world.classes,
             &self.sim.client.world.edits,
