@@ -31,6 +31,9 @@ pub const PROP_SKIN: f32 = 0.5;
 /// the face.
 const UNSTICK_PASSES: usize = 3;
 const UNSTICK_EPSILON: f32 = 0.03125;
+/// At most this far out per pass: a smooth slide out of a prop pressed into the player
+/// rather than a jump (the shove of a normal push is a fraction of a unit a tick).
+const UNSTICK_MAX_STEP: f32 = 2.0;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct MoveConfig {
@@ -477,10 +480,11 @@ impl<'a> Mover<'a> {
     /// out along the convex's least-penetrated face, never into the world. Without it the
     /// sweep starts all-solid and the move zeroes the velocity: the player freezes against the
     /// prop until he happens to move a way that leaves it.
-    fn unstick_props(&self, st: &mut PlayerState) {
+    fn unstick_props(&self, st: &mut PlayerState) -> bool {
         if self.props.is_empty() {
-            return;
+            return false;
         }
+        let mut moved = false;
         let (mins, maxs) = self.hull(st.ducked);
         let center = (mins + maxs) * 0.5;
         let extents = (maxs - mins) * 0.5;
@@ -513,17 +517,19 @@ impl<'a> Mover<'a> {
                 }
             }
             let Some((n, depth)) = push else {
-                return;
+                return moved;
             };
-            let to = st.origin + n * (depth + UNSTICK_EPSILON);
+            let to = st.origin + n * (depth.min(UNSTICK_MAX_STEP) + UNSTICK_EPSILON);
             let t = self
                 .world
                 .trace_box(st.origin, to, mins, maxs, MASK_PLAYERSOLID);
             if t.start_solid || t.fraction < 1.0 {
-                return;
+                return moved;
             }
             st.origin = to;
+            moved = true;
         }
+        moved
     }
 
     /// Advance one tick.
@@ -583,9 +589,6 @@ impl<'a> Mover<'a> {
             self.categorize(st);
         }
         st.game_moved = false;
-        if st.move_type == MoveType::Walk {
-            self.unstick_props(st);
-        }
         let mut water = WaterCache::default();
         self.check_water(st, &mut water);
         // a water jump in progress (movement.md 6 `WaterJump`): the horizontal velocity is
@@ -1118,6 +1121,12 @@ impl<'a> Mover<'a> {
                     .set(Some((ent, t.normal, (-st.velocity.dot(t.normal)).max(0.0))));
             }
             if t.all_solid {
+                // inside a prop (shoved into the hull by the physics): out along its nearest
+                // face and the move goes on, rather than the frozen player of a bare
+                // TryPlayerMove; the world or a deeper overlap still stops the move
+                if self.unstick_props(st) {
+                    continue;
+                }
                 st.velocity = Vec3::ZERO;
                 return;
             }
