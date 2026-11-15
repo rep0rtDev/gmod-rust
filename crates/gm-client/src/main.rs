@@ -6820,9 +6820,28 @@ impl App {
             // screen under the world camera (same clip position, world projection)
             let aspect = g.config.width as f32 / g.config.height as f32;
             let vm_fov = scale_fov_by_width(vm.fov, aspect);
-            let k = (camera.fov_x.to_radians() * 0.5).tan() / (vm_fov.to_radians() * 0.5).tan();
+            let k = ((camera.fov_x.to_radians() * 0.5).tan() / (vm_fov.to_radians() * 0.5).tan())
+                .clamp(0.25, 4.0);
             let view = glam::Mat4::look_to_rh(camera.position, camera.forward(), Vec3::Z);
             let mut v = view.transform_point3(p);
+            // diagnostic (a report of the beam / flash leaving "the face"): the mapping's
+            // inputs, once in a while, to gm-client.log
+            {
+                use std::sync::atomic::{AtomicU32, Ordering};
+                static N: AtomicU32 = AtomicU32::new(0);
+                if N.fetch_add(1, Ordering::Relaxed).is_multiple_of(600) {
+                    eprintln!(
+                        "vm attach {name}: view {v:?} k {k:.3} fov_x {:.1} vm_fov {:.1} aspect {aspect:.3} \
+                         size {}x{} vm_pose {vp:?} {va:?} cam {:?} {:?}",
+                        camera.fov_x,
+                        vm_fov,
+                        g.config.width,
+                        g.config.height,
+                        camera.position,
+                        camera.angles
+                    );
+                }
+            }
             v.x *= k;
             v.y *= k;
             let mut d = view.transform_vector3(f);
