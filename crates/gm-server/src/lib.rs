@@ -10757,6 +10757,17 @@ impl<'w> Server<'w> {
     /// `Entity:TakeDamage` on a prop: the hit is logged, the damage force applied at the hit
     /// point as an impulse (`weapons::prop_bullet_force`), a breakable prop loses the damage and
     /// is removed at zero.
+    /// The `$surfaceprop` of a prop's model (`concrete` without one).
+    fn prop_surfaceprop(&self, prop: u32) -> String {
+        self.sandbox
+            .props()
+            .iter()
+            .find(|p| p.id == prop)
+            .and_then(|p| self.models.get(&p.model))
+            .map(|m| m.surfaceprop.clone())
+            .unwrap_or_else(|| "concrete".to_owned())
+    }
+
     #[allow(clippy::too_many_arguments)]
     fn hit_prop(
         &mut self,
@@ -10776,14 +10787,7 @@ impl<'w> Server<'w> {
         if !broke {
             if let Some(st) = self.prop_state(prop) {
                 let inv = st.rotation.inverse();
-                let surface = self
-                    .sandbox
-                    .props()
-                    .iter()
-                    .find(|p| p.id == prop)
-                    .and_then(|p| self.models.get(&p.model))
-                    .map(|m| m.surfaceprop.clone())
-                    .unwrap_or_else(|| "concrete".to_owned());
+                let surface = self.prop_surfaceprop(prop);
                 self.effects.push(WorldEffect::PropImpact {
                     ent: prop,
                     lpos: inv * (pos - st.position),
@@ -10864,6 +10868,24 @@ impl<'w> Server<'w> {
             .filter(|h| h.ent.is_some());
         if let Some(h) = prop {
             if best.is_none_or(|b| h.fraction * weapons::MELEE_RANGE < b.1) {
+                // CBaseHL2MPBludgeonWeapon::Hit: a hit entity that is no combat character plays
+                // MELEE_HIT_WORLD, and ImpactEffect -> UTIL_ImpactTrace adds the prop surface's
+                // bulletimpact sound (Wood_Crate / Metal.BulletImpact ...) and its decal
+                let surface = self.prop_surfaceprop(h.ent.unwrap_or(0));
+                let impact = self
+                    .surface_table
+                    .as_ref()
+                    .and_then(|t| t.sound(&surface, "bulletimpact"))
+                    .unwrap_or_else(|| "Default.BulletImpact".to_owned());
+                for name in [format!("{prefix}.Melee_HitWorld"), impact] {
+                    self.sounds.push(WorldSound {
+                        name,
+                        pos: h.pos,
+                        volume: 1.0,
+                        ent: attacker,
+                        ..Default::default()
+                    });
+                }
                 self.hit_prop(
                     h.ent.unwrap_or(0),
                     attacker,
@@ -26678,20 +26700,19 @@ impl<'w> Server<'w> {
             .map(|m| self.brush_surfaceprop(&m))
             .unwrap_or_else(|| "concrete".to_owned());
         // the surface's `bulletimpact` script (`Impact.*` through surfaceproperties, clientfx.md
-        // §3.1, gap-report #125); the crowbar plays its own Melee_HitWorld instead
-        if !melee {
-            let name = self
-                .surface_table
-                .as_ref()
-                .and_then(|t| t.sound(&surface, "bulletimpact"))
-                .unwrap_or_else(|| "Default.BulletImpact".to_owned());
-            self.sounds.push(WorldSound {
-                name,
-                pos: world.end,
-                volume: 1.0,
-                ..Default::default()
-            });
-        }
+        // §3.1, gap-report #125): UTIL_ImpactTrace plays it for any damage type, so the crowbar
+        // swing has it under its own Melee_HitWorld (concrete_impact_bullet* over crowbar_impact*)
+        let name = self
+            .surface_table
+            .as_ref()
+            .and_then(|t| t.sound(&surface, "bulletimpact"))
+            .unwrap_or_else(|| "Default.BulletImpact".to_owned());
+        self.sounds.push(WorldSound {
+            name,
+            pos: world.end,
+            volume: 1.0,
+            ..Default::default()
+        });
         self.effects.push(WorldEffect::Impact {
             pos: world.end,
             normal: world.normal,
