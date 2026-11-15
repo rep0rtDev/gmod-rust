@@ -226,6 +226,8 @@ pub struct EntityState {
     pub owner: u32,
     /// `SetMaterial` override, `SetColor` rgba, render mode and fx (material / colour stools)
     pub material: String,
+    /// An NPC's weapon class (`weapon_smg1`), drawn bone-merged in its right hand; empty otherwise.
+    pub npc_weapon: String,
     pub color: [u8; 4],
     pub render_mode: u8,
     pub render_fx: u8,
@@ -1253,6 +1255,7 @@ impl ServerMsg {
                     w.str(&e.body);
                     w.u32(e.owner);
                     w.str(&e.material);
+                    w.str(&e.npc_weapon);
                     for c in e.color {
                         w.u8(c);
                     }
@@ -1740,6 +1743,7 @@ impl ServerMsg {
                         body: r.str()?,
                         owner: r.u32()?,
                         material: r.str()?,
+                        npc_weapon: r.str()?,
                         color: [r.u8()?, r.u8()?, r.u8()?, r.u8()?],
                         render_mode: r.u8()?,
                         render_fx: r.u8()?,

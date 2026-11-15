@@ -171,6 +171,7 @@ impl Sim {
                             body: String::new(),
                             owner: 0,
                             material: String::new(),
+                            npc_weapon: String::new(),
                             color: [255; 4],
                             render_mode: 0,
                             render_fx: 0,
@@ -6047,12 +6048,18 @@ impl App {
             .world
             .players
             .iter()
-            .filter(|p| Some(p.id) != me)
             .filter_map(|p| world_model_of(p.active));
+        let npc_held_models = ents.values().filter_map(|e| {
+            let idx = gm_server::WIRE_WEAPONS
+                .iter()
+                .position(|w| *w == e.npc_weapon)?;
+            world_model(idx as u8)
+        });
         for model in ents
             .values()
             .map(|e| e.model.as_str())
             .chain(held_models)
+            .chain(npc_held_models)
             .chain(ghost_models)
         {
             // env_sprite entities carry a sprite material, not a model; a model-less entity
@@ -6337,6 +6344,31 @@ impl App {
                 })
             })
             .collect();
+        // an NPC's weapon: the world model bone-merged onto its skeleton (right hand)
+        let npc_held: Vec<(&gm_render::world::DynModel, Vec<glam::Mat4>)> = ents
+            .values()
+            .filter(|e| !e.npc_weapon.is_empty())
+            .filter_map(|e| {
+                let (world, _) = ent_bones.get(&e.id)?;
+                let m = g.models.get(&e.model)?.as_ref()?;
+                let idx = gm_server::WIRE_WEAPONS
+                    .iter()
+                    .position(|w| *w == e.npc_weapon)?;
+                let wm = g.models.get(world_model(idx as u8)?)?.as_ref()?;
+                let (bones, _) = wm.bone_world_merged("idle", 0.0, m, world)?;
+                Some((wm, bones))
+            })
+            .collect();
+        for (wm, bones) in &npc_held {
+            items.push(DrawItem {
+                look: None,
+                dissolve: 0.0,
+                tint: Vec3::ONE,
+                model: wm,
+                transform: glam::Mat4::IDENTITY,
+                bones: Some(bones),
+            });
+        }
         for p in &self.sim.client.world.players {
             if !p.alive {
                 continue;

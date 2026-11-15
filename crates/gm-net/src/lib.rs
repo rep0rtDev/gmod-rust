@@ -120,6 +120,7 @@ mod tests {
                 body: String::new(),
                 owner: 1,
                 material: String::new(),
+                npc_weapon: String::new(),
                 color: [255; 4],
                 render_mode: 0,
                 render_fx: 0,
