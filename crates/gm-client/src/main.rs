@@ -7829,7 +7829,7 @@ impl App {
                 if tr.start_solid || tr.fraction < 1.0 {
                     origin = eye;
                 }
-                let target = eye + fwd * 750.0;
+                let target = eye + fwd * self.settings.r_flashlightfar;
                 let dir = (target - origin).normalize_or_zero();
                 let tr = col.trace_box(origin, target, hull.0, hull.1, gm_collision::MASK_SOLID);
                 let dist = tr.end.distance(origin);
@@ -7866,7 +7866,7 @@ impl App {
             };
             let light = gm_render::world::DLight {
                 pos,
-                radius: 750.0,
+                radius: self.settings.r_flashlightfar,
                 color: Vec3::new(1.0, 1.0, 0.95) * 1.5,
                 dir,
                 cone: 26.85f32.to_radians().cos(),
@@ -7888,6 +7888,17 @@ impl App {
                 g,
             );
         }
+        // `r_dynamic 0`: no dlights, but the flashlight is a projected light in the game and
+        // stays
+        if !self.settings.r_dynamic {
+            dlights = flashlights.iter().map(|f| f.1).collect();
+            for (i, f) in flashlights.iter_mut().enumerate() {
+                f.0 = i;
+            }
+        }
+        g.world.flashlight_fov.set(self.settings.r_flashlightfov);
+        g.world.r_shadows.set(self.settings.r_shadows);
+        g.world.fullbright.set(self.settings.mat_fullbright);
         g.world.set_dlights(&dlights);
         g.world.set_flashlights(&flashlights);
         let target = ModelTarget {

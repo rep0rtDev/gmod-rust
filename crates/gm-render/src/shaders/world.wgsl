@@ -264,6 +264,10 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
         }
     }
     light = light * camera.lm_scale;
+    // mat_fullbright 1
+    if camera.sun_shadow.w > 0.5 {
+        light = vec3<f32>(1.0);
+    }
     // dynamic lights: colour * (1 - d / r)^2 * facing (unlit surfaces skip them); kept apart
     // from the static light so a model's vertex shade (its ambient cube, black in a dark
     // room) adds to them instead of scaling them away

@@ -838,6 +838,10 @@ pub struct WorldRenderer {
     /// skipped while no part of the water / mirror surface is in a visible leaf (the game
     /// renders _rt_WaterReflection only with water in the visible leaves).
     pub sees: std::cell::RefCell<Option<PvsFn>>,
+    /// `r_flashlightfov` (53.7), `r_shadows`, `mat_fullbright` of the client.
+    pub flashlight_fov: std::cell::Cell<f32>,
+    pub r_shadows: std::cell::Cell<bool>,
+    pub fullbright: std::cell::Cell<bool>,
     /// `eye -> visible-cluster mask` from the map's PVS, set by the client: the opaque world
     /// pass draws only the faces of visible leaves (static props always), like the game's
     /// leaf list; None (eye in solid / no PVS) draws everything.
@@ -3794,6 +3798,9 @@ impl WorldRenderer {
             pass_ms: Default::default(),
             gpu_time: crate::gputime::GpuTimer::new(gpu),
             sees: std::cell::RefCell::new(None),
+            flashlight_fov: std::cell::Cell::new(53.7),
+            r_shadows: std::cell::Cell::new(true),
+            fullbright: std::cell::Cell::new(false),
             model_cache: Default::default(),
         })
     }
@@ -3825,22 +3832,25 @@ impl WorldRenderer {
         self.update_culling(gpu, camera.position);
         let t0 = std::time::Instant::now();
         let mut vps = [None; DEPTH_LAYERS];
-        for (slot, (_, l)) in self.flashlights.iter().take(SHADOW_LAYERS).enumerate() {
-            vps[slot] = Some(self.draw_flashlight_depth(
+        // r_shadows 0: no depth passes, so the shader sees no shadow layers at all
+        if self.r_shadows.get() {
+            for (slot, (_, l)) in self.flashlights.iter().take(SHADOW_LAYERS).enumerate() {
+                vps[slot] = Some(self.draw_flashlight_depth(
+                    gpu,
+                    enc,
+                    l,
+                    &self.shadow_layers[slot],
+                    reflect_items,
+                ));
+            }
+            vps[SUN_LAYER] = self.draw_sun_depth(
                 gpu,
                 enc,
-                l,
-                &self.shadow_layers[slot],
+                camera,
+                &self.shadow_layers[SUN_LAYER],
                 reflect_items,
-            ));
+            );
         }
-        vps[SUN_LAYER] = self.draw_sun_depth(
-            gpu,
-            enc,
-            camera,
-            &self.shadow_layers[SUN_LAYER],
-            reflect_items,
-        );
         self.flashlight_vp.set(vps);
         // each stage goes to the GPU as soon as it is encoded, so the GPU works on the shadows
         // while the CPU encodes the reflection and the scene (one submit per frame left the GPU
@@ -4251,7 +4261,7 @@ impl WorldRenderer {
                 f32::from(self.flashlight_vp.get()[SUN_LAYER].is_some()),
                 SUN_SHADOW_DIST / SUN_SHADOW_RANGE,
                 SUN_SHADOW_ALPHA,
-                0.0,
+                f32::from(self.fullbright.get()),
             ],
             shadow_slot: {
                 let vps = self.flashlight_vp.get();
@@ -4761,7 +4771,7 @@ impl WorldRenderer {
                 dir.y.atan2(dir.x).to_degrees(),
                 0.0,
             ),
-            fov_x: 53.7,
+            fov_x: self.flashlight_fov.get(),
             near: 4.0,
             far: light.radius.max(8.0),
             gamma: 2.2,

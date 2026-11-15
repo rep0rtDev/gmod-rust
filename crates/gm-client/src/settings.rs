@@ -50,6 +50,12 @@ pub struct Settings {
     /// `mat_hdr_level` 0..2, motion blur, `mat_queue_mode` (-1 multicore), bloom; gamma 1.6..2.6.
     pub mat_picmip: i32,
     pub r_rootlod: i32,
+    /// `r_flashlightfov` / `r_flashlightfar`, `r_dynamic` (dlights), `r_shadows`, `mat_fullbright`.
+    pub r_flashlightfov: f32,
+    pub r_flashlightfar: f32,
+    pub r_dynamic: bool,
+    pub r_shadows: bool,
+    pub mat_fullbright: bool,
     pub r_waterforceexpensive: bool,
     pub r_waterforcereflectentities: bool,
     pub r_shadowrendertotexture: bool,
@@ -103,6 +109,11 @@ impl Default for Settings {
             cl_showfps: 0,
             mat_picmip: 0,
             r_rootlod: 0,
+            r_flashlightfov: 53.7,
+            r_flashlightfar: 750.0,
+            r_dynamic: true,
+            r_shadows: true,
+            mat_fullbright: false,
             r_waterforceexpensive: true,
             r_waterforcereflectentities: false,
             r_shadowrendertotexture: true,
@@ -366,6 +377,11 @@ impl Settings {
         self.cl_showfps = f("cl_showfps", self.cl_showfps as f32).max(0.0) as u32;
         self.mat_picmip = (f("mat_picmip", self.mat_picmip as f32) as i32).clamp(-1, 2);
         self.r_rootlod = (f("r_rootlod", self.r_rootlod as f32) as i32).clamp(0, 2);
+        self.r_flashlightfov = f("r_flashlightfov", self.r_flashlightfov).clamp(1.0, 170.0);
+        self.r_flashlightfar = f("r_flashlightfar", self.r_flashlightfar).clamp(8.0, 8192.0);
+        self.r_dynamic = b("r_dynamic", self.r_dynamic);
+        self.r_shadows = b("r_shadows", self.r_shadows);
+        self.mat_fullbright = b("mat_fullbright", self.mat_fullbright);
         self.r_waterforceexpensive = b("r_waterforceexpensive", self.r_waterforceexpensive);
         self.r_waterforcereflectentities = b(
             "r_waterforcereflectentities",
@@ -471,6 +487,11 @@ impl Settings {
             ("cl_showfps", format!("{}", self.cl_showfps)),
             ("mat_picmip", format!("{}", self.mat_picmip)),
             ("r_rootlod", format!("{}", self.r_rootlod)),
+            ("r_flashlightfov", format!("{}", self.r_flashlightfov)),
+            ("r_flashlightfar", format!("{}", self.r_flashlightfar)),
+            ("r_dynamic", on(self.r_dynamic).to_string()),
+            ("r_shadows", on(self.r_shadows).to_string()),
+            ("mat_fullbright", on(self.mat_fullbright).to_string()),
             (
                 "r_waterforceexpensive",
                 on(self.r_waterforceexpensive).to_string(),
