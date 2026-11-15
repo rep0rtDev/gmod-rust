@@ -3138,16 +3138,18 @@ impl WorldRenderer {
             ..Default::default()
         });
         let make_pipeline = |label: &str,
+                             vs: &str,
                              fs: &str,
                              blend: Option<wgpu::BlendState>,
                              depth_write: bool,
+                             depth_compare: wgpu::CompareFunction,
                              cull: bool| {
             device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some(label),
             layout: Some(&layout),
             vertex: wgpu::VertexState {
                 module: &shader,
-                entry_point: Some("vs_main"),
+                entry_point: Some(vs),
                 compilation_options: Default::default(),
                 buffers: &[Some(wgpu::VertexBufferLayout {
                     array_stride: std::mem::size_of::<Vertex>() as u64,
@@ -3166,7 +3168,7 @@ impl WorldRenderer {
             depth_stencil: Some(wgpu::DepthStencilState {
                 format: wgpu::TextureFormat::Depth32Float,
                 depth_write_enabled: Some(depth_write),
-                depth_compare: Some(wgpu::CompareFunction::Less),
+                depth_compare: Some(depth_compare),
                 stencil: Default::default(),
                 bias: Default::default(),
             }),
@@ -3188,10 +3190,42 @@ impl WorldRenderer {
             cache: None,
         })
         };
-        let pipeline = make_pipeline("world", "fs_main", None, true, true);
-        let sky_pipeline = make_pipeline("sky", "fs_main", None, true, false);
-        let skypaint_pipeline = make_pipeline("skypaint", "fs_skypaint", None, true, false);
-        let nocull_pipeline = make_pipeline("world nocull", "fs_main", None, true, false);
+        let pipeline = make_pipeline(
+            "world",
+            "vs_main",
+            "fs_main",
+            None,
+            true,
+            wgpu::CompareFunction::Less,
+            true,
+        );
+        let sky_pipeline = make_pipeline(
+            "sky",
+            "vs_sky",
+            "fs_main",
+            None,
+            false,
+            wgpu::CompareFunction::LessEqual,
+            false,
+        );
+        let skypaint_pipeline = make_pipeline(
+            "skypaint",
+            "vs_sky",
+            "fs_skypaint",
+            None,
+            false,
+            wgpu::CompareFunction::LessEqual,
+            false,
+        );
+        let nocull_pipeline = make_pipeline(
+            "world nocull",
+            "vs_main",
+            "fs_main",
+            None,
+            true,
+            wgpu::CompareFunction::Less,
+            false,
+        );
         // entity models skinned on the GPU: group 3 carries the per-draw params (uniform,
         // dynamic offset) and the bones (storage, dynamic offset)
         let skin_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -3491,27 +3525,34 @@ impl WorldRenderer {
 ;
         let translucent_nocull_pipeline = make_pipeline(
             "translucent nocull",
+            "vs_main",
             "fs_main",
             Some(wgpu::BlendState::ALPHA_BLENDING),
             false,
+            wgpu::CompareFunction::Less,
             false,
         );
         let translucent_pipeline = make_pipeline(
             "models translucent",
+            "vs_main",
             "fs_main",
             Some(wgpu::BlendState::ALPHA_BLENDING),
             false,
+            wgpu::CompareFunction::Less,
             true,
         );
         let alpha_pipeline = make_pipeline(
             "alpha",
+            "vs_main",
             "fs_main",
             Some(wgpu::BlendState::ALPHA_BLENDING),
             false,
+            wgpu::CompareFunction::Less,
             false,
         );
         let additive_pipeline = make_pipeline(
             "additive",
+            "vs_main",
             "fs_main",
             Some(wgpu::BlendState {
                 color: wgpu::BlendComponent {
@@ -3522,10 +3563,12 @@ impl WorldRenderer {
                 alpha: wgpu::BlendComponent::OVER,
             }),
             false,
+            wgpu::CompareFunction::Less,
             false,
         );
         let modulate_pipeline = make_pipeline(
             "modulate",
+            "vs_main",
             "fs_main",
             Some(wgpu::BlendState {
                 color: wgpu::BlendComponent {
@@ -3536,6 +3579,7 @@ impl WorldRenderer {
                 alpha: wgpu::BlendComponent::OVER,
             }),
             false,
+            wgpu::CompareFunction::Less,
             true,
         );
 
@@ -3919,12 +3963,15 @@ impl WorldRenderer {
         scene_src: Option<&wgpu::Texture>,
         items: &[DrawItem<'_>],
     ) {
+        let has_sky = self.sky_camera.is_some() && self.batches.iter().any(|b| b.sky);
+        // without a 3D skybox the 2D sky is the first layer; with one it is drawn inside the
+        // skybox pass over the pixels its geometry left at depth 1 - a full-screen HDR MSAA
+        // layer less (1440p x4 is ~180 MB per layer)
         let mut clear = true;
-        if self.sky2d.is_some() {
-            self.sky_pass(gpu, enc, camera, color, resolve, depth, aspect);
+        if self.sky2d.is_some() && !has_sky {
+            self.sky_pass(gpu, enc, camera, color, resolve, depth, aspect, true);
             clear = false;
         }
-        let has_sky = self.sky_camera.is_some() && self.batches.iter().any(|b| b.sky);
         if let (true, Some(sky)) = (has_sky, self.sky_camera) {
             let sky_cam = Camera {
                 position: sky.origin + camera.position / sky.scale,
@@ -4117,6 +4164,7 @@ impl WorldRenderer {
         resolve: Option<&wgpu::TextureView>,
         depth: &wgpu::TextureView,
         aspect: f32,
+        first: bool,
     ) {
         let Some(sky) = &self.sky2d else { return };
         let cam = Camera {
@@ -4134,14 +4182,22 @@ impl WorldRenderer {
                     depth_slice: None,
                     resolve_target: resolve,
                     ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                        load: if first {
+                            wgpu::LoadOp::Clear(wgpu::Color::BLACK)
+                        } else {
+                            wgpu::LoadOp::Load
+                        },
                         store: wgpu::StoreOp::Store,
                     },
                 })],
                 depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
                     view: depth,
                     depth_ops: Some(wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(1.0),
+                        load: if first {
+                            wgpu::LoadOp::Clear(1.0)
+                        } else {
+                            wgpu::LoadOp::Load
+                        },
                         store: wgpu::StoreOp::Store,
                     }),
                     stencil_ops: None,
@@ -4252,6 +4308,9 @@ impl WorldRenderer {
             // surfaces (glass blends over them, the refraction copy has them); their draw
             // writes the camera uniform itself, so ours is restored after
             drop(pass);
+            if sky {
+                self.sky_pass(gpu, enc, camera, color, resolve, depth, aspect, false);
+            }
             if !sky && !items.is_empty() {
                 self.draw_models(
                     gpu,

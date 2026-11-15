@@ -174,8 +174,7 @@ struct VsOut {
     @location(10) tint: vec4<f32>,
 };
 
-@vertex
-fn vs_main(in: VsIn) -> VsOut {
+fn vs_world(in: VsIn) -> VsOut {
     var out: VsOut;
     out.clip = camera.view_proj * vec4<f32>(in.position, 1.0);
     out.uv = in.uv;
@@ -627,5 +626,19 @@ fn vs_skin(in: SkinIn) -> VsOut {
     out.cube = skin.misc.x;
     out.spec_dir = skin.spec_dir.xyz;
     out.spec_color = skin.spec_color.xyz;
+    return out;
+}
+
+@vertex
+fn vs_main(in: VsIn) -> VsOut {
+    return vs_world(in);
+}
+
+// The 2D sky cube at depth exactly 1.0: drawn after the 3D skybox's geometry with a
+// less-equal test it fills only the pixels nothing covered, instead of the whole screen first.
+@vertex
+fn vs_sky(in: VsIn) -> VsOut {
+    var out = vs_world(in);
+    out.clip.z = out.clip.w;
     return out;
 }
