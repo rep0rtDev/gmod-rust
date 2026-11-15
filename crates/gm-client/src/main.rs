@@ -6601,12 +6601,6 @@ impl App {
                 let (v, i) = g.world.sprite_quad(start, 6.0, color, &camera);
                 additive.push((gl, v, i));
             }
-            dlights.push(gm_render::world::DLight {
-                pos: start,
-                radius: 48.0,
-                color: wc * 0.5,
-                ..Default::default()
-            });
             // the beam only while something is held (binary study physgun.md §10): three
             // quadratic Beziers start -> control -> end with control = start + aim * |start - end|
             // * K2 (K2 unresolved, 0.5), widths 2 / rand 2..5 / rand 2..6 re-rolled every frame,
@@ -6654,12 +6648,6 @@ impl App {
             {
                 let len = (end - start).length();
                 if len > 1.0 {
-                    dlights.push(gm_render::world::DLight {
-                        pos: end,
-                        radius: 160.0,
-                        color: wc,
-                        ..Default::default()
-                    });
                     let (p0, p1, p2) = (start, start + fwd * (len * 0.5), end);
                     let n = 24;
                     let points: Vec<Vec3> = (0..=n)

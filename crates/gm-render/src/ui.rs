@@ -552,6 +552,8 @@ fn system_fonts() -> &'static [std::path::PathBuf] {
 /// A run of vertices drawn with one bind group; the flag selects the additive pipeline.
 type Batch<'a> = (&'a wgpu::BindGroup, std::ops::Range<u32>, bool);
 
+const UI_VB_SLOTS: usize = 4;
+
 pub struct UiRenderer {
     pipeline: wgpu::RenderPipeline,
     /// `$additive` images (the crosshair sheet): src * alpha + dst, no square around them.
@@ -565,7 +567,10 @@ pub struct UiRenderer {
     screen_buffer: wgpu::Buffer,
     /// The frame's UI vertices: one growable buffer rewritten per frame (`draw` runs once a
     /// frame, so a single slot is safe with the frame's one submit).
-    vertex_buffer: std::cell::RefCell<Option<(wgpu::Buffer, u64)>>,
+    /// Reusable vertex buffers, one per `draw` call of a frame (world-space UI, screen UI and
+    /// icon passes are recorded into one encoder before any submit, so they cannot share one).
+    vertex_buffers: std::cell::RefCell<[Option<(wgpu::Buffer, u64)>; UI_VB_SLOTS]>,
+    vb_cursor: std::cell::Cell<usize>,
     default: FontAtlas,
     fonts: HashMap<String, FontAtlas>,
     /// Loaded images by name; `None` remembers a texture that is not in the content.
@@ -776,7 +781,8 @@ impl UiRenderer {
             layout,
             sampler,
             screen_buffer,
-            vertex_buffer: Default::default(),
+            vertex_buffers: Default::default(),
+            vb_cursor: Default::default(),
             default,
             fonts: HashMap::new(),
             images: HashMap::new(),
@@ -884,8 +890,11 @@ impl UiRenderer {
             .and_then(|m| m.base_texture)
             .unwrap_or_else(|| name.to_string());
         let decoded = if is_png {
+            // the game's PNGs live under materials/ (icon16/*.png, vgui/logos, spawnicons);
+            // map thumbs and addon images are addressed by their full path
             mount
-                .read(name)
+                .read(&format!("materials/{name}"))
+                .or_else(|_| mount.read(name))
                 .map_err(anyhow::Error::from)
                 .and_then(|bytes| material::load_png(&bytes))
                 .inspect_err(|e| eprintln!("ui image {name}: {e}"))
@@ -1147,7 +1156,10 @@ impl UiRenderer {
             }),
         );
         let bytes: &[u8] = bytemuck::cast_slice(&vertices);
-        let mut slot = self.vertex_buffer.borrow_mut();
+        let mut slots = self.vertex_buffers.borrow_mut();
+        let si = self.vb_cursor.get();
+        self.vb_cursor.set((si + 1) % UI_VB_SLOTS);
+        let slot = &mut slots[si];
         if slot
             .as_ref()
             .is_none_or(|(_, cap)| *cap < bytes.len() as u64)

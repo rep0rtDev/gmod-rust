@@ -5853,7 +5853,13 @@ impl WorldRenderer {
         for (item_index, item) in items.iter().enumerate() {
             let (m, xf) = (item.model, &item.transform);
             // the game lights a model from its origin: ambient cube of the leaf + direct lights
-            let origin = xf.transform_point3(Vec3::ZERO);
+            // (a ragdoll's bones are world poses under an identity transform: its origin is
+            // the root bone, not the map origin)
+            let origin = xf.transform_point3(
+                item.bones
+                    .and_then(|b| b.first())
+                    .map_or(Vec3::ZERO, |b| b.w_axis.truncate()),
+            );
             let model_cube = self.cubes.nearest(origin);
             let local = if m.unlit {
                 None
@@ -6181,7 +6187,13 @@ impl WorldRenderer {
                 bones[at..at + 64].copy_from_slice(bytemuck::cast_slice(&m.to_cols_array()));
             }
             let xf = &item.transform;
-            let origin = xf.transform_point3(Vec3::ZERO);
+            // (a ragdoll's bones are world poses under an identity transform: its origin is
+            // the root bone, not the map origin)
+            let origin = xf.transform_point3(
+                item.bones
+                    .and_then(|b| b.first())
+                    .map_or(Vec3::ZERO, |b| b.w_axis.truncate()),
+            );
             let model_cube = self.cubes.nearest(origin);
             let local = if m.unlit {
                 None

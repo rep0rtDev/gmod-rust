@@ -245,7 +245,10 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
         light = bumped;
     }
     light = light * camera.lm_scale;
-    // dynamic lights: colour * (1 - d / r)^2 * facing (unlit surfaces skip them)
+    // dynamic lights: colour * (1 - d / r)^2 * facing (unlit surfaces skip them); kept apart
+    // from the static light so a model's vertex shade (its ambient cube, black in a dark
+    // room) adds to them instead of scaling them away
+    var dynl = vec3<f32>(0.0);
     for (var i = 0u; i < 32u; i++) {
         let lp = camera.dlight_pos[i];
         if lp.w > 0.0 {
@@ -269,7 +272,7 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
             if dot(in.normal, in.normal) > 0.0 && dot(in.normal, dv) < -1.0 {
                 facing = 0.0;
             }
-            light += camera.dlight_color[i].rgb * (k * k * facing);
+            dynl += camera.dlight_color[i].rgb * (k * k * facing);
         }
     }
     // the entity shadow decals darken the lit world surface (models carry w = 1: none)
@@ -296,7 +299,7 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
         dissolve_glow = vec3<f32>(0.55, 0.8, 1.0) * edge * edge * 4.0;
     }
     let base = albedo.rgb * mix(vec3<f32>(1.0), d * 2.0, material.detail.y) * tint;
-    var shaded = (base * light * in.color + dissolve_glow) * camera.exposure;
+    var shaded = (base * (light * in.color + dynl) + dissolve_glow) * camera.exposure;
     // DecalModulate (mode 3): the raw texel is the blend factor (colour * 2 * texel), its
     // 128 grey neutral - no exposure, no light, no tint, else every bullet hole brightens
     // its square whenever the auto-exposure is above 1
