@@ -2321,11 +2321,14 @@ impl App {
             .cloned()
     }
 
-    /// The game's player model table, sorted by name: (name, model path).
-    fn player_model_list() -> Vec<(&'static str, &'static str)> {
+    /// The game's player model table, sorted by name: (name, model path). Models of games
+    /// that are not mounted (player_manager adds the TF2 / CS:S / DoD sets under
+    /// `IsMounted`) are left out.
+    fn player_model_list(mount: &gm_content::Mount) -> Vec<(&'static str, &'static str)> {
         let mut v: Vec<(&str, &str)> = gm_server::player_models::PLAYER_MODELS
             .iter()
             .map(|m| (m.0, m.1))
+            .filter(|m| mount.exists(m.1))
             .collect();
         v.sort_unstable();
         v.dedup_by(|a, b| a.1 == b.1);
@@ -2499,7 +2502,7 @@ impl App {
             ugc: None,
         };
         let mut layout = derma::Layout::default();
-        let models = Self::player_model_list();
+        let models = Self::player_model_list(&self.mount);
         derma::player_editor(
             &mut layout,
             &ctx,
@@ -5962,13 +5965,13 @@ impl App {
             g.ui.load_image(&g.gpu, &self.mount, "icon16/tick.png");
         }
         if self.player_editor {
-            let paths: Vec<String> = Self::player_model_list()
+            let paths: Vec<String> = Self::player_model_list(&self.mount)
                 .iter()
                 .map(|(_, p)| (*p).to_string())
                 .collect();
             Self::render_spawn_icons(&paths, &self.mount, g);
             let current = self.settings.cl_playermodel.clone();
-            if let Some((_, path)) = Self::player_model_list()
+            if let Some((_, path)) = Self::player_model_list(&self.mount)
                 .iter()
                 .find(|(n, _)| *n == current)
             {
@@ -8772,7 +8775,7 @@ impl App {
                     &is_on,
                 );
                 if self.player_editor {
-                    let models = Self::player_model_list();
+                    let models = Self::player_model_list(&self.mount);
                     derma::player_editor(
                         &mut layout,
                         &dctx,
