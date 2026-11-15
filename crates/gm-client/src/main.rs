@@ -313,6 +313,19 @@ const CONSOLE_LOG_LINES: usize = 500;
 
 /// World model held by another player, by `gm_server::WIRE_WEAPONS` index (`PlayerSnap::active`);
 /// it shares `ValveBiped.Bip01_R_Hand` with the player skeleton and is bone-merged onto it.
+/// The rest pose a world model is bone-merged in: its `idle` sequence, else the first one
+/// (w_irifle / w_shotgun only have `idle1`, which left the elite's AR2 undrawn).
+fn idle_sequence(wm: &gm_render::world::DynModel) -> &str {
+    let mut first = None;
+    for s in wm.sequences() {
+        if s == "idle" {
+            return "idle";
+        }
+        first.get_or_insert(s);
+    }
+    first.unwrap_or("idle")
+}
+
 fn world_model(active: u8) -> Option<&'static str> {
     Some(match gm_server::WIRE_WEAPONS.get(active as usize)? {
         &"gmod_tool" => "models/weapons/w_toolgun.mdl",
@@ -320,7 +333,7 @@ fn world_model(active: u8) -> Option<&'static str> {
         &"weapon_ar2" => "models/weapons/w_irifle.mdl",
         &"weapon_crossbow" => "models/weapons/w_crossbow.mdl",
         &"weapon_crowbar" => "models/weapons/w_crowbar.mdl",
-        &"weapon_stunstick" => "models/weapons/w_stunstick.mdl",
+        &"weapon_stunstick" => "models/weapons/w_stunbaton.mdl",
         &"weapon_frag" => "models/weapons/w_grenade.mdl",
         &"weapon_physcannon" | &"weapon_physgun" => "models/weapons/w_physics.mdl",
         &"weapon_pistol" => "models/weapons/w_pistol.mdl",
@@ -6521,7 +6534,7 @@ impl App {
                     .iter()
                     .position(|w| *w == e.npc_weapon)?;
                 let wm = g.models.get(world_model(idx as u8)?)?.as_ref()?;
-                let (bones, _) = wm.bone_world_merged("idle", 0.0, m, world)?;
+                let (bones, _) = wm.bone_world_merged(idle_sequence(wm), 0.0, m, world)?;
                 Some((wm, bones))
             })
             .collect();
@@ -6639,7 +6652,7 @@ impl App {
                     let held = world.as_ref().and_then(|w| {
                         let path = world_model_of(p.active)?;
                         let wm = g.models.get(path)?.as_ref()?;
-                        let (bones, skin) = wm.bone_world_merged("idle", 0.0, m, w)?;
+                        let (bones, skin) = wm.bone_world_merged(idle_sequence(wm), 0.0, m, w)?;
                         match wm.attachment("muzzle", &bones) {
                             Some(at) => {
                                 let to_world = gm_render::world::model_transform(
