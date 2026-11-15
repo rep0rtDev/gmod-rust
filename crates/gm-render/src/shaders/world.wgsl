@@ -198,21 +198,26 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
         discard;
     }
     // WorldVertexTransition: lerp($basetexture, $basetexture2, displacement vertex alpha)
+    // (every optional texture is fetched only under a uniform material flag: the fetches are
+    // what a 1440p MSAA layer pays for per pixel)
     let base1 = textureSample(base, base_sampler, in.uv);
-    let uv2 = vec2<f32>(
-        material.uv2_m.x * in.uv.x + material.uv2_m.y * in.uv.y + material.uv2_t.x,
-        material.uv2_m.z * in.uv.x + material.uv2_m.w * in.uv.y + material.uv2_t.y,
-    );
-    let base2_s = textureSample(base2, base_sampler, uv2);
-    // $blendmodulatetexture: r = half-width, g = centre of the alpha band that transitions
-    let modt = textureSample(blend_modulate, base_sampler, in.uv).rg;
-    let minb = max(0.0, modt.g - modt.r);
-    let maxb = min(1.0, modt.g + modt.r);
-    var factor = in.alpha;
-    if material.uv2_t.z > 0.5 {
-        factor = smoothstep(minb, maxb, in.alpha);
+    var albedo = base1;
+    if material.blend == 1u {
+        let uv2 = vec2<f32>(
+            material.uv2_m.x * in.uv.x + material.uv2_m.y * in.uv.y + material.uv2_t.x,
+            material.uv2_m.z * in.uv.x + material.uv2_m.w * in.uv.y + material.uv2_t.y,
+        );
+        let base2_s = textureSample(base2, base_sampler, uv2);
+        var factor = in.alpha;
+        // $blendmodulatetexture: r = half-width, g = centre of the alpha band that transitions
+        if material.uv2_t.z > 0.5 {
+            let modt = textureSample(blend_modulate, base_sampler, in.uv).rg;
+            let minb = max(0.0, modt.g - modt.r);
+            let maxb = min(1.0, modt.g + modt.r);
+            factor = smoothstep(minb, maxb, in.alpha);
+        }
+        albedo = mix(base1, base2_s, factor);
     }
-    var albedo = mix(base1, base2_s, factor * f32(material.blend == 1u));
     if material.blend == 2u {
         // eyes: $iris projected on the eyeball (iris uv baked per vertex into lm_uv, the
         // texture's own alpha and the unit square bound it; the sclera shows elsewhere)
@@ -232,26 +237,31 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     }
     // $bumpmap: the three bumped lightmap pages weighted by the squared dot of the
     // tangent-space normal with the bump basis (both live in the face's texture space)
-    let nrm = normalize(textureSample(bump, base_sampler, in.uv).xyz * 2.0 - 1.0);
-    let l1 = textureSample(lightmap, lightmap_sampler, in.lm_uv + vec2<f32>(in.lm_page, 0.0)).rgb;
-    let l2 = textureSample(lightmap, lightmap_sampler, in.lm_uv + vec2<f32>(2.0 * in.lm_page, 0.0)).rgb;
-    let l3 = textureSample(lightmap, lightmap_sampler, in.lm_uv + vec2<f32>(3.0 * in.lm_page, 0.0)).rgb;
-    var bw = vec3<f32>(
-        max(dot(nrm, vec3<f32>(0.81649658, 0.0, 0.57735027)), 0.0),
-        max(dot(nrm, vec3<f32>(-0.40824829, 0.70710678, 0.57735027)), 0.0),
-        max(dot(nrm, vec3<f32>(-0.40824829, -0.70710678, 0.57735027)), 0.0),
-    );
-    bw = bw * bw;
-    // $ssbump: the texel is the three weights, pre-shadowed by the tool, summed unnormalised
-    if material.uv2_t.w > 1.5 {
-        bw = textureSample(bump, base_sampler, in.uv).rgb;
+    var bump_a = 1.0;
+    if material.uv2_t.w > 0.5 || material.envmap.w > 2.5 || material.phong.x > 0.5 {
+        bump_a = textureSample(bump, base_sampler, in.uv).a;
     }
-    var bumped = (l1 * bw.x + l2 * bw.y + l3 * bw.z) / max(bw.x + bw.y + bw.z, 1e-4);
-    if material.uv2_t.w > 1.5 {
-        bumped = l1 * bw.x + l2 * bw.y + l3 * bw.z;
-    }
-    if material.uv2_t.w > 0.5 && in.lm_page > 0.0 {
-        light = bumped;
+    if material.uv2_t.w > 0.5 {
+        let bump_s = textureSample(bump, base_sampler, in.uv).rgb;
+        let nrm = normalize(bump_s * 2.0 - 1.0);
+        let l1 = textureSample(lightmap, lightmap_sampler, in.lm_uv + vec2<f32>(in.lm_page, 0.0)).rgb;
+        let l2 = textureSample(lightmap, lightmap_sampler, in.lm_uv + vec2<f32>(2.0 * in.lm_page, 0.0)).rgb;
+        let l3 = textureSample(lightmap, lightmap_sampler, in.lm_uv + vec2<f32>(3.0 * in.lm_page, 0.0)).rgb;
+        var bw = vec3<f32>(
+            max(dot(nrm, vec3<f32>(0.81649658, 0.0, 0.57735027)), 0.0),
+            max(dot(nrm, vec3<f32>(-0.40824829, 0.70710678, 0.57735027)), 0.0),
+            max(dot(nrm, vec3<f32>(-0.40824829, -0.70710678, 0.57735027)), 0.0),
+        );
+        bw = bw * bw;
+        var bumped = (l1 * bw.x + l2 * bw.y + l3 * bw.z) / max(bw.x + bw.y + bw.z, 1e-4);
+        // $ssbump: the texel is the three weights, pre-shadowed by the tool, summed unnormalised
+        if material.uv2_t.w > 1.5 {
+            bw = bump_s;
+            bumped = l1 * bw.x + l2 * bw.y + l3 * bw.z;
+        }
+        if in.lm_page > 0.0 {
+            light = bumped;
+        }
     }
     light = light * camera.lm_scale;
     // dynamic lights: colour * (1 - d / r)^2 * facing (unlit surfaces skip them); kept apart
@@ -260,7 +270,10 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     var dynl = vec3<f32>(0.0);
     for (var i = 0u; i < 32u; i++) {
         let lp = camera.dlight_pos[i];
-        if lp.w > 0.0 {
+        if lp.w <= 0.0 {
+            break;
+        }
+        {
             let dv = lp.xyz - in.world;
             let d = length(dv);
             var k = clamp(1.0 - d / lp.w, 0.0, 1.0);
@@ -292,7 +305,10 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
         light = vec3<f32>(1.0);
     }
     // $detail mod2x: base * lerp(1, 2 * detail, $detailblendfactor) at base uv * $detailscale
-    let d = textureSample(detail, base_sampler, in.uv * material.detail.x).rgb;
+    var d = vec3<f32>(0.5);
+    if material.detail.y > 0.0 {
+        d = textureSample(detail, base_sampler, in.uv * material.detail.x).rgb;
+    }
     // $blendtintbybasealpha (detail.w): the tint only where the base alpha lets it
     let tint = mix(vec3<f32>(1.0), in.tint.rgb, select(1.0, albedo.a, material.detail.w > 0.5));
     // dissolving (tint.w = progress 0..1): texels burn away in a noise order, the burning
@@ -317,9 +333,14 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     }
     // $envmap: the nearest env_cubemap along the reflected view ray, times $envmaptint and
     // the mask (1 - base alpha for $basealphaenvmapmask, normal alpha), added after lighting
-    let bump_a = textureSample(bump, base_sampler, in.uv).a;
-    let phong_tex = textureSample(phongexp, base_sampler, in.uv);
-    let mask_tex = textureSample(envmask, base_sampler, in.uv * material.selfillum_tint.w).rgb;
+    var phong_tex = vec4<f32>(0.0);
+    if material.phong.x > 1.5 {
+        phong_tex = textureSample(phongexp, base_sampler, in.uv);
+    }
+    var mask_tex = vec3<f32>(1.0);
+    if material.envmap.w > 3.5 {
+        mask_tex = textureSample(envmask, base_sampler, in.uv * material.selfillum_tint.w).rgb;
+    }
     // $phongfresnelranges over (1 - n.v)^5: the highlight's and, on $phong materials, the
     // reflection's fresnel (the skin shader scales the envmap by it and the spec mask)
     var phong_fres = 1.0;
@@ -383,7 +404,10 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
         var local = vec3<f32>(0.0);
         for (var i = 0u; i < 32u; i++) {
             let lp = camera.dlight_pos[i];
-            if lp.w > 0.0 {
+            if lp.w <= 0.0 {
+                break;
+            }
+            {
                 let dv = lp.xyz - in.world;
                 let d = length(dv);
                 let ld = dv / max(d, 1e-3);
