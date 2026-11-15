@@ -5920,6 +5920,8 @@ pub struct Player {
     /// (tick, origin, ducked) after each of the last 64 ticks, for lag compensation.
     pub history: std::collections::VecDeque<(u32, Vec3, bool)>,
     pub view_angles: Vec3,
+    /// Shots fired, for the 1-in-m_iTracerFreq tracers (`FireBullets`).
+    pub tracer_count: u32,
     /// The prop held by the physgun and how it was grabbed.
     pub held: Option<(u32, Grab)>,
     /// The right button froze the held object: the physgun grabs nothing more until the left
@@ -7704,6 +7706,7 @@ impl Player {
                 ..Default::default()
             },
             view_angles,
+            tracer_count: 0,
             held: None,
             physgun_latched: false,
             driving: None,
@@ -10520,10 +10523,19 @@ impl<'w> Server<'w> {
         let world = self
             .collision
             .trace_ray(eye, end, gm_collision::MASK_PLAYERSOLID);
-        self.effects.push(WorldEffect::Tracer {
-            player: attacker,
-            end: world.end,
-        });
+        // FireBullets: a tracer every m_iTracerFreq = 2 shots (tracerCount++ % freq == 0); a
+        // shotgun's pellets count separately in the game so its every shot has one
+        let tracer = shot.pellets > 1
+            || self.players.get_mut(&attacker).is_none_or(|p| {
+                p.tracer_count = p.tracer_count.wrapping_add(1);
+                p.tracer_count % 2 == 1
+            });
+        if tracer {
+            self.effects.push(WorldEffect::Tracer {
+                player: attacker,
+                end: world.end,
+            });
+        }
         let d = end - eye;
         let prop = gm_sandbox::trace_line(self.collision, &self.prop_bodies(), eye, end)
             .filter(|h| h.ent.is_some());
