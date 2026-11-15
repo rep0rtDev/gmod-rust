@@ -7924,6 +7924,13 @@ impl App {
         );
         lap(3);
         self.world_pass_ms = g.world.pass_ms();
+        if g.world.sees.borrow().is_none() {
+            let collision = self.sim.collision;
+            *g.world.sees.borrow_mut() = Some(Box::new(move |eye: Vec3, p: Vec3| {
+                let (from, to) = (collision.cluster_near(eye), collision.cluster_near(p));
+                from < 0 || to < 0 || collision.visible(from, to)
+            }));
+        }
         if !modulate.is_empty() {
             g.world
                 .draw_modulate(&g.gpu, &mut enc, &camera, &target, &modulate);

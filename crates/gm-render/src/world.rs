@@ -699,6 +699,9 @@ fn lm_strip(samples: &[[f32; 3]], w: u32, h: u32, bumped: bool) -> Vec<[f32; 3]>
     strip
 }
 
+/// `(eye, point) -> seen` through the map's PVS (`sees` below).
+pub type PvsFn = Box<dyn Fn(Vec3, Vec3) -> bool>;
+
 pub struct WorldRenderer {
     /// Linear light / `lm_scale` is what the lightmap atlas stores.
     pub lm_scale: f32,
@@ -819,6 +822,10 @@ pub struct WorldRenderer {
     pass_ms: std::cell::Cell<[f32; 3]>,
     /// GPU time per stage (`cl_showfps 2`), None without timestamp queries.
     pub gpu_time: Option<crate::gputime::GpuTimer>,
+    /// `(eye, point) -> seen` through the map's PVS, set by the client: the reflection pass is
+    /// skipped while no part of the water / mirror surface is in a visible leaf (the game
+    /// renders _rt_WaterReflection only with water in the visible leaves).
+    pub sees: std::cell::RefCell<Option<PvsFn>>,
     /// The frame's skinned entity meshes on the GPU: the shadow, reflection and main passes
     /// all draw the same items, so they are skinned and uploaded once per frame, keyed by
     /// the frame and the items slice (pointer, length).
@@ -3617,6 +3624,7 @@ impl WorldRenderer {
             frame: Default::default(),
             pass_ms: Default::default(),
             gpu_time: crate::gputime::GpuTimer::new(gpu),
+            sees: std::cell::RefCell::new(None),
             model_cache: Default::default(),
         })
     }
@@ -3643,11 +3651,7 @@ impl WorldRenderer {
         self.frame.set(self.frame.get() + 1);
         self.camera_cursor.set(0);
         self.skin_cursor.set(0);
-        let stamp = |enc: &mut wgpu::CommandEncoder, label| {
-            if let Some(t) = &self.gpu_time {
-                t.stamp(enc, label);
-            }
-        };
+        let stamp = |enc: &mut wgpu::CommandEncoder, label| self.stamp(enc, label);
         stamp(enc, "start");
         let t0 = std::time::Instant::now();
         let mut vps = [None; DEPTH_LAYERS];
@@ -3694,7 +3698,7 @@ impl WorldRenderer {
             scene_src,
             reflect_items,
         );
-        stamp(enc, "scene");
+        stamp(enc, "water");
         flush(enc);
         let t3 = std::time::Instant::now();
         let ms = |a: std::time::Instant, b: std::time::Instant| (b - a).as_secs_f32() * 1000.0;
@@ -3723,6 +3727,34 @@ impl WorldRenderer {
 
     /// The reflecting surface for an eye: its plane (normal, distance) and the bounds of the
     /// water volume or mirror it belongs to.
+    /// Some sample of the surface rectangle (corners inset 8 u, centre; 8 u out along its
+    /// normal) is in a leaf visible from `eye`; true without a PVS callback.
+    fn surface_in_pvs(&self, eye: Vec3, n: Vec3, min: Vec3, max: Vec3) -> bool {
+        let sees = self.sees.borrow();
+        let Some(sees) = sees.as_ref() else {
+            return true;
+        };
+        let inset = ((max - min) * 0.5).min(Vec3::splat(8.0));
+        let (lo, hi) = (min + inset, max - inset);
+        let samples = [
+            (lo + hi) * 0.5,
+            lo,
+            hi,
+            Vec3::new(lo.x, hi.y, lo.z),
+            Vec3::new(hi.x, lo.y, lo.z),
+            Vec3::new(lo.x, hi.y, hi.z),
+            Vec3::new(hi.x, lo.y, hi.z),
+        ];
+        samples.iter().any(|p| sees(eye, *p + n * 8.0))
+    }
+
+    /// A GPU timestamp ending stage `label` (`cl_showfps 2`'s `gpu:` line).
+    fn stamp(&self, enc: &mut wgpu::CommandEncoder, label: &'static str) {
+        if let Some(t) = &self.gpu_time {
+            t.stamp(enc, label);
+        }
+    }
+
     fn reflected_surface(&self, eye: Vec3) -> Option<(Vec3, f32, Vec3, Vec3)> {
         // the nearer of the two wins: gm_construct's basement mirror sits far below the
         // pool's surface, which must not claim the pass from the other end of the map
@@ -3781,7 +3813,9 @@ impl WorldRenderer {
         let plane = self
             .reflected_surface(camera.position)
             .filter(|_| std::env::var_os("GM_NO_REFLECT").is_none())
-            .filter(|&(_, _, min, max)| aabb_in_frustum(vp, min, max));
+            .filter(|&(n, _, min, max)| {
+                aabb_in_frustum(vp, min, max) && self.surface_in_pvs(camera.position, n, min, max)
+            });
         let Some((n, zs, _, _)) = plane else {
             self.reflect.lock().unwrap().valid = false;
             return;
@@ -4164,6 +4198,7 @@ impl WorldRenderer {
         );
         let cam_off = self.push_camera(gpu, &cam_uniform);
         {
+            self.stamp(enc, if sky { "sky2d" } else { "skybox" });
             let mut pass = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some(if sky { "skybox" } else { "world" }),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -4233,6 +4268,7 @@ impl WorldRenderer {
                     items,
                 );
             }
+            self.stamp(enc, "world");
             let mut pass = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("translucent"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -4345,6 +4381,7 @@ impl WorldRenderer {
                     },
                 ],
             });
+            self.stamp(enc, "transl");
             let mut pass = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("water"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
