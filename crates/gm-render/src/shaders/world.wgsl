@@ -65,8 +65,18 @@ fn flashlight_shadow(slot: i32, world: vec3<f32>) -> f32 {
     if any(uv < vec2<f32>(0.0)) || any(uv > vec2<f32>(1.0)) || ndc.z >= 1.0 {
         return 1.0;
     }
-    // shadowed texels keep 0.35 of the light (render.md 3.4, gap-report #138)
-    let lit = textureSampleCompareLevel(flashlight_depth, flashlight_sampler, uv, slot, ndc.z - 0.0005);
+    // shadowed texels keep 0.35 of the light (render.md 3.4, gap-report #138); the lookup is
+    // a 3x3 percentage-closer filter 1.5 texels apart like the flashlight shader's Gaussian
+    // PCF, so a caster's edge blurs instead of printing a hard silhouette on the wall
+    let texel = 1.5 / vec2<f32>(textureDimensions(flashlight_depth).xy);
+    var lit = 0.0;
+    for (var y = -1; y <= 1; y++) {
+        for (var x = -1; x <= 1; x++) {
+            let o = vec2<f32>(f32(x), f32(y)) * texel;
+            lit += textureSampleCompareLevel(flashlight_depth, flashlight_sampler, uv + o, slot, ndc.z - 0.0005);
+        }
+    }
+    lit /= 9.0;
     return 0.35 + 0.65 * lit;
 }
 // The projected flashlight's falloff (render.md 3.4, gap-report #136 / #140): Source's
