@@ -6830,6 +6830,33 @@ impl App {
                 use std::sync::atomic::{AtomicU32, Ordering};
                 static N: AtomicU32 = AtomicU32::new(0);
                 if N.fetch_add(1, Ordering::Relaxed).is_multiple_of(600) {
+                    let me = self.sim.client.player_id;
+                    let others: Vec<String> = self
+                        .sim
+                        .client
+                        .world
+                        .players
+                        .iter()
+                        .map(|p| {
+                            format!(
+                                "{}{}@{:?} held {:?} alive {}",
+                                p.id,
+                                if Some(p.id) == me { "(me)" } else { "" },
+                                p.origin,
+                                p.held,
+                                p.alive
+                            )
+                        })
+                        .collect();
+                    eprintln!(
+                        "players: {} pred {:?} corrections {:?}",
+                        others.join("; "),
+                        self.sim.origin,
+                        self.sim
+                            .pred
+                            .as_ref()
+                            .map(|p| (p.corrections, p.max_correction))
+                    );
                     eprintln!(
                         "vm attach {name}: view {v:?} k {k:.3} fov_x {:.1} vm_fov {:.1} aspect {aspect:.3} \
                          size {}x{} vm_pose {vp:?} {va:?} cam {:?} {:?}",

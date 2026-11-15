@@ -328,6 +328,13 @@ impl<'w> Prediction<'w> {
             .iter()
             .position(|(t, _, _)| *t == last_cmd_tick)
         else {
+            // no usercmd of that tick in the history (a restarted prediction, a long stall):
+            // the server's state is taken as is rather than drifting on unchecked
+            if (self.state.origin - authoritative.origin).length_squared() > 1.0 {
+                self.corrections += 1;
+                self.state = *authoritative;
+                self.history.clear();
+            }
             return;
         };
         let predicted = self.history[pos].2;
