@@ -464,7 +464,8 @@ impl Settings {
         self.width = f("mat_setvideomode_w", self.width as f32).max(320.0) as u32;
         self.height = f("mat_setvideomode_h", self.height as f32).max(240.0) as u32;
         self.fullscreen = b("fullscreen", self.fullscreen);
-        self.voice_modenable = b("voice_modenable", self.voice_modenable);
+        // `voice_enable` is the engine name of the same switch
+        self.voice_modenable = b("voice_enable", b("voice_modenable", self.voice_modenable));
         self.voice_scale = f("voice_scale", self.voice_scale);
         self.voice_loopback = b("voice_loopback", self.voice_loopback);
     }
