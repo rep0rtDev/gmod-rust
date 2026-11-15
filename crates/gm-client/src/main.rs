@@ -1266,6 +1266,8 @@ struct App {
     /// Pickup history (`cl_hudpickup.lua`) and the weapon bits already announced.
     pickups: std::cell::RefCell<PickupHistory>,
     prev_weapons: Option<u64>,
+    /// The weapon held before the current one (`lastinv`).
+    last_weapon: Option<u8>,
     /// Kill feed (`cl_deathnotice.lua`): attacker, victim, inflictor class, when.
     deaths: Vec<DeathNotice>,
     /// HudAnimations.txt state of the health and suit panels
@@ -4533,6 +4535,7 @@ impl App {
     fn select_weapon(&mut self, weapon: u8) {
         let Some(vm) = self.vm_of(weapon) else { return };
         if self.weapon != weapon {
+            self.last_weapon = Some(self.weapon);
             // gmod_camera `Equip`: the zoom starts from fov_desired (toolgun.md F38, #96)
             if weapon == CAMERA_SLOT && self.weapon != CAMERA_SLOT {
                 self.cam_zoom = self.settings.fov_desired;
@@ -9989,11 +9992,11 @@ impl App {
                 };
                 self.set_any_cvar(&key, &text);
             }
-            "spawn" => self.sim.client.command(Command::Spawn {
+            "spawn" | "gm_spawn" => self.sim.client.command(Command::Spawn {
                 model: rest.first().unwrap_or(&SPAWN_MODEL).to_string(),
             }),
             "undo" => self.sim.client.command(Command::Undo),
-            "tool" => match rest.first() {
+            "tool" | "gmod_toolmode" => match rest.first() {
                 Some(t) if rest.len() >= 3 => {
                     let value = rest[2..].join(" ");
                     self.tool_settings
@@ -10060,7 +10063,7 @@ impl App {
                 );
                 self.console.log(format!("bot {id} added"));
             }
-            "cleanup" => self.sim.client.command(Command::Cleanup),
+            "cleanup" | "gmod_admin_cleanup" => self.sim.client.command(Command::Cleanup),
             "property" if !rest.is_empty() => self.sim.client.command(Command::Property {
                 name: rest.join(" "),
             }),
@@ -10128,6 +10131,17 @@ impl App {
                     _ => self.console.log(format!("unknown weapon {class}")),
                 }
             }
+            // `lastinv`: back to the previously held weapon (the `q` default bind)
+            "lastinv" => {
+                if let Some(w) = self.last_weapon {
+                    self.select_weapon(w);
+                }
+            }
+            // `net_graph n`: the engine's fps/net overlay - here the cl_showfps 2 block
+            "net_graph" => {
+                let on = rest.first().is_none_or(|v| *v != "0");
+                self.run_console_one(el, if on { "cl_showfps 2" } else { "cl_showfps 0" });
+            }
             "say" | "say_team" => self.sim.client.command(Command::Chat {
                 text: rest.join(" "),
             }),
@@ -10170,7 +10184,7 @@ impl App {
             "impulse" if !rest.is_empty() => {
                 self.impulse = rest[0].parse::<u8>().unwrap_or(0);
             }
-            "map" if !rest.is_empty() => self.relaunch(Some(rest[0]), None),
+            "map" | "changelevel" if !rest.is_empty() => self.relaunch(Some(rest[0]), None),
             "connect" if !rest.is_empty() => self.relaunch(None, Some(rest[0])),
             "retry" => {
                 let argv: Vec<String> = std::env::args().collect();
@@ -10280,6 +10294,12 @@ const CLIENT_COMMANDS: &[&str] = &[
     "alias",
     "bind",
     "bot",
+    "changelevel",
+    "gm_spawn",
+    "gmod_admin_cleanup",
+    "gmod_toolmode",
+    "lastinv",
+    "net_graph",
     "cl_drawhud",
     "cl_showpos",
     "cleanup",
@@ -11372,6 +11392,7 @@ fn run() -> Result<()> {
         hints_done: vec!["OpeningMenu", "Annoy1", "Annoy2"],
         pickups: std::cell::RefCell::new(PickupHistory::default()),
         prev_weapons: None,
+        last_weapon: None,
         deaths: Vec::new(),
         hud_health_anim: Default::default(),
         hud_suit_anim: Default::default(),

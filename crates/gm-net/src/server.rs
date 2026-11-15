@@ -709,6 +709,15 @@ impl ServerNet {
                 }
                 out
             }
+            // `hostname` is a cvar in the game: alone it prints, with a value it renames the
+            // server (the browser row and `status`); `maxplayers` prints the slot count
+            "hostname" => {
+                if !rest.is_empty() {
+                    self.info.name = rest.join(" ");
+                }
+                vec![format!("\"hostname\" = \"{}\"", self.info.name)]
+            }
+            "maxplayers" => vec![format!("\"maxplayers\" = \"{}\"", self.max_players)],
             "kick" | "kickid" | "ban" => match player_arg(&rest) {
                 Some(p) if p == admin => vec![format!("{verb} {p}: not yourself")],
                 Some(p) => {
