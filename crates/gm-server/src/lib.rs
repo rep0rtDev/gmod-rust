@@ -11702,7 +11702,7 @@ impl<'w> Server<'w> {
                     .map(|r| (id, r, p.view_angles.y, p.ragdoll_ent))
             })
             .collect();
-        for (id, rag, yaw, _previous) in pending {
+        for (id, rag, yaw, previous) in pending {
             // the previous ragdoll stays until the LRU of 8 retires it (g_ragdoll_maxcount)
             if !self.models.contains_key(&rag.model) {
                 if let Some(loaded) = self.model_loader.as_mut().and_then(|f| f(&rag.model)) {
@@ -11733,6 +11733,14 @@ impl<'w> Server<'w> {
             if let Some(p) = self.players.get_mut(&id) {
                 p.ragdoll = None;
                 p.ragdoll_ent = Some(ent);
+            }
+            // CBasePlayer::CreateRagdollEntity removes the player's previous body first: one
+            // death ragdoll per player (the LRU below is for many players)
+            if let Some(old) = previous {
+                if self.sandbox.props().iter().any(|p| p.id == old) {
+                    self.remove_prop(old);
+                }
+                self.death_ragdoll_lru.retain(|&e| e != old);
             }
             self.death_ragdoll_lru.push_back(ent);
             while self.death_ragdoll_lru.len() > 8 {
