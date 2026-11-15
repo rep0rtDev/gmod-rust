@@ -3236,6 +3236,15 @@ pub fn npc_physics_class(class: &str) -> bool {
 /// hostile mine and 11.37 for the hacked one (server_npc_tick_rollermine* 261107).
 pub const ROLLER_SPHERE_RADIUS: f32 = 12.4;
 
+/// NPC enemies sit in `Npc::target` next to player ids with this bit set (player ids and
+/// sandbox ids both count from 1).
+pub const NPC_FOE: u32 = 1 << 31;
+
+/// The NPC id of an `NPC_FOE`-tagged target.
+pub fn foe_npc(t: u32) -> Option<u32> {
+    (t & NPC_FOE != 0).then_some(t & !NPC_FOE)
+}
+
 pub fn npc_hostile_to_players(n: &Npc) -> bool {
     match n.relation {
         Some(d) => d == 1,
@@ -12021,6 +12030,11 @@ impl<'w> Server<'w> {
 
     /// `GetShootPos()` and view angles of a player.
     pub fn eye(&self, player: u32) -> Option<(Vec3, Vec3)> {
+        if let Some(id) = foe_npc(player) {
+            let n = self.npcs.get(&id).filter(|n| n.dead_at.is_none())?;
+            let eye = n.pos + n.view_offset.unwrap_or(Vec3::new(0.0, 0.0, NPC_EYE_HEIGHT));
+            return Some((eye, n.angles));
+        }
         let p = self.players.get(&player)?;
         let eye = p.state.origin
             + Vec3::new(
@@ -12029,6 +12043,69 @@ impl<'w> Server<'w> {
                 p.move_override.eye(&self.mover.cfg, p.state.ducked),
             );
         Some((eye, p.view_angles))
+    }
+
+    /// The feet of a combat target (a player, or an `NPC_FOE`-tagged NPC), None once dead.
+    pub fn foe_origin(&self, t: u32) -> Option<Vec3> {
+        match foe_npc(t) {
+            Some(id) => self
+                .npcs
+                .get(&id)
+                .filter(|n| n.dead_at.is_none())
+                .map(|n| n.pos),
+            None => self
+                .players
+                .get(&t)
+                .filter(|p| p.alive)
+                .map(|p| p.state.origin),
+        }
+    }
+
+    /// The live NPCs `id` hates (hl2_gamerules relationship table / its script overrides),
+    /// `NPC_FOE`-tagged: the Combine and the zombies to a citizen, the citizens to a soldier.
+    fn npc_foes(&self, id: u32) -> Vec<u32> {
+        let Some(n) = self.npcs.get(&id) else {
+            return Vec::new();
+        };
+        self.npcs
+            .iter()
+            .filter(|(o, m)| {
+                **o != id
+                    && m.dead_at.is_none()
+                    && !m.held
+                    && n.ai.disposition(&n.class, **o, Some(&m.class), false) == ai::D_HT
+            })
+            .map(|(o, _)| *o | NPC_FOE)
+            .collect()
+    }
+
+    /// The targets an NPC may pick: the players when it hates them, plus the NPCs it hates.
+    fn npc_candidates(&self, id: u32) -> Vec<u32> {
+        let mut ids: Vec<u32> = if self.npcs.get(&id).is_some_and(npc_hostile_to_players) {
+            self.players.keys().copied().collect()
+        } else {
+            Vec::new()
+        };
+        ids.extend(self.npc_foes(id));
+        ids.sort_unstable();
+        ids
+    }
+
+    /// `npc_hurt_player` for either kind of target; an NPC victim is hurt as by an
+    /// `NPC_FOE`-tagged attacker.
+    fn npc_hurt_foe(&mut self, npc: u32, foe: u32, amount: f32, dmg_type: u32) -> f32 {
+        match foe_npc(foe) {
+            Some(v) => {
+                let bullet = dmg_type == weapons::DMG_BULLET;
+                let group = if bullet { 2 } else { 0 };
+                if self.damage_npc_typed(v, npc | NPC_FOE, amount, group, bullet) {
+                    amount
+                } else {
+                    0.0
+                }
+            }
+            None => self.npc_hurt_player(npc, foe, amount, dmg_type),
+        }
     }
 
     /// Props as the traces see them, at their current physics poses.
@@ -16942,7 +17019,7 @@ impl<'w> Server<'w> {
     /// the player has left the end of its path, without halting, and rests NPC_CHASE_REACH
     /// away until the player moves off again.
     pub fn npc_chase(&mut self, id: u32, player: u32, run: bool) -> bool {
-        if self.nav.is_none() || !self.players.contains_key(&player) {
+        if self.nav.is_none() || self.foe_origin(player).is_none() {
             return false;
         }
         let Some(n) = self.npcs.get_mut(&id) else {
@@ -17104,7 +17181,7 @@ impl<'w> Server<'w> {
 
     pub fn npc_target(&mut self, id: u32, player: Option<u32>) -> bool {
         if let Some(p) = player {
-            if !self.players.get(&p).is_some_and(|pl| pl.alive) {
+            if !self.foe_origin(p).is_some() {
                 return false;
             }
         }
@@ -17384,7 +17461,7 @@ impl<'w> Server<'w> {
         let Some(p) = n.chase else {
             return;
         };
-        let Some(target) = self.players.get(&p).map(|pl| pl.state.origin) else {
+        let Some(target) = self.foe_origin(p) else {
             if let Some(n) = self.npcs.get_mut(&id) {
                 n.chase = None;
             }
@@ -17479,7 +17556,7 @@ impl<'w> Server<'w> {
                     .into_iter()
                     .filter(|&p| {
                         !self.npc_ignores(id, p, now)
-                            && self.players.get(&p).is_some_and(|pl| pl.alive)
+                            && self.foe_origin(p).is_some()
                             && self.eye(p).is_some_and(|(e, _)| self.npc_los(pos, e))
                     })
                     .min_by(|&a, &b| {
@@ -19219,9 +19296,15 @@ impl<'w> Server<'w> {
         let Some(n) = self.npcs.get(&id) else {
             return;
         };
-        if n.dead_at.is_some() || n.passive || !npc_hostile_to_players(n) || n.ai.scripted {
+        if n.dead_at.is_some() || n.passive || n.ai.scripted {
             return;
         }
+        if !npc_hostile_to_players(n) && n.target.is_none() && self.npc_foes(id).is_empty() {
+            return;
+        }
+        let Some(n) = self.npcs.get(&id) else {
+            return;
+        };
         if npc_special::npc_stationary_class(&n.class) || npc_special::npc_aircraft_class(&n.class)
         {
             return;
@@ -19342,9 +19425,7 @@ impl<'w> Server<'w> {
             let enemy_dead = n
                 .target
                 .is_some_and(|p| self.players.get(&p).is_some_and(|pl| !pl.alive));
-            let enemy_alive = n
-                .target
-                .is_some_and(|p| self.players.get(&p).is_some_and(|pl| pl.alive));
+            let enemy_alive = n.target.is_some_and(|p| self.foe_origin(p).is_some());
             if enemy_dead && n.wander.is_none() && n.swat.is_none() && now >= n.swing_until {
                 let dest = self.npc_wander_point(id, now);
                 if let Some(n) = self.npcs.get_mut(&id) {
@@ -19421,8 +19502,8 @@ impl<'w> Server<'w> {
             if server.npc_ignores(id, p, now) {
                 return None;
             }
-            let pl = server.players.get(&p).filter(|pl| pl.alive)?;
-            let chest = pl.state.origin + Vec3::new(0.0, 0.0, NPC_CHEST_HEIGHT);
+            let origin = server.foe_origin(p)?;
+            let chest = origin + Vec3::new(0.0, 0.0, NPC_CHEST_HEIGHT);
             if chest.distance(eye) > sight {
                 return None;
             }
@@ -19439,8 +19520,7 @@ impl<'w> Server<'w> {
         // keep the current target while visible, otherwise the nearest visible player
         let mut target = n.target.and_then(|p| sees(self, p).map(|c| (p, c)));
         if target.is_none() {
-            let mut ids: Vec<u32> = self.players.keys().copied().collect();
-            ids.sort_unstable();
+            let ids = self.npc_candidates(id);
             target = ids
                 .into_iter()
                 .filter_map(|p| sees(self, p).map(|c| (p, c)))
@@ -19462,8 +19542,7 @@ impl<'w> Server<'w> {
             && now <= n.last_shot + 2 * think
             && n.goal.is_none()
             && !n.reloading
-            && n.target
-                .is_some_and(|p| self.players.get(&p).is_some_and(|pl| pl.alive));
+            && n.target.is_some_and(|p| self.foe_origin(p).is_some());
         let blind_target = n.target.zip(n.last_known).filter(|_| blind);
         let Some((player, chest)) = target.or(blind_target) else {
             let (old, seen) = (n.target, n.target_seen);
@@ -19475,7 +19554,7 @@ impl<'w> Server<'w> {
                     && !n.reloading
                     && n.cover_at.is_none()
                     && now >= n.next_grenade
-                    && self.players.get(&p).is_some_and(|pl| pl.alive)
+                    && self.foe_origin(p).is_some()
                     && self.npc_start_grenade(id, now, eye, known)
                 {
                     return;
@@ -19514,7 +19593,7 @@ impl<'w> Server<'w> {
                     && n.grenade.is_none()
                     && now >= n.throw_done + 2 * n.think_interval as u64
                     && known.distance(eye) <= NPC_LOF_RANGE
-                    && self.players.get(&p).is_some_and(|pl| pl.alive)
+                    && self.foe_origin(p).is_some()
                 {
                     if let Some(v) = self.npc_flank_point(id, known) {
                         self.npc_goto(id, v, true);
@@ -20048,8 +20127,8 @@ impl<'w> Server<'w> {
             if server.npc_ignores(id, p, now) {
                 return None;
             }
-            let pl = server.players.get(&p).filter(|pl| pl.alive)?;
-            let chest = pl.state.origin + Vec3::new(0.0, 0.0, NPC_CHEST_HEIGHT);
+            let origin = server.foe_origin(p)?;
+            let chest = origin + Vec3::new(0.0, 0.0, NPC_CHEST_HEIGHT);
             if chest.distance(eye) > sight {
                 return None;
             }
@@ -20057,12 +20136,11 @@ impl<'w> Server<'w> {
             // server_npc_zombie_swat3_a_drum875 takes the bot over the upright drum between
             // them, which hides the chest and feet but not the head
             let (enemy_eye, _) = server.eye(p)?;
-            server.npc_los(eye, enemy_eye).then_some(pl.state.origin)
+            server.npc_los(eye, enemy_eye).then_some(origin)
         };
         let mut target = n.target.and_then(|p| sees(self, p).map(|o| (p, o)));
         if target.is_none() {
-            let mut ids: Vec<u32> = self.players.keys().copied().collect();
-            ids.sort_unstable();
+            let ids = self.npc_candidates(id);
             target = ids
                 .into_iter()
                 .filter_map(|p| sees(self, p).map(|o| (p, o)))
@@ -20429,7 +20507,7 @@ impl<'w> Server<'w> {
         };
         if n.dead_at.is_some()
             || n.passive
-            || !npc_hostile_to_players(n)
+            || (!npc_hostile_to_players(n) && foe_npc(by).is_none())
             || n.cover_at.is_some()
             || (tick < n.cover_cooldown && !danger)
         {
@@ -20458,7 +20536,7 @@ impl<'w> Server<'w> {
             let Some(p) = n.chase.filter(|_| n.dead_at.is_none()) else {
                 continue;
             };
-            let Some(target) = self.players.get(&p).map(|pl| pl.state.origin) else {
+            let Some(target) = self.foe_origin(p) else {
                 continue;
             };
             let k = self
@@ -20531,8 +20609,7 @@ impl<'w> Server<'w> {
             let Some(n) = self.npcs.get(&id) else {
                 continue;
             };
-            if n.target.is_some() || n.passive || n.dead_at.is_some() || !npc_hostile_to_players(n)
-            {
+            if n.target.is_some() || n.passive || n.dead_at.is_some() {
                 continue;
             }
             let (pos, key) = (n.pos, n.key.clone());
@@ -20549,9 +20626,8 @@ impl<'w> Server<'w> {
                 .then_some(o.target)
                 .flatten()
                 .filter(|p| {
-                    self.players
-                        .get(p)
-                        .is_some_and(|pl| pl.alive && !pl.no_target)
+                    self.foe_origin(*p).is_some()
+                        && !self.players.get(p).is_some_and(|pl| pl.no_target)
                 })
             });
             let leads = shared.is_some() && self.npc_leads_squad(id);
@@ -20603,8 +20679,8 @@ impl<'w> Server<'w> {
             if server.npc_ignores(id, p, now) {
                 return None;
             }
-            let pl = server.players.get(&p).filter(|pl| pl.alive)?;
-            let chest = pl.state.origin + Vec3::new(0.0, 0.0, NPC_CHEST_HEIGHT);
+            let origin = server.foe_origin(p)?;
+            let chest = origin + Vec3::new(0.0, 0.0, NPC_CHEST_HEIGHT);
             if chest.distance(eye) > sight {
                 return None;
             }
@@ -20612,12 +20688,11 @@ impl<'w> Server<'w> {
             // server_npc_zombie_swat3_a_drum875 takes the bot over the upright drum between
             // them, which hides the chest and feet but not the head
             let (enemy_eye, _) = server.eye(p)?;
-            server.npc_los(eye, enemy_eye).then_some(pl.state.origin)
+            server.npc_los(eye, enemy_eye).then_some(origin)
         };
         let mut target = n.target.and_then(|p| sees(self, p).map(|o| (p, o)));
         if target.is_none() {
-            let mut ids: Vec<u32> = self.players.keys().copied().collect();
-            ids.sort_unstable();
+            let ids = self.npc_candidates(id);
             target = ids
                 .into_iter()
                 .filter_map(|p| sees(self, p).map(|o| (p, o)))
@@ -21086,7 +21161,7 @@ impl<'w> Server<'w> {
                     }
                     continue;
                 }
-                let dir = (next - self.players[&player].state.origin)
+                let dir = (next - self.foe_origin(player).unwrap_or(next))
                     .truncate()
                     .normalize_or_zero();
                 if self.damage_player(player, l.damage, weapons::DMG_SLASH) > 0.0 {
@@ -21103,6 +21178,7 @@ impl<'w> Server<'w> {
                     }
                 }
                 let hop = self.next_random() * std::f32::consts::TAU;
+                let foe_feet = self.foe_origin(player);
                 if let Some(n) = self.npcs.get_mut(&id) {
                     n.pos = next;
                     n.bite_pending = false;
@@ -21131,7 +21207,7 @@ impl<'w> Server<'w> {
                         // -84.7 / -97.5 / -116.8 / -142.8 on rows 52 + 7k, the floor on 94)
                         // ... keeping the speed along the hull face (golden 261106: y +2.2 a
                         // think down the bot's west face, -14.5 on the second contact)
-                        let rel = next - self.players[&player].state.origin;
+                        let rel = next - foe_feet.unwrap_or(next);
                         let mut slide = vel;
                         if rel.x.abs() >= rel.y.abs() {
                             slide.x = 0.0;
@@ -21846,10 +21922,10 @@ impl<'w> Server<'w> {
                 _ => None,
             };
             let feet = n.pos;
-            let Some(p) = self.players.get(&player).filter(|p| p.alive) else {
+            let Some(origin) = self.foe_origin(player) else {
                 continue;
             };
-            let to = (p.state.origin - feet).truncate();
+            let to = (origin - feet).truncate();
             // CNPC_BaseZombie::ClawAttack: AttackMissSound / AttackHitSound of the class
             // the stunstick's Melee_Hit / Melee_Miss (CWeaponStunStick NPC hit / miss)
             let claw = self.npcs.get(&id).and_then(|n| match n.class.as_str() {
@@ -21876,7 +21952,7 @@ impl<'w> Server<'w> {
                 continue;
             }
             let hits_left = self.npcs.get(&id).map_or(0, |n| n.melee_hits_left);
-            if self.npc_hurt_player(id, player, m.damage, weapons::DMG_SLASH) > 0.0 {
+            if self.npc_hurt_foe(id, player, m.damage, weapons::DMG_SLASH) > 0.0 {
                 if let Some(c) = claw {
                     self.emit_sound(id, format!("{}.{}Hit", c.0, c.1), 1.0);
                 }
@@ -22077,10 +22153,20 @@ impl<'w> Server<'w> {
             .trace_ray(eye, end, gm_collision::MASK_PLAYERSOLID)
             .fraction;
         let prop = gm_sandbox::trace_line(self.collision, &self.prop_bodies(), eye, end)
-            .filter(|h| h.ent.is_some())
+            .filter(|h| h.ent.is_some_and(|e| !self.is_npc_body(e)))
             .map_or(1.0, |h| h.fraction);
         let d = end - eye;
         let mut best: Option<(u32, f32)> = None;
+        for (nid, n) in &self.npcs {
+            if *nid == shooter || n.dead_at.is_some() || n.held {
+                continue;
+            }
+            if let Some(t) = ray_box(eye, d, n.pos + n.mins, n.pos + n.maxs) {
+                if best.is_none_or(|b| t < b.1) {
+                    best = Some((*nid | NPC_FOE, t));
+                }
+            }
+        }
         for (pid, p) in &self.players {
             if !p.alive {
                 continue;
@@ -22096,7 +22182,7 @@ impl<'w> Server<'w> {
         }
         if let Some((pid, t)) = best {
             if t < world && t < prop {
-                self.npc_hurt_player(shooter, pid, dmg, weapons::DMG_BULLET);
+                self.npc_hurt_foe(shooter, pid, dmg, weapons::DMG_BULLET);
             }
         }
     }
