@@ -21758,6 +21758,9 @@ impl<'w> Server<'w> {
                         n.melee_recoil_at = Some(now + m.recoil_delay);
                     }
                 }
+            } else if let Some(c) = claw {
+                // ClawAttack: nothing hurt (god, damage filter) is a miss
+                self.emit_sound(id, format!("{c}.AttackMiss"), 1.0);
             }
         }
         // the roar's slide starts `roar_at` ticks into the swing, a delayed lunge at
