@@ -1294,7 +1294,6 @@ struct App {
     draw_viewmodel: bool,
     /// `cl_showpos`: pos / ang / vel under the fps line.
     show_pos: bool,
-    draw_crosshair: true,
     /// `crosshair` cvar (default 1).
     draw_crosshair: bool,
     /// `alias <name> <commands>`: run when `<name>` is typed or bound.
@@ -11424,6 +11423,7 @@ fn run() -> Result<()> {
         thirdperson: false,
         draw_viewmodel: true,
         show_pos: false,
+        draw_crosshair: true,
         aliases: BTreeMap::new(),
         rotate_delta: (0.0, 0.0),
         wheel_delta: 0.0,
