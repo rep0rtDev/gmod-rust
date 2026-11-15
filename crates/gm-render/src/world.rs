@@ -5854,12 +5854,15 @@ impl WorldRenderer {
             let (m, xf) = (item.model, &item.transform);
             // the game lights a model from its origin: ambient cube of the leaf + direct lights
             // (a ragdoll's bones are world poses under an identity transform: its origin is
-            // the root bone, not the map origin)
-            let origin = xf.transform_point3(
+            // the root bone, not the map origin; animated entities keep their own origin so
+            // the light cache below does not miss on every pelvis sway)
+            let origin = if *xf == Mat4::IDENTITY {
                 item.bones
                     .and_then(|b| b.first())
-                    .map_or(Vec3::ZERO, |b| b.w_axis.truncate()),
-            );
+                    .map_or(Vec3::ZERO, |b| b.w_axis.truncate())
+            } else {
+                xf.transform_point3(Vec3::ZERO)
+            };
             let model_cube = self.cubes.nearest(origin);
             let local = if m.unlit {
                 None
@@ -6188,12 +6191,15 @@ impl WorldRenderer {
             }
             let xf = &item.transform;
             // (a ragdoll's bones are world poses under an identity transform: its origin is
-            // the root bone, not the map origin)
-            let origin = xf.transform_point3(
+            // the root bone, not the map origin; animated entities keep their own origin so
+            // the light cache below does not miss on every pelvis sway)
+            let origin = if *xf == Mat4::IDENTITY {
                 item.bones
                     .and_then(|b| b.first())
-                    .map_or(Vec3::ZERO, |b| b.w_axis.truncate()),
-            );
+                    .map_or(Vec3::ZERO, |b| b.w_axis.truncate())
+            } else {
+                xf.transform_point3(Vec3::ZERO)
+            };
             let model_cube = self.cubes.nearest(origin);
             let local = if m.unlit {
                 None
