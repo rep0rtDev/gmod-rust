@@ -8081,9 +8081,15 @@ impl App {
                 else {
                     continue;
                 };
-                let rot = gm_render::props::angle_matrix(e.angles.to_array());
+                // the pose the prop is drawn at (interpolated), not the raw snapshot's: on a
+                // rolling barrel the decal else lags the model and sinks into / pops out of it
+                let (epos, eang) = match self.sim.interp.sample(*ent, rt) {
+                    Some(p) => (p.pos, p.angles),
+                    None => (e.pos, e.angles),
+                };
+                let rot = gm_render::props::angle_matrix(eang.to_array());
                 let (v, i) = g.world.decal_quad_uv(
-                    e.pos + rot * *lpos,
+                    epos + rot * *lpos,
                     (rot * *lnormal).normalize_or_zero(),
                     d.size,
                     [1.0; 3],
