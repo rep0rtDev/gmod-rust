@@ -1294,6 +1294,9 @@ struct App {
     draw_viewmodel: bool,
     /// `cl_showpos`: pos / ang / vel under the fps line.
     show_pos: bool,
+    draw_crosshair: true,
+    /// `crosshair` cvar (default 1).
+    draw_crosshair: bool,
     /// `alias <name> <commands>`: run when `<name>` is typed or bound.
     aliases: BTreeMap<String, String>,
     /// Mouse counts since the last command while rotating a held prop (physgun + E): the view
@@ -9009,6 +9012,7 @@ impl App {
                     && !self.context_held
                     && !self.main_menu
                     && !hidden("CHudCrosshair")
+                    && self.draw_crosshair
                 {
                     let classes = gm_net::msg::weapon_classes(&self.sim.client.world.weapon_defs);
                     let class = classes.get(self.weapon as usize).map(String::as_str);
@@ -10157,10 +10161,11 @@ impl App {
             "echo" => self.console.log(rest.join(" ")),
             "thirdperson" => self.thirdperson = true,
             "firstperson" => self.thirdperson = false,
-            cmd @ ("r_drawviewmodel" | "cl_showpos" | "cl_drawhud") => {
+            cmd @ ("r_drawviewmodel" | "cl_showpos" | "cl_drawhud" | "crosshair") => {
                 let cur = match cmd {
                     "r_drawviewmodel" => self.draw_viewmodel,
                     "cl_showpos" => self.show_pos,
+                    "crosshair" => self.draw_crosshair,
                     _ => self
                         .utility_values
                         .get("cl_drawhud")
@@ -10172,6 +10177,7 @@ impl App {
                         match cmd {
                             "r_drawviewmodel" => self.draw_viewmodel = on,
                             "cl_showpos" => self.show_pos = on,
+                            "crosshair" => self.draw_crosshair = on,
                             _ => {
                                 self.utility_values
                                     .insert("cl_drawhud".to_string(), u8::from(on).to_string());
@@ -10310,6 +10316,7 @@ const CLIENT_COMMANDS: &[&str] = &[
     "cleanup",
     "clear",
     "connect",
+    "crosshair",
     "disconnect",
     "echo",
     "ent_fire",
