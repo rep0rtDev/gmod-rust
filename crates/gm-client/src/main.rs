@@ -2013,6 +2013,7 @@ impl App {
                 "gui/ContentIcon-hovered.png",
                 "gui/noicon.png",
                 "icon64/playermodel.png",
+                "icon16/tick.png",
             ]
             .into_iter()
             .chain(derma::POST_PROCESS.iter().map(|r| r.2))
@@ -2410,7 +2411,8 @@ impl App {
                     .find(|(n, _)| *n == cvar)
                     .map(|(_, v)| v.as_str())
                     .or_else(|| self.utility_values.get(cvar).map(String::as_str))
-                    .is_some_and(|v| v == on)
+                    // a cvar never set keeps its default: on for all of them but cl_showfps
+                    .map_or(on == "1" && cvar != "cl_showfps", |v| v == on)
             };
             let mut layout = derma::Layout::default();
             derma::menu_bar(
@@ -5941,6 +5943,9 @@ impl App {
             let visible = self.menu_cache.borrow().visible.clone();
             Self::render_spawn_icons(&visible, &self.mount, g);
         }
+        if self.context_held && !g.ui.has_image("icon16/tick.png") {
+            g.ui.load_image(&g.gpu, &self.mount, "icon16/tick.png");
+        }
         if self.player_editor {
             let paths: Vec<String> = Self::player_model_list()
                 .iter()
@@ -8720,7 +8725,8 @@ impl App {
                         .find(|(n, _)| *n == cvar)
                         .map(|(_, v)| v.as_str())
                         .or_else(|| self.utility_values.get(cvar).map(String::as_str))
-                        .is_some_and(|v| v == on)
+                        // a cvar never set keeps its default: on for all of them but cl_showfps
+                        .map_or(on == "1" && cvar != "cl_showfps", |v| v == on)
                 };
                 derma::menu_bar(
                     &mut layout,
@@ -9046,7 +9052,8 @@ impl App {
                 py -= 40.0 + 4.0;
             }
         }
-        if !self.console.open {
+        // our debug line (entity count, weapon, position): `developer 1` only, the game has none
+        if !self.console.open && self.settings.developer > 0 {
             let hud = format!(
                 "props {}  weapon {}{}  pos {:.0} {:.0} {:.0}",
                 self.sim.client.world.entities.len(),

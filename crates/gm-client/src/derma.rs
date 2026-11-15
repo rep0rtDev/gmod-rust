@@ -3916,7 +3916,7 @@ pub fn menu_bar(
         0.0,
         ctx.w,
         MENUBAR_H,
-        rgba(50, 50, 50, 255),
+        rgba(238, 238, 238, 255),
     );
     let mut x = 0.0;
     for (i, (key, default, rows)) in menus.iter().enumerate() {
@@ -3924,7 +3924,14 @@ pub fn menu_bar(
         let bw = ctx.font.text_width(&title) + 20.0;
         let hovered = inside(ctx.cursor, x, 0.0, bw, MENUBAR_H);
         if hovered || open == Some(i) {
-            crate::ugc::rect(&mut out.items, x, 0.0, bw, MENUBAR_H, rgba(80, 80, 80, 255));
+            crate::ugc::rect(
+                &mut out.items,
+                x,
+                0.0,
+                bw,
+                MENUBAR_H,
+                rgba(200, 200, 200, 255),
+            );
         }
         text(
             &mut out.items,
