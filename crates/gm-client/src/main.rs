@@ -5452,7 +5452,9 @@ impl App {
                     } => {
                         let seed = &mut self.fx_seed;
                         let speeds = std::array::from_fn(|_| particles::range(seed, 0.5, 1.5));
-                        self.fx_tool.push((player, pos, normal, now, speeds));
+                        if self.settings.gmod_drawtooleffects {
+                            self.fx_tool.push((player, pos, normal, now, speeds));
+                        }
                     }
                     gm_net::msg::EffectEvent::Explosion { pos } => {
                         self.spawn_explosion(pos, now);
@@ -6477,6 +6479,13 @@ impl App {
             .collect();
         let classes = &self.sim.client.world.classes;
         let is_ball = |id: u32| classes.iter().any(|(i, c)| *i == id && c == "sent_ball");
+        // `cl_drawcameras 0`: gmod_cameraprop's Draw skips the camera model
+        let hidden_camera = |id: u32| {
+            !self.settings.cl_drawcameras
+                && classes
+                    .iter()
+                    .any(|(i, c)| *i == id && c == "gmod_cameraprop")
+        };
         // NPCs within 600 u watch the local player's eyes (the game's head / eye tracking)
         let look_at = self.sim.origin + Vec3::Z * 64.0;
         // a prop new to the snapshot (spawned now, not met on joining) starts the propspawn
@@ -6501,7 +6510,7 @@ impl App {
         let mut items: Vec<_> = ents
             .values()
             .filter_map(|e| {
-                if is_ball(e.id) || spawning(e.id) {
+                if is_ball(e.id) || spawning(e.id) || hidden_camera(e.id) {
                     return None;
                 }
                 let (pos, ang) = match self.sim.interp.sample(e.id, rt) {
@@ -7092,7 +7101,9 @@ impl App {
                 .map(|t| t.ent)
                 .collect();
             g.thruster_on.retain(|id, _| on.contains(id));
-            for t in &self.sim.client.world.thrusters {
+            // `cl_drawthrusterseffects 0`: the thruster effects' Render draws nothing
+            let drawn = self.settings.cl_drawthrusterseffects;
+            for t in self.sim.client.world.thrusters.iter().filter(|_| drawn) {
                 let Some(e) = ents.get(&t.ent) else {
                     continue;
                 };
