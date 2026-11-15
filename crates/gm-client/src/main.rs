@@ -7934,6 +7934,15 @@ impl App {
                 let (from, to) = (collision.cluster_near(eye), collision.cluster_near(p));
                 from < 0 || to < 0 || collision.visible(from, to)
             }));
+            *g.world.vis.borrow_mut() = Some(Box::new(move |eye: Vec3| {
+                let from = collision.cluster_near(eye);
+                let n = collision.num_clusters();
+                (from >= 0 && n > 0).then(|| {
+                    (0..n)
+                        .map(|to| collision.visible(from, to as i32))
+                        .collect()
+                })
+            }));
         }
         if !modulate.is_empty() {
             g.world

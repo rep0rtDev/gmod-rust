@@ -701,6 +701,18 @@ fn lm_strip(samples: &[[f32; 3]], w: u32, h: u32, bumped: bool) -> Vec<[f32; 3]>
 
 /// `(eye, point) -> seen` through the map's PVS (`sees` below).
 pub type PvsFn = Box<dyn Fn(Vec3, Vec3) -> bool>;
+/// `eye -> Some(visible-cluster mask)`, None when the eye is in solid (`WorldRenderer::vis`).
+pub type VisFn = Box<dyn Fn(Vec3) -> Option<Vec<bool>>>;
+
+#[derive(Default)]
+struct CullState {
+    active: bool,
+    eye: Vec3,
+    mask: Vec<bool>,
+    /// Per batch: (first, count) in the cull buffer.
+    ranges: Vec<(u32, u32)>,
+    data: Vec<u32>,
+}
 
 pub struct WorldRenderer {
     /// Linear light / `lm_scale` is what the lightmap atlas stores.
@@ -826,6 +838,19 @@ pub struct WorldRenderer {
     /// skipped while no part of the water / mirror surface is in a visible leaf (the game
     /// renders _rt_WaterReflection only with water in the visible leaves).
     pub sees: std::cell::RefCell<Option<PvsFn>>,
+    /// `eye -> visible-cluster mask` from the map's PVS, set by the client: the opaque world
+    /// pass draws only the faces of visible leaves (static props always), like the game's
+    /// leaf list; None (eye in solid / no PVS) draws everything.
+    pub vis: std::cell::RefCell<Option<VisFn>>,
+    /// Per batch, sorted: (first index, count, BSP face) of each face's span in `indices_cpu`.
+    batch_spans: Vec<Vec<(u32, u32, u32)>>,
+    cluster_faces: Vec<Vec<u32>>,
+    /// Faces in no leaf (always drawn).
+    face_unref: Vec<bool>,
+    indices_cpu: Vec<u32>,
+    /// The culled index list of the frame (`CullState::ranges` per batch).
+    cull_buffer: wgpu::Buffer,
+    cull: std::cell::RefCell<CullState>,
     /// The frame's skinned entity meshes on the GPU: the shadow, reflection and main passes
     /// all draw the same items, so they are skinned and uploaded once per frame, keyed by
     /// the frame and the items slice (pointer, length).
@@ -2044,6 +2069,9 @@ impl WorldRenderer {
         // material -> (texture rgba, flags)
         let mut materials: crate::props::MaterialMap = HashMap::new();
         let mut per_material: HashMap<String, Vec<u32>> = HashMap::new();
+        // per material: (start, count, BSP face) of each face's indices in its list, for the PVS
+        // culling of `update_culling` (indices outside the spans - static props - always draw)
+        let mut face_spans: HashMap<String, Vec<(u32, u32, u32)>> = HashMap::new();
         let mut vertices: Vec<Vertex> = Vec::new();
 
         let disps = disp_infos(bsp)?;
@@ -2390,11 +2418,13 @@ impl WorldRenderer {
             if in_sky {
                 stats.skybox_faces += 1;
             }
+            let span_key = (!in_sky).then(|| canon.clone());
             let indices = if in_sky {
                 per_material_sky.entry(canon).or_default()
             } else {
                 per_material.entry(canon).or_default()
             };
+            let span_start = indices.len() as u32;
             if let Some(disp) = disp_by_face.get(&(fi as u16)) {
                 let mesh = build_disp_mesh(bsp, disp, &dverts)?;
                 let base = vertices.len() as u32;
@@ -2428,6 +2458,13 @@ impl WorldRenderer {
                 indices.extend(mesh.indices.iter().map(|i| base + i));
                 stats.displacements += 1;
                 stats.triangles += mesh.indices.len() / 3;
+                if let Some(k) = span_key {
+                    let n = indices.len() as u32 - span_start;
+                    face_spans
+                        .entry(k)
+                        .or_default()
+                        .push((span_start, n, fi as u32));
+                }
                 continue;
             }
             let poly = bsp.face_vertices(face);
@@ -2460,6 +2497,13 @@ impl WorldRenderer {
             }
             stats.faces += 1;
             stats.triangles += poly.len() - 2;
+            if let Some(k) = span_key {
+                let n = indices.len() as u32 - span_start;
+                face_spans
+                    .entry(k)
+                    .or_default()
+                    .push((span_start, n, fi as u32));
+            }
         }
 
         drop(resolve);
@@ -2866,6 +2910,63 @@ impl WorldRenderer {
 
         let mut indices_all: Vec<u32> = Vec::new();
         let mut batches = Vec::new();
+        let mut batch_spans: Vec<Vec<(u32, u32, u32)>> = Vec::new();
+        let num_clusters = bsp
+            .leafs
+            .iter()
+            .map(|l| l.cluster as i32 + 1)
+            .max()
+            .unwrap_or(0)
+            .max(0) as usize;
+        let mut cluster_faces: Vec<Vec<u32>> = vec![Vec::new(); num_clusters];
+        for l in &bsp.leafs {
+            if l.cluster < 0 {
+                continue;
+            }
+            let a = l.first_leaf_face as usize;
+            let faces = bsp
+                .leaf_faces
+                .get(a..a + l.num_leaf_faces as usize)
+                .unwrap_or(&[]);
+            cluster_faces[l.cluster as usize].extend(faces.iter().map(|&f| f as u32));
+        }
+        // displacements are not in the leaffaces lump (the engine links them to leaves by
+        // their bounds at load, DispInfo_LinkToLeafs): link each by its base face's box,
+        // 64 u wide, to every leaf it touches; a face in no leaf at all is always drawn
+        let mut face_unref: Vec<bool> = vec![true; bsp.faces.len()];
+        for faces in &cluster_faces {
+            for &f in faces {
+                if let Some(u) = face_unref.get_mut(f as usize) {
+                    *u = false;
+                }
+            }
+        }
+        for (fi, face) in bsp.faces.iter().enumerate() {
+            if !face_unref[fi] || face.disp_info < 0 {
+                continue;
+            }
+            let poly = bsp.face_vertices(face);
+            let Some(first) = poly.first().map(|v| Vec3::from(*v)) else {
+                continue;
+            };
+            let (lo, hi) = poly.iter().fold((first, first), |(lo, hi), v| {
+                (lo.min(Vec3::from(*v)), hi.max(Vec3::from(*v)))
+            });
+            let (lo, hi) = (lo - Vec3::splat(64.0), hi + Vec3::splat(64.0));
+            for l in &bsp.leafs {
+                if l.cluster < 0 {
+                    continue;
+                }
+                let (lmin, lmax) = (
+                    Vec3::new(l.mins[0] as f32, l.mins[1] as f32, l.mins[2] as f32),
+                    Vec3::new(l.maxs[0] as f32, l.maxs[1] as f32, l.maxs[2] as f32),
+                );
+                if lmin.cmple(hi).all() && lmax.cmpge(lo).all() {
+                    cluster_faces[l.cluster as usize].push(fi as u32);
+                    face_unref[fi] = false;
+                }
+            }
+        }
         let mut jobs: Vec<(&String, &Vec<u32>, bool)> = Vec::new();
         for (n, idx) in &per_material_sky {
             jobs.push((n, idx, true));
@@ -3105,6 +3206,17 @@ impl WorldRenderer {
                     .sum::<Vec3>()
                     / idx.len() as f32
             };
+            batch_spans.push(if sky {
+                Vec::new()
+            } else {
+                let first = indices_all.len() as u32;
+                let mut v: Vec<(u32, u32, u32)> = face_spans
+                    .get(name.as_str())
+                    .map(|sp| sp.iter().map(|&(st, c, f)| (first + st, c, f)).collect())
+                    .unwrap_or_default();
+                v.sort_unstable();
+                v
+            });
             batches.push(Batch {
                 bind_group,
                 first_index: indices_all.len() as u32,
@@ -3125,6 +3237,12 @@ impl WorldRenderer {
             label: Some("world vertices"),
             contents: bytemuck::cast_slice(&vertices),
             usage: wgpu::BufferUsages::VERTEX,
+        });
+        let cull_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("world indices (PVS)"),
+            size: (indices_all.len().max(1) * 4) as u64,
+            usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
         });
         let index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("world indices"),
@@ -3650,6 +3768,13 @@ impl WorldRenderer {
             vertex_buffer,
             index_buffer,
             batches,
+            batch_spans,
+            cluster_faces,
+            face_unref,
+            indices_cpu: indices_all,
+            cull_buffer,
+            cull: std::cell::RefCell::new(CullState::default()),
+            vis: std::cell::RefCell::new(None),
             sky_camera,
             fog,
             sky_fog,
@@ -3697,6 +3822,7 @@ impl WorldRenderer {
         self.skin_cursor.set(0);
         let stamp = |enc: &mut wgpu::CommandEncoder, label| self.stamp(enc, label);
         stamp(enc, "start");
+        self.update_culling(gpu, camera.position);
         let t0 = std::time::Instant::now();
         let mut vps = [None; DEPTH_LAYERS];
         for (slot, (_, l)) in self.flashlights.iter().take(SHADOW_LAYERS).enumerate() {
@@ -3771,6 +3897,63 @@ impl WorldRenderer {
 
     /// The reflecting surface for an eye: its plane (normal, distance) and the bounds of the
     /// water volume or mirror it belongs to.
+    /// The frame's PVS culling of the opaque world: with a visible-cluster mask for `eye` the
+    /// cull buffer gets, per batch, the static-prop indices plus the spans of faces in a
+    /// visible leaf; rebuilt only when the mask changes (the eye moved to another cluster).
+    fn update_culling(&self, gpu: &Gpu, eye: Vec3) {
+        let mut st = self.cull.borrow_mut();
+        let mask = self.vis.borrow().as_ref().and_then(|v| v(eye));
+        let Some(mask) = mask else {
+            st.active = false;
+            return;
+        };
+        st.eye = eye;
+        if st.active && st.mask == mask {
+            return;
+        }
+        let mut face_vis = self.face_unref.clone();
+        for (c, faces) in self.cluster_faces.iter().enumerate() {
+            if mask.get(c).copied().unwrap_or(false) {
+                for &f in faces {
+                    if let Some(v) = face_vis.get_mut(f as usize) {
+                        *v = true;
+                    }
+                }
+            }
+        }
+        let mut data = std::mem::take(&mut st.data);
+        data.clear();
+        let mut ranges = Vec::with_capacity(self.batches.len());
+        for (b, spans) in self.batches.iter().zip(&self.batch_spans) {
+            let first = data.len() as u32;
+            let end = b.first_index + b.index_count;
+            let mut cur = b.first_index;
+            for &(start, count, face) in spans {
+                if start > cur {
+                    data.extend_from_slice(&self.indices_cpu[cur as usize..start as usize]);
+                }
+                if face_vis.get(face as usize).copied().unwrap_or(true) {
+                    data.extend_from_slice(
+                        &self.indices_cpu[start as usize..(start + count) as usize],
+                    );
+                }
+                cur = cur.max(start + count);
+            }
+            if end > cur {
+                data.extend_from_slice(&self.indices_cpu[cur as usize..end as usize]);
+            }
+            ranges.push((first, data.len() as u32 - first));
+        }
+        if !data.is_empty() {
+            gpu.queue
+                .write_buffer(&self.cull_buffer, 0, bytemuck::cast_slice(&data));
+        }
+        st.data = data;
+        st.ranges = ranges;
+        st.mask = mask;
+        st.active = true;
+    }
+
     /// Some sample of the surface rectangle (corners inset 8 u, centre; 8 u out along its
     /// normal) is in a leaf visible from `eye`; true without a PVS callback.
     fn surface_in_pvs(&self, eye: Vec3, n: Vec3, min: Vec3, max: Vec3) -> bool {
@@ -4290,20 +4473,40 @@ impl WorldRenderer {
             pass.set_pipeline(&self.pipeline);
             pass.set_bind_group(0, &self.camera_bind_group, &[cam_off]);
             pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
-            pass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
-            for b in self
+            // the PVS-culled list only for the eye it was built for (not the reflection)
+            let cull = self.cull.borrow();
+            let culled = !sky
+                && cull.active
+                && cull.ranges.len() == self.batches.len()
+                && cull.eye.distance_squared(camera.position) < 1.0;
+            if culled {
+                pass.set_index_buffer(self.cull_buffer.slice(..), wgpu::IndexFormat::Uint32);
+            } else {
+                pass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+            }
+            for (i, b) in self
                 .batches
                 .iter()
-                .filter(|b| b.sky == sky && !b.translucent && !b.water)
+                .enumerate()
+                .filter(|(_, b)| b.sky == sky && !b.translucent && !b.water)
             {
+                let (first, count) = if culled {
+                    cull.ranges[i]
+                } else {
+                    (b.first_index, b.index_count)
+                };
+                if count == 0 {
+                    continue;
+                }
                 pass.set_pipeline(if b.nocull {
                     &self.nocull_pipeline
                 } else {
                     &self.pipeline
                 });
                 pass.set_bind_group(1, &b.bind_group, &[]);
-                pass.draw_indexed(b.first_index..b.first_index + b.index_count, 0, 0..1);
+                pass.draw_indexed(first..first + count, 0, 0..1);
             }
+            drop(cull);
             // the frame's entity models go between the opaque world and the translucent
             // surfaces (glass blends over them, the refraction copy has them); their draw
             // writes the camera uniform itself, so ours is restored after
